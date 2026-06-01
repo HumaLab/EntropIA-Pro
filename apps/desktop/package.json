@@ -1,0 +1,45 @@
+{
+  "name": "@entropia-pro/desktop",
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "tauri": "tauri",
+    "tauri:dev:isolated": "tauri dev --config src-tauri/tauri.dev.conf.json",
+    "tauri:build:isolated": "tauri build --config src-tauri/tauri.dev.conf.json",
+    "typecheck": "svelte-check --tsconfig ./tsconfig.json",
+    "lint": "eslint src",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@entropia/store": "workspace:*",
+    "@entropia/ui": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-dialog": "^2",
+    "@tauri-apps/plugin-fs": "^2",
+    "@tauri-apps/plugin-sql": "^2",
+    "@tiptap/core": "^2.26.4",
+    "@tiptap/extension-link": "^2.26.4",
+    "@tiptap/extension-placeholder": "^2.26.4",
+    "@tiptap/extension-underline": "^2.26.4",
+    "@tiptap/starter-kit": "^2.26.4",
+    "drizzle-orm": "^0.40.0",
+    "leaflet": "^1.9.4",
+    "pdfjs-dist": "^4"
+  },
+  "devDependencies": {
+    "@entropia/config-ts": "workspace:*",
+    "@sveltejs/vite-plugin-svelte": "^5",
+    "@tauri-apps/cli": "^2",
+    "@testing-library/jest-dom": "^6",
+    "@testing-library/svelte": "^5",
+    "@types/node": "^25.6.0",
+    "jsdom": "^26.1.0",
+    "happy-dom": "^17",
+    "svelte": "^5",
+    "svelte-check": "^4",
+    "vite": "^6",
+    "vitest": "^3"
+  }
+}

@@ -1,0 +1,33 @@
+{
+  "name": "entropia-pro",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@9.15.4",
+  "scripts": {
+    "dev": "turbo dev",
+    "build": "turbo build",
+    "desktop:dev:isolated": "pnpm --filter @entropia-pro/desktop tauri:dev:isolated",
+    "desktop:build:isolated": "pnpm --filter @entropia-pro/desktop tauri:build:isolated",
+    "lint": "turbo lint",
+    "typecheck": "turbo typecheck",
+    "test": "turbo test",
+    "test:run": "turbo test -- --run",
+    "test:ui": "vitest --ui",
+    "rust:quality:report": "powershell -NoProfile -File ./apps/desktop/src-tauri/scripts/rust-quality-contract.ps1"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9",
+    "@typescript-eslint/eslint-plugin": "^8",
+    "@typescript-eslint/parser": "^8",
+    "@vitest/coverage-v8": "^3",
+    "@vitest/ui": "^3",
+    "eslint": "^9",
+    "happy-dom": "^17",
+    "prettier": "^3",
+    "prettier-plugin-svelte": "^3",
+    "turbo": "^2",
+    "typescript": "^5",
+    "typescript-eslint": "^8",
+    "vitest": "^3"
+  }
+}

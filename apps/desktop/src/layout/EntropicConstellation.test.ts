@@ -1,0 +1,50 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { render } from '@testing-library/svelte'
+import { afterEach, describe, expect, it, vi } from 'vitest'
+import EntropicConstellation from './EntropicConstellation.svelte'
+
+function readSource() {
+  return readFileSync(resolve(import.meta.dirname, 'EntropicConstellation.svelte'), 'utf-8')
+}
+
+describe('EntropicConstellation visual contract', () => {
+  afterEach(() => {
+    vi.restoreAllMocks()
+  })
+
+  it('renders as a non-interactive canvas layer', () => {
+    vi.stubGlobal('matchMedia', vi.fn(() => ({ matches: false })))
+    vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null)
+
+    const { container } = render(EntropicConstellation)
+    const canvas = container.querySelector('canvas')
+
+    expect(canvas).toBeInTheDocument()
+    expect(canvas).toHaveAttribute('aria-hidden', 'true')
+  })
+
+  it('keeps the main background dense, subtle and canvas-rendered', () => {
+    const source = readSource()
+
+    expect(source).toContain('const MIN_NODES = 420')
+    expect(source).toContain('const MAX_NODES = 1200')
+    expect(source).toContain('const NODE_DENSITY = 2200')
+    expect(source).toContain("canvas.getContext('2d', { alpha: false })")
+    expect(source).toContain('function buildSpatialGrid()')
+    expect(source).toContain('function renderConstellation()')
+    expect(source).toContain("aria-hidden=\"true\"")
+  })
+
+  it('uses lightweight transform drift instead of continuous canvas redraws', () => {
+    const source = readSource()
+
+    expect(source).toContain("'(prefers-reduced-motion: reduce)'")
+    expect(source).toContain('const MAX_DEVICE_PIXEL_RATIO = 1.35')
+    expect(source).toContain('const CANVAS_OVERSCAN = 140')
+    expect(source).toContain("window.addEventListener('resize', scheduleResize)")
+    expect(source).toContain('class:constellation--motion={!reducedMotion}')
+    expect(source).toContain('@keyframes entropic-drift')
+    expect(source).not.toContain('requestAnimationFrame')
+  })
+})

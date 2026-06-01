@@ -1,0 +1,30 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Default capabilities for EntropIA desktop app",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:path:default",
+    "core:event:default",
+    "core:window:default",
+    {
+      "identifier": "fs:scope",
+      "allow": [{ "path": "$APPDATA/**/*" }]
+    },
+    "fs:allow-desktop-read-recursive",
+    "fs:allow-document-read-recursive",
+    "fs:allow-download-read-recursive",
+    "fs:allow-home-read-recursive",
+    "fs:allow-appdata-read-recursive",
+    "fs:allow-appdata-write-recursive",
+    "fs:allow-read-file",
+    "fs:allow-copy-file",
+    "fs:allow-mkdir",
+    "fs:allow-exists",
+    "fs:allow-write-file",
+    "fs:allow-remove",
+    "dialog:allow-open",
+    "dialog:allow-save"
+  ]
+}

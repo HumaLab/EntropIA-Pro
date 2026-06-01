@@ -1,0 +1,9 @@
+{
+  "extends": "@entropia/config-ts/svelte.json",
+  "compilerOptions": {
+    "rootDir": "./src",
+    "outDir": "./dist"
+  },
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist"]
+}

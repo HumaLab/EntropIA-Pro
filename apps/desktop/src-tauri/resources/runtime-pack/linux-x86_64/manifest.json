@@ -1,0 +1,87 @@
+{
+  "pack_version": "2026.05.0",
+  "app_version": "0.1.0",
+  "platform": "linux-x86_64",
+  "payload_profile": "fixture",
+  "release_injection_required": true,
+  "external_artifacts_required": [
+    "relocatable-python-linux-x86_64",
+    "offline-wheelhouse-core",
+    "seeded-model-caches",
+    "linux-native-libs"
+  ],
+  "python_relpath": "python/bin/python3",
+  "uv_relpath": "uv/bin/uv",
+  "python_files": [
+    {
+      "path": "python/bin/python3",
+      "sha256": "2377f2da1974bfdce9bdfe11674fcc138a3c157c067bd80748c289a4b8da0f43",
+      "size": 61,
+      "executable": false
+    }
+  ],
+  "uv_files": [
+    {
+      "path": "uv/bin/uv",
+      "sha256": "71335f215cf20271b2e95d93a687a9b1d637f57f9eaf44f77d1a2168ad6134fe",
+      "size": 48,
+      "executable": false
+    }
+  ],
+  "script_files": [
+    {
+      "path": "scripts/paddle_vl.py",
+      "sha256": "da3307b0fb8c96871a82f855178bb096db6bd5f03b27e8207303ec70f2c5a245",
+      "size": 14858,
+      "executable": false
+    },
+    {
+      "path": "scripts/spacy_ner.py",
+      "sha256": "eb0926be8a43671e0de021a4e1b51e9b56ab1753bd5f5e2aac6d61468c54c5f2",
+      "size": 2070,
+      "executable": false
+    },
+    {
+      "path": "scripts/transcribe.py",
+      "sha256": "11ecb216b35a7a21b1345ec131c8efda68abc53f1b5468c01f5b7fb7ea03b1cb",
+      "size": 9682,
+      "executable": false
+    }
+  ],
+  "wheelhouse": [
+    {
+      "path": "wheelhouse/README.txt",
+      "sha256": "da5e58619c0d650fa97f73ce0e2d885ec83f9406a6a72b807f4032070b7fd3d9",
+      "size": 147,
+      "executable": false
+    }
+  ],
+  "caches": [
+    {
+      "path": "caches/hf/README.txt",
+      "sha256": "284740dae8d81d5657cc9b3228b2a103e302b0eca8944d337cf12c171603b36a",
+      "size": 121,
+      "executable": false
+    },
+    {
+      "path": "caches/paddlex/README.txt",
+      "sha256": "9d945a45c7fb84f582a48a89e119a2e3ef3421dfeccc15edb937ba8e976effc0",
+      "size": 120,
+      "executable": false
+    }
+  ],
+  "native_assets": [
+    {
+      "path": "resources/lib/libonnxruntime.so",
+      "sha256": "7244f14e73e62c06d5f2828b1cb5775c55df8d20782c1e0d0be8e891f099f5fa",
+      "size": 56,
+      "executable": false
+    },
+    {
+      "path": "resources/lib/libpdfium.so",
+      "sha256": "93dcbebfd81416ccd4e7afaef9ca8e808a8f336abe4b5a1b9980b09dd02ee988",
+      "size": 51,
+      "executable": false
+    }
+  ]
+}

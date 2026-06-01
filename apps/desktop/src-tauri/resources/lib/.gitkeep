@@ -1,0 +1,28 @@
+This directory is for bundled native libraries.
+
+## Required: pdfium.dll
+
+Place the Pdfium shared library for Windows here:
+
+- `resources/lib/pdfium.dll` — Windows x86_64
+
+### Where to get pdfium.dll
+
+Download from the [pdfium-render releases](https://github.com/ajrcarey/pdfium-render/releases)
+or build from the [Google Pdfium source](https://pdfium.googlesource.com/pdfium/).
+
+The DLL version must be compatible with the `pdfium-render` crate version in
+`Cargo.toml`. Check the crate's README for the recommended Pdfium binary version.
+
+### Other platforms
+
+- Linux: `libpdfium.so` (place alongside this directory or install system-wide)
+- macOS: `libpdfium.dylib` (place alongside this directory or install system-wide)
+
+### Resolution order
+
+1. **Bundled**: `resources/lib/pdfium.dll` (via Tauri's BaseDirectory::Resource)
+2. **Development**: `CARGO_MANIFEST_DIR/resources/lib/pdfium.dll`
+3. **System library**: OS default search paths (PATH, /usr/lib, etc.)
+
+See `src/ocr/pdf.rs` for the implementation.

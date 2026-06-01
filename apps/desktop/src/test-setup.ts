@@ -1,0 +1,32 @@
+import '@testing-library/jest-dom'
+import { vi } from 'vitest'
+
+// Mock Tauri APIs globally — tests run in happy-dom, not Tauri
+vi.mock('@tauri-apps/api/core', () => ({
+  invoke: vi.fn(),
+  convertFileSrc: vi.fn((path: string) => `https://asset.localhost/${path}`),
+}))
+
+vi.mock('@tauri-apps/api/path', () => ({
+  appDataDir: vi.fn().mockResolvedValue('/mock/app-data'),
+  join: vi.fn((...parts: string[]) => Promise.resolve(parts.join('/'))),
+}))
+
+vi.mock('@tauri-apps/plugin-dialog', () => ({
+  open: vi.fn(),
+  save: vi.fn(),
+}))
+
+vi.mock('@tauri-apps/plugin-fs', () => ({
+  copyFile: vi.fn(),
+  mkdir: vi.fn(),
+  writeFile: vi.fn(),
+  remove: vi.fn(),
+  stat: vi.fn().mockResolvedValue({ size: 0 }),
+}))
+
+vi.mock('@tauri-apps/api/event', () => ({
+  listen: vi
+    .fn()
+    .mockImplementation((_eventName: string, _callback: unknown) => Promise.resolve(vi.fn())),
+}))

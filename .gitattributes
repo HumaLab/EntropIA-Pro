@@ -1,0 +1,2 @@
+# Keep the pnpm lockfile byte-stable across runners
+pnpm-lock.yaml text eol=lf

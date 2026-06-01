@@ -1,0 +1,96 @@
+name: Lockfile Reset Probe
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - pnpm-lock.yaml
+      - package.json
+      - pnpm-workspace.yaml
+      - .npmrc
+      - .github/workflows/lockfile-reset.yml
+
+jobs:
+  lockfile-reset-probe:
+    name: Lockfile reset probe
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Checkpoint after Checkout
+        shell: bash
+        run: |
+          lockfile_sha256="$(sha256sum pnpm-lock.yaml | cut -d ' ' -f1)"
+          first_line="$(sed -n '1p' pnpm-lock.yaml)"
+          first_line_is_yaml_doc=false
+          if [ "$first_line" = "---" ]; then
+            first_line_is_yaml_doc=true
+          fi
+          working_blob="$(git hash-object pnpm-lock.yaml)"
+          head_blob="$(git rev-parse HEAD:pnpm-lock.yaml)"
+          matches_head_blob=false
+          if [ "$working_blob" = "$head_blob" ]; then
+            matches_head_blob=true
+          fi
+          echo "checkpoint.after_checkout.sha256=$lockfile_sha256"
+          echo "checkpoint.after_checkout.first_line_is_yaml_doc=$first_line_is_yaml_doc"
+          echo "checkpoint.after_checkout.working_blob=$working_blob"
+          echo "checkpoint.after_checkout.head_blob=$head_blob"
+          echo "checkpoint.after_checkout.matches_head_blob=$matches_head_blob"
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: 9.15.4
+
+      - name: Checkpoint after Setup pnpm
+        shell: bash
+        run: |
+          lockfile_sha256="$(sha256sum pnpm-lock.yaml | cut -d ' ' -f1)"
+          first_line="$(sed -n '1p' pnpm-lock.yaml)"
+          first_line_is_yaml_doc=false
+          if [ "$first_line" = "---" ]; then
+            first_line_is_yaml_doc=true
+          fi
+          working_blob="$(git hash-object pnpm-lock.yaml)"
+          head_blob="$(git rev-parse HEAD:pnpm-lock.yaml)"
+          matches_head_blob=false
+          if [ "$working_blob" = "$head_blob" ]; then
+            matches_head_blob=true
+          fi
+          echo "checkpoint.after_setup_pnpm.sha256=$lockfile_sha256"
+          echo "checkpoint.after_setup_pnpm.first_line_is_yaml_doc=$first_line_is_yaml_doc"
+          echo "checkpoint.after_setup_pnpm.working_blob=$working_blob"
+          echo "checkpoint.after_setup_pnpm.head_blob=$head_blob"
+          echo "checkpoint.after_setup_pnpm.matches_head_blob=$matches_head_blob"
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          package-manager-cache: false
+
+      - name: Checkpoint after Setup Node
+        shell: bash
+        run: |
+          lockfile_sha256="$(sha256sum pnpm-lock.yaml | cut -d ' ' -f1)"
+          first_line="$(sed -n '1p' pnpm-lock.yaml)"
+          first_line_is_yaml_doc=false
+          if [ "$first_line" = "---" ]; then
+            first_line_is_yaml_doc=true
+          fi
+          working_blob="$(git hash-object pnpm-lock.yaml)"
+          head_blob="$(git rev-parse HEAD:pnpm-lock.yaml)"
+          matches_head_blob=false
+          if [ "$working_blob" = "$head_blob" ]; then
+            matches_head_blob=true
+          fi
+          echo "checkpoint.after_setup_node.sha256=$lockfile_sha256"
+          echo "checkpoint.after_setup_node.first_line_is_yaml_doc=$first_line_is_yaml_doc"
+          echo "checkpoint.after_setup_node.working_blob=$working_blob"
+          echo "checkpoint.after_setup_node.head_blob=$head_blob"
+          echo "checkpoint.after_setup_node.matches_head_blob=$matches_head_blob"
+
+      - name: Install dependencies
+        run: npm exec --package=pnpm@9.15.4 -- pnpm install --frozen-lockfile

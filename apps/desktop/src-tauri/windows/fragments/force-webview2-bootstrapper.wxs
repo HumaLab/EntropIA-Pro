@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi">
+  <Fragment>
+    <DirectoryRef Id="INSTALLDIR">
+      <Component Id="ForceWebView2BootstrapperHook" Guid="*" Win64="yes">
+        <RegistryValue
+          Root="HKCU"
+          Key="Software\entropia\EntropIA"
+          Name="ForceWebView2BootstrapperHook"
+          Type="integer"
+          Value="1"
+          KeyPath="yes" />
+      </Component>
+
+      <Component Id="AppLocalConcrt140" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\concrt140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="AppLocalMsvcp140" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\msvcp140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="AppLocalMsvcp1401" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\msvcp140_1.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="AppLocalVcomp140" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\vcomp140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="AppLocalVcruntime140" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\vcruntime140.dll" KeyPath="yes" />
+      </Component>
+      <Component Id="AppLocalVcruntime1401" Guid="*" Win64="yes">
+        <File Source="..\..\vc-runtime\vcruntime140_1.dll" KeyPath="yes" />
+      </Component>
+    </DirectoryRef>
+
+    <!--
+      Tauri's default MSI condition skips the WebView2 bootstrapper when the
+      HKLM runtime key exists. Windows Sandbox can expose that machine key while
+      the runtime is still unavailable for the actual app user, which leaves the
+      app stuck in a pre-setup "Could not find the WebView2 Runtime" dialog.
+
+      Re-running the evergreen bootstrapper is idempotent and fixes that state,
+      so we force it for installs/updates while keeping the Tauri-embedded
+      bootstrapper binary as the source.
+    -->
+    <CustomAction
+      Id="ForceInvokeWebView2Bootstrapper"
+      BinaryKey="MicrosoftEdgeWebview2Setup.exe"
+      Execute="deferred"
+      ExeCommand="/silent /install"
+      Return="check" />
+
+    <InstallExecuteSequence>
+      <Custom Action="ForceInvokeWebView2Bootstrapper" Before="InstallFinalize">
+        <![CDATA[NOT REMOVE]]>
+      </Custom>
+    </InstallExecuteSequence>
+  </Fragment>
+</Wix>

@@ -1,0 +1,22 @@
+{
+  "name": "@entropia/store",
+  "version": "0.0.1",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.40.0"
+  },
+  "devDependencies": {
+    "@entropia/config-ts": "workspace:*",
+    "@tauri-apps/api": "^2",
+    "typescript": "^5",
+    "vitest": "^3"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run"
+  }
+}

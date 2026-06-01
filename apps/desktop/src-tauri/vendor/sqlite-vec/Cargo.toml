@@ -1,0 +1,14 @@
+[package]
+name = "sqlite-vec"
+version = "0.1.10-alpha.3"
+edition = "2021"
+authors = ["EntropIA temporary Windows shim"]
+license = "MIT OR Apache-2.0"
+description = "Temporary Windows shim for sqlite-vec build unblock"
+
+[lib]
+name = "sqlite_vec"
+path = "src/lib.rs"
+
+[dependencies]
+rusqlite = "0.31"

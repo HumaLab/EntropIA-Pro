@@ -1,0 +1,8 @@
+# Optimize whisper.cpp native deps even in debug builds.
+# Note: whisper-rs has been replaced with faster-whisper (Python subprocess).
+# These settings are kept in case whisper-rs is re-enabled in the future.
+[profile.dev.package.whisper-rs-sys]
+opt-level = 2
+
+[profile.dev.package.whisper-rs]
+opt-level = 2

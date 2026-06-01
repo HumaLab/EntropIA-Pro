@@ -1,0 +1,8 @@
+{
+  "extends": "@entropia/config-ts/base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}

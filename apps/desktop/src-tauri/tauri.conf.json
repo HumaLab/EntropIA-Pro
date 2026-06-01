@@ -1,0 +1,71 @@
+{
+  "productName": "EntropIA Pro",
+  "version": "0.1.0",
+  "identifier": "com.entropia.pro.desktop",
+  "build": {
+    "beforeDevCommand": "pnpm --filter @entropia-pro/desktop dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "EntropIA Pro",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 900,
+        "minHeight": 600,
+        "decorations": true,
+        "resizable": true,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null,
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["$APPDATA/**/*"]
+      }
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "icon": ["icons/icon.ico"],
+    "windows": {
+      "webviewInstallMode": {
+        "type": "embedBootstrapper"
+      },
+      "wix": {
+        "fragmentPaths": ["./windows/fragments/force-webview2-bootstrapper.wxs"],
+        "componentRefs": [
+          "ForceWebView2BootstrapperHook",
+          "AppLocalConcrt140",
+          "AppLocalMsvcp140",
+          "AppLocalMsvcp1401",
+          "AppLocalVcomp140",
+          "AppLocalVcruntime140",
+          "AppLocalVcruntime1401"
+        ]
+      },
+      "nsis": {
+        "installerHooks": "./windows/hooks.nsh"
+      }
+    },
+    "resources": [
+      "resources/*",
+      "resources/models/*",
+      "resources/models/ner/*",
+      "resources/models/ocr/*",
+      "resources/lib/*",
+      "resources/lib/linux-x86_64/**/*",
+      "resources/tools/uv/windows-x86_64/*",
+      "resources/tools/uv/windows-aarch64/*",
+      "resources/runtime-pack/windows-x86_64/**/*",
+      "resources/runtime-pack/linux-x86_64/**/*",
+      "target/release/vc-runtime/*",
+      "scripts/*"
+    ]
+  }
+}

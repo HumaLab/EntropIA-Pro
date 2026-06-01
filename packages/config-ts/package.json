@@ -1,0 +1,16 @@
+{
+  "name": "@entropia/config-ts",
+  "version": "0.0.0",
+  "private": true,
+  "license": "MIT",
+  "files": [
+    "base.json",
+    "svelte.json"
+  ],
+  "exports": {
+    "./base": "./base.json",
+    "./base.json": "./base.json",
+    "./svelte": "./svelte.json",
+    "./svelte.json": "./svelte.json"
+  }
+}

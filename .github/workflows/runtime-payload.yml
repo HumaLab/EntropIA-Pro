@@ -1,0 +1,168 @@
+name: Runtime Payload
+
+on:
+  workflow_dispatch:
+    inputs:
+      platform:
+        description: 'Runtime payload platform to prepare'
+        required: true
+        default: 'all'
+        type: choice
+        options:
+          - all
+          - windows-x86_64
+          - linux-x86_64
+      payload_source_artifact:
+        description: 'Optional artifact name containing source payload files laid out as <platform>/...'
+        required: false
+        type: string
+      payload_source_release_tag:
+        description: 'Optional release tag to reuse an existing Windows installer runtime-pack as payload source.'
+        required: false
+        type: string
+      payload_source_release_asset:
+        description: 'Optional release asset glob for payload_source_release_tag. Defaults to EntropIA_Pro_*_x64-setup.exe.'
+        required: false
+        type: string
+      pack_version:
+        description: 'Runtime pack version to stamp into manifest overrides'
+        required: true
+        type: string
+      app_version:
+        description: 'App version to stamp into manifest overrides'
+        required: true
+        type: string
+      fixture:
+        description: 'Generate CI-only fixture payloads; never use for releasable installers'
+        required: false
+        default: false
+        type: boolean
+
+jobs:
+  prepare:
+    name: Prepare runtime payloads
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Validate payload source inputs
+        shell: bash
+        env:
+          PAYLOAD_SOURCE_ARTIFACT: ${{ inputs.payload_source_artifact }}
+          PAYLOAD_SOURCE_RELEASE_TAG: ${{ inputs.payload_source_release_tag }}
+          PAYLOAD_SOURCE_RELEASE_ASSET: ${{ inputs.payload_source_release_asset }}
+          PLATFORM: ${{ inputs.platform }}
+          FIXTURE: ${{ inputs.fixture }}
+        run: |
+          set -euo pipefail
+          if [ -n "$PAYLOAD_SOURCE_ARTIFACT" ] && [ -n "$PAYLOAD_SOURCE_RELEASE_TAG" ]; then
+            echo "::error::Use either payload_source_artifact or payload_source_release_tag, not both."
+            exit 1
+          fi
+          if [ -n "$PAYLOAD_SOURCE_RELEASE_ASSET" ] && [ -z "$PAYLOAD_SOURCE_RELEASE_TAG" ]; then
+            echo "::error::payload_source_release_asset requires payload_source_release_tag."
+            exit 1
+          fi
+          if [ -n "$PAYLOAD_SOURCE_RELEASE_TAG" ] && [ "$PLATFORM" != "windows-x86_64" ]; then
+            echo "::error::payload_source_release_tag currently supports only platform=windows-x86_64 because it extracts from a Windows installer asset."
+            exit 1
+          fi
+          if [ "$FIXTURE" != "true" ] && [ -z "$PAYLOAD_SOURCE_ARTIFACT" ] && [ -z "$PAYLOAD_SOURCE_RELEASE_TAG" ]; then
+            echo "::error::Non-fixture runtime payloads require payload_source_artifact or payload_source_release_tag."
+            exit 1
+          fi
+
+      - name: Download payload source artifact
+        if: inputs.payload_source_artifact != ''
+        uses: actions/download-artifact@v6
+        with:
+          name: ${{ inputs.payload_source_artifact }}
+          path: ${{ runner.temp }}/runtime-payload-source
+
+      - name: Install release asset extraction tools
+        if: inputs.payload_source_release_tag != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y p7zip-full
+
+      - name: Extract payload source from release asset
+        if: inputs.payload_source_release_tag != ''
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PAYLOAD_SOURCE_RELEASE_TAG: ${{ inputs.payload_source_release_tag }}
+          PAYLOAD_SOURCE_RELEASE_ASSET: ${{ inputs.payload_source_release_asset }}
+        run: |
+          set -euo pipefail
+          RELEASE_DIR="${RUNNER_TEMP}/runtime-payload-release"
+          EXTRACT_DIR="${RUNNER_TEMP}/runtime-payload-release-extracted"
+          SOURCE_DIR="${RUNNER_TEMP}/runtime-payload-source"
+          ASSET_PATTERN="${PAYLOAD_SOURCE_RELEASE_ASSET:-EntropIA_Pro_*_x64-setup.exe}"
+
+          mkdir -p "$RELEASE_DIR" "$EXTRACT_DIR" "$SOURCE_DIR"
+          gh release download "$PAYLOAD_SOURCE_RELEASE_TAG" --pattern "$ASSET_PATTERN" --dir "$RELEASE_DIR"
+
+          shopt -s nullglob
+          assets=("$RELEASE_DIR"/*)
+          if [ "${#assets[@]}" -ne 1 ]; then
+            echo "::error::Expected exactly one release asset matching '$ASSET_PATTERN', found ${#assets[@]}."
+            exit 1
+          fi
+
+          7z x "${assets[0]}" 'resources/runtime-pack/windows-x86_64/*' "-o$EXTRACT_DIR"
+          if [ ! -d "$EXTRACT_DIR/resources/runtime-pack/windows-x86_64" ]; then
+            echo "::error::Release asset does not contain resources/runtime-pack/windows-x86_64."
+            exit 1
+          fi
+          cp -a "$EXTRACT_DIR/resources/runtime-pack/windows-x86_64" "$SOURCE_DIR/"
+
+      - name: Prepare runtime payload directories
+        shell: bash
+        run: |
+          set -euo pipefail
+          OUTPUT_DIR="${RUNNER_TEMP}/runtime-payloads"
+          SOURCE_DIR="${RUNNER_TEMP}/runtime-payload-source"
+          mkdir -p "$OUTPUT_DIR"
+
+          if [ "${{ inputs.platform }}" = "all" ]; then
+            PLATFORMS="windows-x86_64 linux-x86_64"
+          else
+            PLATFORMS="${{ inputs.platform }}"
+          fi
+
+          for PLATFORM in $PLATFORMS; do
+            ARGS=(
+              --platform "$PLATFORM"
+              --output-dir "$OUTPUT_DIR"
+              --pack-version "${{ inputs.pack_version }}"
+              --app-version "${{ inputs.app_version }}"
+            )
+            if [ "${{ inputs.fixture }}" = "true" ]; then
+              ARGS+=(--fixture)
+            else
+              ARGS+=(--payload-source-dir "$SOURCE_DIR")
+            fi
+            python3 apps/desktop/src-tauri/scripts/prepare_runtime_payload.py "${ARGS[@]}"
+          done
+
+      - name: Upload runtime payload artifact
+        if: ${{ !inputs.fixture }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-payloads
+          path: ${{ runner.temp }}/runtime-payloads
+          if-no-files-found: error
+
+      - name: Upload fixture runtime payload artifact
+        if: ${{ inputs.fixture }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: runtime-payloads-fixture
+          path: ${{ runner.temp }}/runtime-payloads
+          if-no-files-found: error

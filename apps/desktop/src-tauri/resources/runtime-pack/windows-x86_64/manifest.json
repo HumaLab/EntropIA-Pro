@@ -1,0 +1,80 @@
+{
+  "pack_version": "2026.05.0",
+  "app_version": "0.1.0",
+  "platform": "windows-x86_64",
+  "payload_profile": "fixture",
+  "release_injection_required": true,
+  "external_artifacts_required": [
+    "relocatable-python-windows-x86_64",
+    "offline-wheelhouse-core",
+    "seeded-model-caches"
+  ],
+  "python_relpath": "python/python.exe",
+  "uv_relpath": "uv/uv.exe",
+  "python_files": [
+    {
+      "path": "python/python.exe",
+      "sha256": "44666181d30254fcbdfe039b4dea8a2a1a75f4e74e672a70e3471ef13547d05a",
+      "size": 37,
+      "executable": true
+    }
+  ],
+  "uv_files": [
+    {
+      "path": "uv/uv.exe",
+      "sha256": "cce6e0626e5f61b3e07fca8fe4ba25a86be51b43a222d8ceac440146ba99aac5",
+      "size": 24,
+      "executable": true
+    }
+  ],
+  "script_files": [
+    {
+      "path": "scripts/paddle_vl.py",
+      "sha256": "da3307b0fb8c96871a82f855178bb096db6bd5f03b27e8207303ec70f2c5a245",
+      "size": 14858,
+      "executable": false
+    },
+    {
+      "path": "scripts/spacy_ner.py",
+      "sha256": "eb0926be8a43671e0de021a4e1b51e9b56ab1753bd5f5e2aac6d61468c54c5f2",
+      "size": 2070,
+      "executable": false
+    },
+    {
+      "path": "scripts/transcribe.py",
+      "sha256": "11ecb216b35a7a21b1345ec131c8efda68abc53f1b5468c01f5b7fb7ea03b1cb",
+      "size": 9682,
+      "executable": false
+    }
+  ],
+  "wheelhouse": [
+    {
+      "path": "wheelhouse/README.txt",
+      "sha256": "a367ca8761e0f10cf39ebe2b6883ff6f8569e24bf556563be496ad7154e37114",
+      "size": 149,
+      "executable": false
+    }
+  ],
+  "caches": [
+    {
+      "path": "caches/hf/README.txt",
+      "sha256": "e3c9bb90cce90b1e6571e5f61f155f378f396372f3adef0411184c4ea00ba508",
+      "size": 123,
+      "executable": false
+    },
+    {
+      "path": "caches/paddlex/README.txt",
+      "sha256": "7bb311f2f0bc456603d759ceaed42ffd9a326a66ac105e0841dc6bb2107a4a1c",
+      "size": 122,
+      "executable": false
+    }
+  ],
+  "native_assets": [
+    {
+      "path": "resources/lib/pdfium.dll",
+      "sha256": "166168a127c7de1e71bc90f8e78696fc8d94d96ffd3e86110ad0782cfbe26b64",
+      "size": 60,
+      "executable": false
+    }
+  ]
+}
