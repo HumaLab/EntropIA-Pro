@@ -1,5 +1,5 @@
 /**
- * Geocoding frontend client for EntropIA desktop app.
+ * Geocoding frontend client for EntropIA Pro desktop app.
  * Communicates with the Rust geo backend (Nominatim/OpenStreetMap).
  */
 

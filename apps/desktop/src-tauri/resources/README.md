@@ -6,12 +6,10 @@ This directory is reserved for bundled Tauri resources.
   Download from [pdfium-render releases](https://github.com/ajrcarey/pdfium-render/releases).
   The DLL is resolved at runtime with a 3-tier search (bundled → dev → system library).
   See `resources/lib/.gitkeep` for details.
-- `models/ner/onnxruntime.dll` — ONNX Runtime for native layout/local-ONNX
-  inference on Windows. The legacy native NER model was removed; this path is
-  retained only as the current dev DLL handoff location until ORT is relocated.
-  Release runtime payloads also copy this DLL into
-  `runtime-pack/<platform>/resources/lib/` so Python ONNX consumers can resolve it
-  through the app-managed DLL path.
+- `lib/linux-x86_64/` — Linux native-library placeholders and documented handoff
+  paths for release runtime payloads.
+- Release runtime payloads may also inject ONNX Runtime under
+  `runtime-pack/<platform>/resources/lib/` when validated ONNX consumers require it.
 
 ## Bundled Tools
 
@@ -39,25 +37,13 @@ See `scripts/prepare_runtime_payload.py`, `scripts/materialize_windows_runtime_p
 
 ## OCR Models
 
-Runtime assets for the `ocrs` engine are downloaded automatically before each build:
+The native OCR fallback uses the bundled PaddleOCR/MNN assets in
+`models/ocr/`:
 
-- `text-detection.rten` (~2.4 MB) — text detection model
-- `text-recognition.rten` (~9.3 MB) — text recognition model
+- `PP-OCRv5_mobile_det.mnn`
+- `latin_PP-OCRv5_mobile_rec_infer.mnn`
+- `PP-LCNet_x1_0_doc_ori.mnn`
+- `ppocr_keys_latin.txt`
 
-These files are **NOT committed** to the repository (ignored by `*.rten` in `.gitignore`).
-They are downloaded from the official ocrs-models S3 bucket by the pre-build script:
-
-```
-apps/desktop/src-tauri/scripts/download-ocr-models.ps1
-```
-
-The script runs automatically via `tauri.conf.json` `beforeBuildCommand` and `beforeDevCommand`.
-If you need to download manually:
-
-```powershell
-powershell -File apps/desktop/src-tauri/scripts/download-ocr-models.ps1
-```
-
-## Operational Notes
-
-- `sqlite-vec-windows-tradeoff.md`: archived note from the previous sqlite-vec/`vec_items` implementation; kept only for historical context.
+PaddleOCR-VL high-quality OCR runs through the managed Python runtime/script
+path and does not require separate model files committed in this directory.

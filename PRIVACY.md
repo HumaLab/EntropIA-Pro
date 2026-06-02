@@ -1,6 +1,6 @@
-# EntropIA Privacy Notice
+# EntropIA Pro Privacy Notice
 
-EntropIA is designed as a local-first desktop app. Your collections, imported files, extracted text, notes, indexes, and local AI outputs are stored on your machine unless you explicitly configure or trigger a remote provider.
+EntropIA Pro is designed as a local-first desktop app. Your collections, imported files, extracted text, notes, indexes, and local AI outputs are stored on your machine unless you explicitly configure or trigger a remote provider.
 
 ## What stays local by default
 
@@ -14,7 +14,7 @@ EntropIA is designed as a local-first desktop app. Your collections, imported fi
 
 ## Network activity
 
-EntropIA can contact external services only for features that require downloads or user-configured cloud providers.
+EntropIA Pro can contact external services only for features that require downloads or user-configured cloud providers.
 
 | Feature | Destination | What may be sent or downloaded |
 | ------- | ----------- | ------------------------------ |
@@ -42,4 +42,4 @@ OpenRouter and AssemblyAI API keys are user-provided settings. Treat them as sec
 
 ## Limitations
 
-This notice describes the EntropIA application behavior. Remote providers have their own privacy policies, retention terms, and account controls.
+This notice describes the EntropIA Pro application behavior. Remote providers have their own privacy policies, retention terms, and account controls.

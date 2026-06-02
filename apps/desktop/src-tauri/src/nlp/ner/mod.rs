@@ -72,39 +72,6 @@ struct ReviewedEntity {
     confidence: Option<f32>,
 }
 
-pub fn prepare_openrouter_candidates_for_item(
-    conn: &Connection,
-    item_id: &str,
-) -> Result<OpenRouterExtractionInput, String> {
-    let text = text_provider::get_item_text(conn, item_id)?;
-    let protected_entities = load_protected_entities(conn, item_id)?;
-    let (api_key, model_name) = openrouter_settings(conn)?;
-
-    Ok(OpenRouterExtractionInput {
-        text,
-        protected_entities,
-        api_key,
-        model_name,
-    })
-}
-
-pub fn prepare_openrouter_candidates_for_asset(
-    conn: &Connection,
-    item_id: &str,
-    asset_id: &str,
-) -> Result<OpenRouterExtractionInput, String> {
-    let text = text_provider::get_asset_text(conn, asset_id)?;
-    let protected_entities = load_protected_entities(conn, item_id)?;
-    let (api_key, model_name) = openrouter_settings(conn)?;
-
-    Ok(OpenRouterExtractionInput {
-        text,
-        protected_entities,
-        api_key,
-        model_name,
-    })
-}
-
 #[allow(dead_code)] // Future: LLM entity review pipeline (not yet wired)
 pub fn serialize_review_candidates(entities: &[Entity]) -> Result<String, String> {
     let payload = entities

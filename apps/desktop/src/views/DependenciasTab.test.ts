@@ -250,7 +250,7 @@ describe('DependenciasTab', () => {
       packVersion: '2026.05.0',
       repairNeeded: false,
       repairAvailable: false,
-      summary: 'Runtime incompatible con EntropIA 0.0.13',
+      summary: 'Runtime incompatible con EntropIA Pro 0.0.13',
       blockedCapabilities: ['ocr', 'transcription', 'nlp'],
       details: ['El runtime-pack declara app_version 0.0.10 pero la app usa 0.0.13'],
       guidance: ['Regenerá o seleccioná un runtime-pack compatible.'],
@@ -280,7 +280,7 @@ describe('DependenciasTab', () => {
     expect(
       screen.queryByText('Todas las dependencias están instaladas y listas para usar.')
     ).not.toBeInTheDocument()
-    expect(screen.getByText(/runtime de EntropIA necesita atención/i)).toBeInTheDocument()
+    expect(screen.getByText(/runtime de EntropIA Pro necesita atención/i)).toBeInTheDocument()
     expect(screen.getByText(/Gestión automática pausada/i)).toBeInTheDocument()
   })
 
@@ -449,12 +449,12 @@ describe('DependenciasTab', () => {
       venv_exists: false,
       venv_path: null,
       uv_warning:
-        'Se detectó uv 0.10.3 en /usr/bin/uv, pero EntropIA espera uv 0.6.14 para instalaciones administradas. En desarrollo esto explica el warning, no una caída de la app.',
+        'Se detectó uv 0.10.3 en /usr/bin/uv, pero EntropIA Pro espera uv 0.6.14 para instalaciones administradas. En desarrollo esto explica el warning, no una caída de la app.',
       release_runtime_ready: false,
       release_runtime_state: 'fixture',
       dev_fallback_available: true,
       dev_fallback_reason:
-        'Windows debug: si falta el runtime de release, EntropIA puede crear un venv local usando Python/uv del sistema. Esto NO valida ni reemplaza el contrato de runtime-pack de release.',
+        'Windows debug: si falta el runtime de release, EntropIA Pro puede crear un venv local usando Python/uv del sistema. Esto NO valida ni reemplaza el contrato de runtime-pack de release.',
     })
 
     render(DependenciasTab)

@@ -1,6 +1,6 @@
-# Database Debugging de EntropIA
+# Database Debugging de EntropIA Pro
 
-Guía operativa para diagnosticar problemas en la base SQLite de EntropIA sin dar vueltas.
+Guía operativa para diagnosticar problemas en la base SQLite de EntropIA Pro sin dar vueltas.
 
 ## Base activa
 
@@ -179,12 +179,6 @@ SELECT
 FROM asset_embedding_audit
 GROUP BY type
 ORDER BY assets_missing_embedding DESC, type ASC;
-```
-
-Si querés todo junto sin pensar, corré:
-
-```powershell
-sqlite3 "$env:APPDATA\com.entropia.pro.desktop\entropia.sqlite" ".read scripts/sqlite_audit.sql"
 ```
 
 ### 7. Backfill operativo de `vec_assets`
@@ -367,7 +361,7 @@ ORDER BY created_at ASC;
 
 ---
 
-## Archivo legacy previo a Batch 3
+## Arquitectura vigente de embeddings
 
 La verdad runtime/producto verificada hoy es esta:
 
@@ -376,10 +370,6 @@ La verdad runtime/producto verificada hoy es esta:
 - APIs activas: `embed_asset`, `backfill_asset_embeddings`, `similar_assets`
 
 Si ves `vec_items`, `embed_item`, `similar_items` o `embeddings_fallback` en notas viejas o snapshots de una DB local anterior, tratálos como **legacy/archive**, no como arquitectura soportada.
-
-Contexto histórico: `docs/asset-only-batch3-remnants.md`.
-
----
 
 ## Consultas de auditoría relacional
 

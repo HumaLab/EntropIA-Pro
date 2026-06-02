@@ -1,7 +1,7 @@
 /// Audio decoding and resampling for Whisper transcription.
 ///
 /// Supports WAV (via hound), MP3, FLAC, M4A/AAC (via symphonia).
-/// All audio is converted to 16kHz mono f32 PCM for whisper-rs input.
+/// All audio is converted to 16kHz mono f32 PCM for Whisper-compatible input.
 use std::path::Path;
 
 use symphonia::core::audio::SampleBuffer;

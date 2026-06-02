@@ -755,28 +755,6 @@ async fn run_configured_ner_input(
     }
 }
 
-async fn run_openrouter_ner_batch(
-    input: ner::OpenRouterExtractionInput,
-) -> Result<ner::EntityExtractionBatch, String> {
-    let entities = if input.text.trim().is_empty() {
-        Vec::new()
-    } else {
-        ner::openrouter::extract_entities_with_openrouter(
-            input.api_key,
-            input.model_name,
-            &input.text,
-            &input.protected_entities,
-        )
-        .await
-        .map_err(|error| format!("NER extraction for asset failed: {error}"))?
-    };
-
-    Ok(ner::EntityExtractionBatch {
-        text: input.text,
-        entities,
-    })
-}
-
 async fn run_configured_ner_batch(
     app_handle: &AppHandle,
     db_path: &std::path::Path,

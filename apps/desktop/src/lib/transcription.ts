@@ -1,5 +1,5 @@
 /**
- * Transcription frontend client for EntropIA desktop app.
+ * Transcription frontend client for EntropIA Pro desktop app.
  * Plain TypeScript (not .svelte.ts) for full testability in Vitest.
  *
  * Communicates with the Rust backend via Tauri invoke + event listeners.

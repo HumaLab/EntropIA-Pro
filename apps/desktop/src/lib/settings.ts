@@ -1,5 +1,5 @@
 /**
- * Settings frontend client for EntropIA desktop app.
+ * Settings frontend client for EntropIA Pro desktop app.
  * Wraps Tauri commands for the app_settings key-value store.
  */
 

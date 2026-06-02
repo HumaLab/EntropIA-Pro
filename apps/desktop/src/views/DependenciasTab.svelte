@@ -478,7 +478,7 @@
   function getDepDescription(dep: DepCheckResult): string {
     return (
       (DEP_DESCRIPTIONS as Partial<Record<string, string>>)[dep.id] ??
-      'Dependencia administrada por EntropIA.'
+      'Dependencia administrada por EntropIA Pro.'
     )
   }
 
@@ -516,7 +516,7 @@
   {#if prepareEntropiaNeeded}
     <div class="deps-prepare-panel" role="status">
       <div class="deps-prepare-panel__copy">
-        <strong>Prepará EntropIA para uso local</strong>
+        <strong>Prepará EntropIA Pro para uso local</strong>
         <span>
           Esto hidrata el runtime, dependencias y modelos dentro de la app. Después queda listo
           para usar sin pedirle al usuario instalaciones manuales.
@@ -539,7 +539,7 @@
         loading={preparingEntropia}
         disabled={preparingEntropia}
       >
-        Preparar EntropIA
+        Preparar EntropIA Pro
       </Button>
     </div>
   {/if}
@@ -582,7 +582,7 @@
           <p class="deps-runtime-panel__progress">{bootstrapProgressLabel()}</p>
         {/if}
         {#if runtimeCanBootstrapAutomatically(runtimeStatus)}
-          <span>EntropIA va a intentar bootstrapear el runtime automáticamente cuando una fuente válida esté disponible.</span>
+          <span>EntropIA Pro va a intentar preparar el runtime automáticamente cuando una fuente válida esté disponible.</span>
         {/if}
       </div>
       {#if shouldShowRuntimeRepairAction(runtimeStatus)}
@@ -635,7 +635,7 @@
         </span>
       {:else if runtimeBlocked}
         <span class="deps-uv-status__text deps-uv-status__text--warn">
-          Gestión automática pausada hasta resolver el runtime de EntropIA.
+          Gestión automática pausada hasta resolver el runtime de EntropIA Pro.
         </span>
       {:else}
         <span class="deps-uv-status__text deps-uv-status__text--info">
@@ -700,7 +700,7 @@
   {:else if depsInstalledButRuntimeBlocked && !installing}
     <div class="deps-banner deps-banner--warning">
       <span class="deps-banner__message">
-        Las dependencias Python están instaladas, pero el runtime de EntropIA necesita atención antes de habilitar OCR, transcripción y NLP.
+        Las dependencias Python están instaladas, pero el runtime de EntropIA Pro necesita atención antes de habilitar OCR, transcripción y NLP.
       </span>
     </div>
   {/if}

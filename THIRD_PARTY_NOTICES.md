@@ -1,6 +1,6 @@
 # Third-Party Notices and Release Payload Policy
 
-EntropIA depends on Rust, Node, Python, native libraries, AI models, and runtime payload artifacts. This file records the release-time review policy; it is not yet a complete generated SBOM.
+EntropIA Pro depends on Rust, Node, Python, native libraries, AI models, and runtime payload artifacts. This file records the release-time review policy; it is not yet a complete generated SBOM.
 
 ## Release rule
 
@@ -20,11 +20,11 @@ Before signing or publishing a final installer, verify:
 | Component | Purpose | Current source/path | Review status |
 | --------- | ------- | ------------------- | ------------- |
 | Pdfium | PDF rendering | `resources/lib/pdfium.dll`, release runtime payload native libs | Needs version/license trace in release notes or SBOM. |
-| ONNX Runtime | Native layout/local-ONNX and Python ONNX consumers | `resources/models/ner/onnxruntime.dll`, release `resources/lib/onnxruntime.dll` | Must remain included in Windows runtime payloads; native ONNX NER was removed. |
+| ONNX Runtime | ONNX consumers in release runtime payloads | release payload `resources/lib/onnxruntime.dll` or `resources/lib/libonnxruntime.so` | Native ONNX NER was removed; keep ONNX Runtime in release payloads only for validated runtime consumers. |
 | uv | Managed Python environment bootstrap | `resources/tools/uv/*`, runtime payload `uv/` | Needs version/license trace. |
 | Python runtime | OCR/NLP/transcription subprocess runtime | release runtime payload `python/` | Must be redistributable and version-stamped. |
 | Python wheelhouse | Offline install for AI dependencies | release runtime payload `wheelhouse/` | Must be generated from reviewed packages. |
-| Hugging Face caches | Whisper/embedding/model cache seeds | release runtime payload `caches/hf/` | Each model license must be reviewed. |
+| Hugging Face caches | faster-whisper/model cache seeds | release runtime payload `caches/hf/` | Each model license must be reviewed. |
 | PaddleX caches | PaddleOCR-VL/layout model cache seeds | release runtime payload `caches/paddlex/` | Each model license must be reviewed. |
 | Gemma GGUF | Local LLM downloaded by user/app | Hugging Face URL configured in LLM settings | Downloaded model terms must be visible to users before relying on redistribution. |
 

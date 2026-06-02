@@ -1,6 +1,6 @@
-# EntropIA Code Signing Policy
+# EntropIA Pro Code Signing Policy
 
-EntropIA signs release installers only when the release artifact is traceable, reproducible enough to review, and made from redistributable open-source components. Until that bar is met and a signing provider is approved, Windows installers may remain unsigned.
+EntropIA Pro signs release installers only when the release artifact is traceable, reproducible enough to review, and made from redistributable open-source components. Until that bar is met and a signing provider is approved, Windows installers may remain unsigned.
 
 ## Quick path for a signed release
 

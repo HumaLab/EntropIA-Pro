@@ -1,6 +1,6 @@
-# SQLite de EntropIA
+# SQLite de EntropIA Pro
 
-Documentación de la base SQLite activa de EntropIA, cómo inspeccionarla y cuál es su esquema actual.
+Documentación de la base SQLite activa de EntropIA Pro, cómo inspeccionarla y cuál es su esquema actual.
 
 ## Ubicación de la base activa
 
@@ -10,7 +10,7 @@ La base activa detectada para la app Tauri actual es:
 %APPDATA%\com.entropia.pro.desktop\entropia.sqlite
 ```
 
-También existe una base legacy de migración:
+El backend todavía reconoce una base legacy para migrar instalaciones antiguas:
 
 ```text
 %APPDATA%\com.entropia.app\entropia.sqlite
@@ -20,7 +20,7 @@ También existe una base legacy de migración:
 
 - `apps/desktop/src-tauri/tauri.conf.json`
   - `identifier`: `com.entropia.pro.desktop`
-  - `productName`: `EntropIA`
+  - `productName`: `EntropIA Pro`
 - `apps/desktop/src-tauri/src/lib.rs`
   - usa `app.path().app_data_dir()`
   - crea/abre `entropia.sqlite` dentro de ese directorio
@@ -58,7 +58,7 @@ En la base actual esto se corrige con:
 
 - migración baseline `0004_fts5.sql` usando `rowid` explícito
 - migración correctiva `0018_fts_rowid_canonical.sql` para bases existentes
-- script manual `scripts/rebuild_fts.sql` para rebuild operativo
+- rebuild operativo desde los flujos de indexación de la app cuando haga falta recomputar el índice
 
 ## Script SQL para listar tablas
 
@@ -162,7 +162,7 @@ PRAGMA table_info(vec_assets);
 
 > Nota: `fts_items_*` pertenece al índice full-text y no representa entidades de negocio normales.
 
-> Nota importante: en EntropIA la identidad real del índice NO es `fts_items.item_id`, sino `fts_items.rowid` alineado con `items.rowid`.
+> Nota importante: en EntropIA Pro la identidad real del índice NO es `fts_items.item_id`, sino `fts_items.rowid` alineado con `items.rowid`.
 
 ## Árbol: base -> tablas -> variables
 

@@ -47,7 +47,7 @@ const es = {
   'settings.preferences': 'Preferencias',
   'settings.title': 'Configuración',
   'settings.subtitle':
-    'Ajustá cómo EntropIA resuelve tareas locales y remotas de inteligencia artificial.',
+    'Ajustá cómo EntropIA Pro resuelve tareas locales y remotas de inteligencia artificial.',
   'settings.currentMode': 'Modo actual: {mode}',
   'settings.save': 'Guardar cambios',
   'settings.saving': 'Guardando...',
@@ -71,7 +71,7 @@ const es = {
     'Prioriza el motor local y usa OpenRouter sólo como respaldo.',
   'settings.embeddingProvider.title': 'Embeddings BGE-M3',
   'settings.embeddingProvider.description':
-    'Elegí cómo EntropIA genera vectores semánticos. API y local usan el mismo contrato BGE-M3 de 1024 dimensiones.',
+    'Elegí cómo EntropIA Pro genera vectores semánticos. API y local usan el mismo contrato BGE-M3 de 1024 dimensiones.',
   'settings.embeddingProvider.api.label': 'API OpenRouter',
   'settings.embeddingProvider.api.description':
     'Usa OpenRouter con baai/bge-m3. Requiere API key y conexión.',
@@ -84,12 +84,12 @@ const es = {
   'settings.embeddingProvider.localPath': 'Carpeta del modelo local BGE-M3',
   'settings.embeddingProvider.localPathPlaceholder': 'Vacío = carpeta predeterminada en AppData',
   'settings.embeddingProvider.localPathHint':
-    'Debe contener model.onnx, model.onnx_data y tokenizer.json. Si queda vacío, EntropIA usa la carpeta de datos de la app.',
+    'Debe contener model.onnx, model.onnx_data y tokenizer.json. Si queda vacío, EntropIA Pro usa la carpeta de datos de la app.',
   'settings.embeddingProvider.localStatus': 'Estado BGE-M3 local',
   'settings.embeddingProvider.localComplete': 'Modelo BGE-M3 local completo',
   'settings.embeddingProvider.localIncomplete': 'Modelo BGE-M3 local incompleto',
   'settings.embeddingProvider.localInstallHint':
-    'EntropIA instala los assets ONNX desde {repo} y conserva los nombres esperados por el proveedor local.',
+    'EntropIA Pro instala los assets ONNX desde {repo} y conserva los nombres esperados por el proveedor local.',
   'settings.embeddingProvider.installLocal': 'Instalar BGE-M3 local',
   'settings.embeddingProvider.openLocalFolder': 'Abrir carpeta BGE-M3',
   'settings.embeddingProvider.downloading': 'Instalando BGE-M3…',
@@ -157,7 +157,7 @@ const es = {
   'dbBrowser.eyebrow': 'Base de datos',
   'dbBrowser.title': 'Consulta DB',
   'dbBrowser.subtitle':
-    'Explorá tablas del SQLite de EntropIA en modo solo lectura, con búsqueda, orden y paginación.',
+    'Explorá tablas del SQLite de EntropIA Pro en modo solo lectura, con búsqueda, orden y paginación.',
   'dbBrowser.tableLabel': 'Tabla',
   'dbBrowser.searchLabel': 'Filtro simple',
   'dbBrowser.searchPlaceholder': 'Filtrar por texto...',
@@ -670,7 +670,7 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.preferences': 'Preferences',
   'settings.title': 'Settings',
   'settings.subtitle':
-    'Adjust how EntropIA resolves local and remote artificial intelligence tasks.',
+    'Adjust how EntropIA Pro resolves local and remote artificial intelligence tasks.',
   'settings.currentMode': 'Current mode: {mode}',
   'settings.save': 'Save changes',
   'settings.saving': 'Saving...',
@@ -695,7 +695,7 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
     'Prioritize the local engine and use OpenRouter only as fallback.',
   'settings.embeddingProvider.title': 'BGE-M3 embeddings',
   'settings.embeddingProvider.description':
-    'Choose how EntropIA generates semantic vectors. API and local use the same 1024-dimensional BGE-M3 contract.',
+    'Choose how EntropIA Pro generates semantic vectors. API and local use the same 1024-dimensional BGE-M3 contract.',
   'settings.embeddingProvider.api.label': 'OpenRouter API',
   'settings.embeddingProvider.api.description':
     'Use OpenRouter with baai/bge-m3. Requires an API key and connection.',
@@ -708,12 +708,12 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.embeddingProvider.localPath': 'Local BGE-M3 model folder',
   'settings.embeddingProvider.localPathPlaceholder': 'Empty = default AppData folder',
   'settings.embeddingProvider.localPathHint':
-    'Must contain model.onnx, model.onnx_data, and tokenizer.json. If empty, EntropIA uses the app data folder.',
+    'Must contain model.onnx, model.onnx_data, and tokenizer.json. If empty, EntropIA Pro uses the app data folder.',
   'settings.embeddingProvider.localStatus': 'Local BGE-M3 status',
   'settings.embeddingProvider.localComplete': 'Local BGE-M3 model complete',
   'settings.embeddingProvider.localIncomplete': 'Local BGE-M3 model incomplete',
   'settings.embeddingProvider.localInstallHint':
-    'EntropIA installs the ONNX assets from {repo} and keeps the filenames expected by the local provider.',
+    'EntropIA Pro installs the ONNX assets from {repo} and keeps the filenames expected by the local provider.',
   'settings.embeddingProvider.installLocal': 'Install local BGE-M3',
   'settings.embeddingProvider.openLocalFolder': 'Open BGE-M3 folder',
   'settings.embeddingProvider.downloading': 'Installing BGE-M3…',
@@ -781,7 +781,7 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'dbBrowser.eyebrow': 'Database',
   'dbBrowser.title': 'DB Browser',
   'dbBrowser.subtitle':
-    'Browse EntropIA SQLite tables in read-only mode with search, sorting, and pagination.',
+    'Browse EntropIA Pro SQLite tables in read-only mode with search, sorting, and pagination.',
   'dbBrowser.tableLabel': 'Table',
   'dbBrowser.searchLabel': 'Simple filter',
   'dbBrowser.searchPlaceholder': 'Filter by text...',

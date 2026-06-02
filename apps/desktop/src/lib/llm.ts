@@ -1,5 +1,5 @@
 /**
- * LLM frontend client for EntropIA desktop app.
+ * LLM frontend client for EntropIA Pro desktop app.
  * Communicates with the Rust LLM backend (Gemma 4 via llama.cpp).
  * Mirrors the NlpStore architecture.
  */

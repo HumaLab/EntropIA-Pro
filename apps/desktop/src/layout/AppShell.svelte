@@ -27,7 +27,7 @@
   import type { Snippet } from 'svelte'
 
   const HLAB_URL = 'https://hlab.com.ar/'
-  const GITHUB_REPO_URL = 'https://github.com/agusnieto77/EntropIA'
+  const GITHUB_REPO_URL = 'https://github.com/hlabrepo/EntropIA-Pro'
 
   let { children }: { children: Snippet } = $props()
   const currentLocale = locale
@@ -352,7 +352,7 @@
   {#key activeLocale}
     <footer class="statusbar" data-locale={activeLocale}>
       <div class="statusbar__left">
-        <span>EntropIA β</span>
+        <span>EntropIA Pro</span>
         <span class="statusbar__sep">·</span>
         <span>{t('appshell.caption')}</span>
       </div>

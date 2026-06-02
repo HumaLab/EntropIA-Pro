@@ -1,5 +1,5 @@
 /**
- * Dependency manager frontend client for EntropIA desktop app.
+ * Dependency manager frontend client for EntropIA Pro desktop app.
  * Wraps Tauri commands for the Python dependency manager (uv-based).
  */
 

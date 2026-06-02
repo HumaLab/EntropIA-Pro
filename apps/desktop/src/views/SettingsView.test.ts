@@ -118,7 +118,7 @@ describe('SettingsView', () => {
     expect(screen.getByRole('heading', { name: 'Configuración' })).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Ajustá cómo EntropIA resuelve tareas locales y remotas de inteligencia artificial.'
+        'Ajustá cómo EntropIA Pro resuelve tareas locales y remotas de inteligencia artificial.'
       )
     ).toBeInTheDocument()
 
