@@ -1,9 +1,10 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
+import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
 export default defineConfig({
-  plugins: [svelte()],
+  plugins: [tailwindcss(), svelte()],
   optimizeDeps: {
     // Restrict dep-scan to the real frontend entry.
     // Without this, Vite may crawl every HTML file under apps/desktop,
