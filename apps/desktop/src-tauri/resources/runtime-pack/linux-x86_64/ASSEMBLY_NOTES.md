@@ -1,14 +1,16 @@
-# Linux runtime-pack fixture
+# Fixture runtime-pack Linux
+
+**English:** [ASSEMBLY_NOTES.en.md](./ASSEMBLY_NOTES.en.md)
 
 - `payload_profile`: `fixture`
 - `release_injection_required`: `true`
-- Linux parity now includes bundleable structure, manifest, placeholder scripts/caches and native-lib mirror points.
-- Real release packaging must inject redistributable Python, offline wheels, seeded caches, and audited Linux native libs before claiming fully self-contained offline release parity.
-- Expected runtime entrypoints after handoff: `python/bin/python3` and `uv/bin/uv`.
-- Expected native asset handoff: `resources/lib/libpdfium.so` and `resources/lib/libonnxruntime.so` plus any extra audited `.so` dependencies discovered during packaging.
-- `build_runtime_pack.py --payload-root` accepts either a direct payload layout or `.../linux-x86_64/...`; the release workflow overlays that payload on top of this fixture and regenerates `manifest.json` plus `assembly-summary.json`.
+- La paridad Linux ahora incluye estructura bundleable, manifest, scripts/caches placeholder y puntos espejo para librerías nativas.
+- El empaquetado de release real debe inyectar Python redistribuible, wheels offline, caches presembradas y librerías nativas Linux auditadas antes de afirmar paridad offline completamente self-contained.
+- Entrypoints esperados del runtime después del handoff: `python/bin/python3` y `uv/bin/uv`.
+- Handoff esperado de assets nativos: `resources/lib/libpdfium.so` y `resources/lib/libonnxruntime.so`, más cualquier dependencia `.so` adicional auditada que se descubra durante el empaquetado.
+- `build_runtime_pack.py --payload-root` acepta tanto un layout directo como `.../linux-x86_64/...`; el workflow de release superpone ese payload sobre este fixture y regenera `manifest.json` más `assembly-summary.json`.
 
-Minimal Linux payload tree:
+Árbol mínimo de payload Linux:
 
 ```text
 linux-x86_64/

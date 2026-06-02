@@ -1,4 +1,6 @@
-# Runtime-pack maintenance contract
+# Contrato de mantenimiento del runtime-pack
+
+**English:** [MAINTENANCE.en.md](./MAINTENANCE.en.md)
 
 ## Qué cubre este repo
 
@@ -19,9 +21,9 @@ Antes de publicar una release que diga “self-contained”, CI/release DEBE ree
 
 ## Contrato de payload externo
 
-- El script `scripts/build_runtime_pack.py` ahora acepta `--payload-root`.
+- El script `scripts/build_runtime_pack.py` acepta `--payload-root`.
 - Ese directorio puede venir como layout directo (`python/`, `uv/`, `wheelhouse/`, `caches/`, `resources/lib/`) o como `<payload-root>/<platform>/...`.
-- Si existe `manifest.overrides.json`, el script aplica esos overrides al manifest final y **recalcula** los listados/checksums/tamaños a partir de los archivos realmente ensamblados.
+- Si existe `manifest.overrides.json`, el script aplica esos overrides al manifest final y **recalcula** listados/checksums/tamaños a partir de los archivos realmente ensamblados.
 - Workflow de release: descarga el artifact `runtime-payloads` desde el `runtime_payload_run_id` indicado, arma el pack en `target/runtime-pack/` y falla cerrado si no hay payload release real. Ya no se permite publicar instaladores desde fixtures.
 - El workflow ensambla primero en `apps/desktop/src-tauri/target/runtime-pack/`, corre smoke ahí y recién después reemplaza `resources/runtime-pack/<platform>` para que el `tauri-action` bundlee el payload real sin destruir la fuente fixture durante el armado.
 
@@ -61,7 +63,7 @@ runtime-payloads/
 
 ### Handoff real por plataforma
 
-| Plataforma | `python_relpath` esperado | `uv_relpath` esperado | Native assets mínimos | Artifactos externos mínimos |
+| Plataforma | `python_relpath` esperado | `uv_relpath` esperado | Native assets mínimos | Artefactos externos mínimos |
 | ---------- | ------------------------- | --------------------- | --------------------- | --------------------------- |
 | `windows-x86_64` | `python/python.exe` | `uv/uv.exe` | `resources/lib/pdfium.dll`, `resources/lib/onnxruntime.dll` | `relocatable-python-windows-x86_64`, `offline-wheelhouse-core`, `seeded-model-caches` |
 | `linux-x86_64` | `python/bin/python3` | `uv/bin/uv` | `resources/lib/libpdfium.so`, `resources/lib/libonnxruntime.so` | `relocatable-python-linux-x86_64`, `offline-wheelhouse-core`, `seeded-model-caches`, `linux-native-libs` |
@@ -122,12 +124,12 @@ Windows se considera cerrado cuando se cumplen estas condiciones:
 1. `materialize_windows_runtime_payload.py` genera `target/runtime-payloads/windows-x86_64` desde un `managed_venv` funcional.
 2. `build_runtime_pack.py --require-release-payload` genera `target/runtime-pack/windows-x86_64` con `payload_profile=release`, `release_injection_required=false` y `external_artifacts_required=[]`.
 3. `runtime-pack-smoke.py --release --install-probe` pasa en Windows.
-4. El pack release no contiene ningun `CACHE_NOT_SEEDED.txt`; si aparece ese marcador, el smoke release debe fallar.
+4. El pack release no contiene ningún `CACHE_NOT_SEEDED.txt`; si aparece ese marcador, el smoke release debe fallar.
 5. En dev, `ENTROPIA_RUNTIME_PACK_ROOT` puede apuntar a `target/runtime-pack` para validar la app sin copiar el payload pesado a `resources/`.
 
-### Politica OCRH / PaddleOCR-VL en CPU
+### Política OCRH / PaddleOCR-VL en CPU
 
-En Windows sin GPU NVIDIA, PaddleOCR-VL puede usar CPU. El timeout de 900s es aceptado: no es senal de runtime roto por si mismo. Si vence, OCRH debe fallar de forma controlada y caer a OCR plano; no hay que bajar este timeout salvo nueva decision de producto.
+En Windows sin GPU NVIDIA, PaddleOCR-VL puede usar CPU. El timeout de 900s es aceptado: no es señal de runtime roto por sí mismo. Si vence, OCRH debe fallar de forma controlada y caer a OCR plano; no hay que bajar este timeout salvo nueva decisión de producto.
 
 Para probarlo en dev sin copiar 3GB a `resources/`, arrancá Tauri con:
 
@@ -156,5 +158,5 @@ Además, un pack `release` no puede seguir declarando `external_artifacts_requir
 ## Ownership sugerido
 
 - Producto/app: define qué capacidades entran en “core offline”.
-- Release engineering: inyecta artifacts, recalcula checksums y publica installers.
+- Release engineering: inyecta artefactos, recalcula checksums y publica instaladores.
 - Maintainers de OCR/NLP: validan licencias, tamaño y compatibilidad de los modelos/caches incluidos.

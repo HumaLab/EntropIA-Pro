@@ -1,45 +1,47 @@
-# EntropIA Pro Privacy Notice
+# Aviso de privacidad de EntropIA Pro
 
-EntropIA Pro is designed as a local-first desktop app. Your collections, imported files, extracted text, notes, indexes, and local AI outputs are stored on your machine unless you explicitly configure or trigger a remote provider.
+**English:** [PRIVACY.en.md](./PRIVACY.en.md)
 
-## What stays local by default
+EntropIA Pro está diseñada como una app de escritorio local-first. Tus colecciones, archivos importados, texto extraído, notas, índices y salidas locales de IA se guardan en tu máquina salvo que configures o dispares explícitamente un proveedor remoto.
 
-| Data | Default handling |
-| ---- | ---------------- |
-| Collections and metadata | Stored in the local EntropIA app data directory. |
-| Imported assets | Referenced or copied according to the desktop import flow. |
-| OCR and extracted text | Stored locally in the app database. |
-| FTS indexes, embeddings, entities, summaries | Stored locally when generated. |
-| Local model files and runtime dependencies | Stored locally in app/runtime directories. |
+## Qué queda local por defecto
 
-## Network activity
+| Dato | Manejo por defecto |
+| ---- | ------------------ |
+| Colecciones y metadata | Se guardan en el directorio local de datos de EntropIA. |
+| Assets importados | Se referencian o copian según el flujo de importación desktop. |
+| OCR y texto extraído | Se guardan localmente en la base de datos de la app. |
+| Índices FTS, embeddings, entidades, resúmenes | Se guardan localmente cuando se generan. |
+| Archivos de modelos locales y dependencias de runtime | Se guardan localmente en directorios de app/runtime. |
 
-EntropIA Pro can contact external services only for features that require downloads or user-configured cloud providers.
+## Actividad de red
 
-| Feature | Destination | What may be sent or downloaded |
-| ------- | ----------- | ------------------------------ |
-| Gemma local model download | Hugging Face model URL configured by the app | Downloads the GGUF model file. |
-| Dependency/runtime bootstrap | Configured runtime and package sources | Downloads runtime archives, Python packages, or tools when not already bundled. |
-| OpenRouter LLM mode | OpenRouter API | Sends the text needed for the requested LLM task and the configured API key. |
-| AssemblyAI transcription mode | AssemblyAI API | Uploads the audio selected for transcription and uses the configured API key. |
-| External links in the UI | Browser/system handler | Opens the selected URL outside the app. |
+EntropIA Pro puede contactar servicios externos solo para funciones que requieren descargas o proveedores cloud configurados por el usuario.
 
-The current codebase does not include a separate analytics or telemetry service. Operational logs are written locally for diagnostics.
+| Función | Destino | Qué puede enviarse o descargarse |
+| ------- | ------- | -------------------------------- |
+| Descarga del modelo local Gemma | URL de modelo Hugging Face configurada por la app | Descarga el archivo GGUF del modelo. |
+| Bootstrap de dependencias/runtime | Fuentes configuradas de runtime y paquetes | Descarga archivos de runtime, paquetes Python o herramientas cuando no están ya bundleados. |
+| Modo LLM OpenRouter | API de OpenRouter | Envía el texto necesario para la tarea LLM solicitada y la API key configurada. |
+| Modo transcripción AssemblyAI | API de AssemblyAI | Sube el audio seleccionado para transcripción y usa la API key configurada. |
+| Links externos en la UI | Navegador/handler del sistema | Abre la URL seleccionada fuera de la app. |
+
+El codebase actual no incluye un servicio separado de analytics o telemetría. Los logs operativos se escriben localmente para diagnóstico.
 
 ## API keys
 
-OpenRouter and AssemblyAI API keys are user-provided settings. Treat them as secrets:
+Las API keys de OpenRouter y AssemblyAI son configuraciones provistas por el usuario. Tratalas como secretos:
 
-- do not commit app data or settings files;
-- do not share logs that may contain provider names, request errors, or configuration details without reviewing them first;
-- rotate a key if it was exposed.
+- no commitees datos de app ni archivos de configuración;
+- no compartas logs que puedan contener nombres de proveedores, errores de request o detalles de configuración sin revisarlos primero;
+- rotá una key si fue expuesta.
 
-## User control
+## Control del usuario
 
-- Use local modes when you do not want content sent to a remote AI provider.
-- Remove provider API keys from Settings to disable those remote paths.
-- Delete the local app data directory if you want to remove local databases, logs, runtime files, and generated outputs.
+- Usá modos locales si no querés enviar contenido a un proveedor remoto de IA.
+- Remové API keys de proveedores desde Settings para deshabilitar esos caminos remotos.
+- Eliminá el directorio local de datos de la app si querés borrar bases locales, logs, archivos de runtime y salidas generadas.
 
-## Limitations
+## Limitaciones
 
-This notice describes the EntropIA Pro application behavior. Remote providers have their own privacy policies, retention terms, and account controls.
+Este aviso describe el comportamiento de la aplicación EntropIA Pro. Los proveedores remotos tienen sus propias políticas de privacidad, términos de retención y controles de cuenta.

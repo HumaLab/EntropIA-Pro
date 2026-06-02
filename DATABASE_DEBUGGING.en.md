@@ -1,30 +1,30 @@
-# Debugging de base de datos de EntropIA Pro
+# EntropIA Pro Database Debugging
 
-**English:** [DATABASE_DEBUGGING.en.md](./DATABASE_DEBUGGING.en.md)
+**Español:** [DATABASE_DEBUGGING.md](./DATABASE_DEBUGGING.md)
 
-Guía operativa para diagnosticar problemas en la base SQLite de EntropIA Pro sin dar vueltas.
+Operational guide for diagnosing problems in the EntropIA Pro SQLite database without wasting time.
 
-## Base activa
+## Active database
 
 ```text
 %APPDATA%\com.entropia.pro.desktop\entropia.sqlite
 ```
 
-## Abrir la base
+## Open the database
 
 ```powershell
 sqlite3 "$env:APPDATA\com.entropia.pro.desktop\entropia.sqlite"
 ```
 
-## Filosofía de debugging
+## Debugging philosophy
 
-No mires tablas aisladas como si fueran cajitas mágicas. Pensá el flujo:
+Do not look at isolated tables as if they were magic boxes. Think through the flow:
 
 ```text
-collection -> item -> asset -> procesamiento -> enriquecimiento -> búsqueda
+collection -> item -> asset -> processing -> enrichment -> search
 ```
 
-Traducido a tablas:
+Translated to tables:
 
 ```text
 collections -> items -> assets -> extractions / transcriptions / layouts
@@ -37,9 +37,9 @@ items -> fts_items
 
 ---
 
-## Flujo de diagnóstico rápido
+## Quick diagnosis flow
 
-### 1. Verificar existencia de colección, ítem y asset
+### 1. Verify collection, item, and asset existence
 
 ```sql
 SELECT * FROM collections ORDER BY created_at DESC;
@@ -54,7 +54,7 @@ FROM assets
 ORDER BY created_at DESC;
 ```
 
-### 2. Verificar persistencia de resultados
+### 2. Verify result persistence
 
 ```sql
 SELECT asset_id, method, confidence, created_at
@@ -70,7 +70,7 @@ FROM layouts
 ORDER BY created_at DESC;
 ```
 
-### 3. Verificar otros resultados persistidos
+### 3. Verify other persisted results
 
 ```sql
 SELECT asset_id, method, confidence, created_at
@@ -90,7 +90,7 @@ FROM llm_results
 ORDER BY created_at DESC;
 ```
 
-### 4. Verificar enriquecimiento semántico
+### 4. Verify semantic enrichment
 
 ```sql
 SELECT item_id, COUNT(*) AS entities
@@ -109,7 +109,7 @@ GROUP BY item_id
 ORDER BY notes DESC;
 ```
 
-### 5. Verificar indexación/búsqueda
+### 5. Verify indexing/search
 
 ```sql
 SELECT item_id, title
@@ -121,7 +121,7 @@ FROM vec_assets
 LIMIT 20;
 ```
 
-### 6. Medir cobertura real de embeddings asset-level
+### 6. Measure real asset-level embedding coverage
 
 ```sql
 WITH asset_embedding_audit AS (
@@ -183,16 +183,16 @@ GROUP BY type
 ORDER BY assets_missing_embedding DESC, type ASC;
 ```
 
-### 7. Backfill operativo de `vec_assets`
+### 7. Operational `vec_assets` backfill
 
-Hay un comando Tauri real para esto: `backfill_asset_embeddings`.
+There is a real Tauri command for this: `backfill_asset_embeddings`.
 
-- recorre assets con texto útil en `extractions` y/o `transcriptions`
-- por default **saltea** assets que ya tienen fila en `vec_assets`
-- con `force: true` recomputa embeddings existentes
-- `limit` sirve para corridas chicas de auditoría/debug
+- scans assets with useful text in `extractions` and/or `transcriptions`
+- by default **skips** assets that already have a row in `vec_assets`
+- with `force: true`, recomputes existing embeddings
+- `limit` is useful for small audit/debug runs
 
-Ejemplo desde el frontend/lib Tauri:
+Example from the frontend/Tauri lib:
 
 ```ts
 import { backfillAssetEmbeddings } from './apps/desktop/src/lib/nlp'
@@ -203,11 +203,11 @@ console.log(report)
 
 ---
 
-## Problema -> dónde mirar -> query
+## Problem -> where to look -> query
 
-### A. “No aparece una colección”
+### A. “A collection does not show up”
 
-Mirar:
+Look at:
 
 - `collections`
 
@@ -217,9 +217,9 @@ FROM collections
 ORDER BY created_at DESC;
 ```
 
-### B. “No aparece un ítem”
+### B. “An item does not show up”
 
-Mirar:
+Look at:
 
 - `items`
 - `collections`
@@ -231,22 +231,22 @@ LEFT JOIN collections c ON c.id = i.collection_id
 ORDER BY i.created_at DESC;
 ```
 
-### C. “El ítem existe, pero no tiene assets”
+### C. “The item exists, but it has no assets”
 
-Mirar:
+Look at:
 
 - `assets`
 
 ```sql
 SELECT id, item_id, path, type, size, sort_index, created_at
 FROM assets
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY sort_index, created_at;
 ```
 
-### D. “El asset está, pero OCR/transcripción no corrió”
+### D. “The asset exists, but OCR/transcription did not run”
 
-Mirar:
+Look at:
 
 - `extractions`
 - `transcriptions`
@@ -263,13 +263,13 @@ FROM assets a
 LEFT JOIN extractions e ON e.asset_id = a.id
 LEFT JOIN transcriptions t ON t.asset_id = a.id
 LEFT JOIN layouts l ON l.asset_id = a.id
-WHERE a.id = 'ASSET_ID_AQUI'
+WHERE a.id = 'ASSET_ID_HERE'
 LIMIT 1;
 ```
 
-### E. “OCR High no dejó layout”
+### E. “OCR High did not leave layout”
 
-Mirar:
+Look at:
 
 - `layouts`
 - `extractions`
@@ -277,12 +277,12 @@ Mirar:
 ```sql
 SELECT asset_id, model, image_width, image_height, created_at
 FROM layouts
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
-### F. “No aparecen entidades o triples”
+### F. “Entities or triples do not show up”
 
-Mirar:
+Look at:
 
 - `entities`
 - `triples`
@@ -290,18 +290,18 @@ Mirar:
 ```sql
 SELECT id, entity_type, value, confidence, source, model_name
 FROM entities
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY confidence DESC;
 
 SELECT subject, predicate, object, created_at
 FROM triples
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY created_at DESC;
 ```
 
-### G. “No aparecen topics”
+### G. “Topics do not show up”
 
-Mirar:
+Look at:
 
 - `item_topics`
 - `topics`
@@ -310,24 +310,24 @@ Mirar:
 SELECT t.name
 FROM item_topics it
 JOIN topics t ON t.id = it.topic_id
-WHERE it.item_id = 'ITEM_ID_AQUI';
+WHERE it.item_id = 'ITEM_ID_HERE';
 ```
 
-### H. “La búsqueda FTS no devuelve nada”
+### H. “FTS search returns nothing”
 
-Mirar:
+Look at:
 
 - `fts_items`
 
 ```sql
 SELECT item_id, title, extracted_text
 FROM fts_items
-WHERE fts_items MATCH 'termino';
+WHERE fts_items MATCH 'term';
 ```
 
-### I. “La similitud/embeddings no funciona”
+### I. “Similarity/embeddings are not working”
 
-Mirar:
+Look at:
 
 - `vec_assets`
 - `extractions`
@@ -336,23 +336,23 @@ Mirar:
 ```sql
 SELECT asset_id, item_id, length(embedding) AS bytes
 FROM vec_assets
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
-APIs/runtime activos para este flujo: `embed_asset`, `backfill_asset_embeddings`, `similar_assets` y sus wrappers TS `embedAsset`, `backfillAssetEmbeddings`, `similarAssets`.
+Active APIs/runtime for this flow: `embed_asset`, `backfill_asset_embeddings`, `similar_assets`, and their TS wrappers `embedAsset`, `backfillAssetEmbeddings`, `similarAssets`.
 
-Si el asset tiene texto pero no embedding, el problema YA NO es teórico: corré el backfill y después auditá de nuevo.
+If the asset has text but no embedding, the problem is NO LONGER theoretical: run the backfill, then audit again.
 
-### J. “El resultado LLM quedó mezclado entre asset/item/collection o desapareció”
+### J. “The LLM result was mixed between asset/item/collection or disappeared”
 
-Mirar:
+Look at:
 
 - `llm_results`
 
 ```sql
 SELECT id, target_id, target_type, job_type, created_at, result
 FROM llm_results
-WHERE target_id = 'TARGET_ID_AQUI'
+WHERE target_id = 'TARGET_ID_HERE'
 ORDER BY created_at DESC;
 
 SELECT id, target_id, target_type, job_type, created_at
@@ -363,19 +363,19 @@ ORDER BY created_at ASC;
 
 ---
 
-## Arquitectura vigente de embeddings
+## Current embedding architecture
 
-La verdad runtime/producto verificada hoy es esta:
+The verified runtime/product truth today is this:
 
-- embeddings y similitud son **asset-only**
-- tabla activa: `vec_assets`
-- APIs activas: `embed_asset`, `backfill_asset_embeddings`, `similar_assets`
+- embeddings and similarity are **asset-only**
+- active table: `vec_assets`
+- active APIs: `embed_asset`, `backfill_asset_embeddings`, `similar_assets`
 
-Si ves `vec_items`, `embed_item`, `similar_items` o `embeddings_fallback` en notas viejas o snapshots de una DB local anterior, tratálos como **legacy/archive**, no como arquitectura soportada.
+If you see `vec_items`, `embed_item`, `similar_items`, or `embeddings_fallback` in old notes or snapshots of a previous local DB, treat them as **legacy/archive**, not as supported architecture.
 
-## Consultas de auditoría relacional
+## Relational audit queries
 
-### Assets huérfanos respecto de items
+### Assets orphaned from items
 
 ```sql
 SELECT a.*
@@ -384,7 +384,7 @@ LEFT JOIN items i ON i.id = a.item_id
 WHERE i.id IS NULL;
 ```
 
-### Items huérfanos respecto de collections
+### Items orphaned from collections
 
 ```sql
 SELECT i.*
@@ -393,7 +393,7 @@ LEFT JOIN collections c ON c.id = i.collection_id
 WHERE c.id IS NULL;
 ```
 
-### Notes apuntando a assets inexistentes
+### Notes pointing to missing assets
 
 ```sql
 SELECT n.*
@@ -403,7 +403,7 @@ WHERE n.asset_id IS NOT NULL
   AND a.id IS NULL;
 ```
 
-### Entities con asset_id roto
+### Entities with broken asset_id
 
 ```sql
 SELECT e.*
@@ -413,7 +413,7 @@ WHERE e.asset_id IS NOT NULL
   AND a.id IS NULL;
 ```
 
-### Triples con asset_id roto
+### Triples with broken asset_id
 
 ```sql
 SELECT t.*
@@ -423,7 +423,7 @@ WHERE t.asset_id IS NOT NULL
   AND a.id IS NULL;
 ```
 
-### Vec assets con references dudosas
+### Vec assets with suspicious references
 
 ```sql
 SELECT va.*
@@ -433,7 +433,7 @@ LEFT JOIN items i ON i.id = va.item_id
 WHERE a.id IS NULL OR i.id IS NULL;
 ```
 
-### LLM results con target roto o legacy no migrado
+### LLM results with broken target or unmigrated legacy target
 
 ```sql
 SELECT lr.*
@@ -449,9 +449,9 @@ WHERE (lr.target_type = 'asset' AND a.id IS NULL)
 
 ---
 
-## Consultas para entender cobertura del pipeline
+## Queries for understanding pipeline coverage
 
-### Qué assets tienen qué tipo de salida
+### Which assets have which output type
 
 ```sql
 SELECT
@@ -467,7 +467,7 @@ LEFT JOIN layouts l ON l.asset_id = a.id
 ORDER BY a.created_at DESC;
 ```
 
-### Qué ítems están enriquecidos semánticamente
+### Which items are semantically enriched
 
 ```sql
 SELECT
@@ -483,7 +483,7 @@ ORDER BY i.updated_at DESC;
 
 ---
 
-## Comandos útiles de sqlite3
+## Useful sqlite3 commands
 
 ```sql
 .tables
@@ -497,15 +497,15 @@ PRAGMA integrity_check;
 PRAGMA quick_check;
 ```
 
-## Recomendación brutalmente práctica
+## Brutally practical recommendation
 
-Cuando algo falla, no empieces por inferencias. Empezá por evidencia:
+When something fails, do not start with guesses. Start with evidence:
 
 1. `assets`
 2. `extractions` / `transcriptions` / `layouts`
 3. `entities` / `triples` / `topics`
 4. `fts_items` / `vec_assets`
 
-Es así de simple. Primero verificás persistencia. Después discutís lógica.
+It is that simple. First you verify persistence. Then you discuss logic.
 
-> Compatibilidad: si abrís una base vieja y todavía aparece `jobs`, tratala como una tabla legacy. El runtime actual no la usa y la cleanup vigente la elimina con la migración `0021_drop_unused_processing_table`.
+> Compatibility: if you open an old database and `jobs` still appears, treat it as a legacy table. The current runtime does not use it, and the active cleanup removes it with migration `0021_drop_unused_processing_table`.

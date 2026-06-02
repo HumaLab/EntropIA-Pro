@@ -1,5 +1,7 @@
 # EntropIA Pro
 
+**English:** [README.en.md](./README.en.md)
+
 **Release actual:** [v0.1.0](https://github.com/hlabrepo/EntropIA-Pro/releases/tag/v0.1.0)
 
 EntropIA Pro es una aplicación de escritorio para investigación con corpus documentales. Permite organizar colecciones, procesar imágenes/PDFs/audio, enriquecer resultados con OCR, transcripción, búsqueda, embeddings, entidades y triples semánticos.
@@ -95,10 +97,10 @@ Los pushes directos de tags `v*` fallan cerrado si no existe payload de runtime 
 ## Documentación útil
 
 - [SQLite](./SQLite.md) — esquema y guía de inspección de la base local.
-- [Database Debugging](./DATABASE_DEBUGGING.md) — consultas operativas para diagnosticar persistencia.
-- [Code Signing](./CODE_SIGNING.md) — política de firma para releases.
-- [Privacy](./PRIVACY.md) — comportamiento de datos, runtimes y proveedores externos.
-- [Third Party Notices](./THIRD_PARTY_NOTICES.md) — dependencias, modelos y runtime payloads.
+- [Debugging de base de datos](./DATABASE_DEBUGGING.md) — consultas operativas para diagnosticar persistencia.
+- [Firma de código](./CODE_SIGNING.md) — política de firma para releases.
+- [Privacidad](./PRIVACY.md) — comportamiento de datos, runtimes y proveedores externos.
+- [Avisos de terceros](./THIRD_PARTY_NOTICES.md) — dependencias, modelos y runtime payloads.
 
 ---
 

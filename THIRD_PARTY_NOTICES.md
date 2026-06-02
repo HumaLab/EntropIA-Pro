@@ -1,48 +1,50 @@
-# Third-Party Notices and Release Payload Policy
+# Avisos de terceros y política de payloads de release
 
-EntropIA Pro depends on Rust, Node, Python, native libraries, AI models, and runtime payload artifacts. This file records the release-time review policy; it is not yet a complete generated SBOM.
+**English:** [THIRD_PARTY_NOTICES.en.md](./THIRD_PARTY_NOTICES.en.md)
 
-## Release rule
+EntropIA Pro depende de Rust, Node, Python, librerías nativas, modelos de IA y artefactos de runtime payload. Este archivo registra la política de revisión para release; todavía no es un SBOM generado completo.
 
-A self-contained installer must not be published unless every bundled runtime artifact is traceable and redistributable.
+## Regla de release
 
-Before signing or publishing a final installer, verify:
+No se debe publicar un instalador self-contained salvo que cada artefacto de runtime bundleado sea trazable y redistribuible.
 
-- [ ] Rust and Node dependency licenses are acceptable for redistribution.
-- [ ] Python wheels in the release wheelhouse are license-reviewed.
-- [ ] Native libraries are license-reviewed and version-pinned.
-- [ ] Bundled or seeded model caches have license terms compatible with redistribution.
-- [ ] `runtime-pack-smoke.py --release --install-probe` passes on the assembled runtime-pack.
-- [ ] The release notes include installer hashes.
+Antes de firmar o publicar un instalador final, verificar:
 
-## Known bundled/runtime components
+- [ ] Las licencias de dependencias Rust y Node son aceptables para redistribución.
+- [ ] Los wheels Python del wheelhouse de release fueron revisados por licencia.
+- [ ] Las librerías nativas fueron revisadas por licencia y fijadas por versión.
+- [ ] Los modelos bundleados o caches presembrados tienen términos compatibles con redistribución.
+- [ ] `runtime-pack-smoke.py --release --install-probe` pasa sobre el runtime-pack ensamblado.
+- [ ] Las notas de release incluyen hashes de instaladores.
 
-| Component | Purpose | Current source/path | Review status |
-| --------- | ------- | ------------------- | ------------- |
-| Pdfium | PDF rendering | `resources/lib/pdfium.dll`, release runtime payload native libs | Needs version/license trace in release notes or SBOM. |
-| ONNX Runtime | ONNX consumers in release runtime payloads | release payload `resources/lib/onnxruntime.dll` or `resources/lib/libonnxruntime.so` | Native ONNX NER was removed; keep ONNX Runtime in release payloads only for validated runtime consumers. |
-| uv | Managed Python environment bootstrap | `resources/tools/uv/*`, runtime payload `uv/` | Needs version/license trace. |
-| Python runtime | OCR/NLP/transcription subprocess runtime | release runtime payload `python/` | Must be redistributable and version-stamped. |
-| Python wheelhouse | Offline install for AI dependencies | release runtime payload `wheelhouse/` | Must be generated from reviewed packages. |
-| Hugging Face caches | faster-whisper/model cache seeds | release runtime payload `caches/hf/` | Each model license must be reviewed. |
-| PaddleX caches | PaddleOCR-VL/layout model cache seeds | release runtime payload `caches/paddlex/` | Each model license must be reviewed. |
-| Gemma GGUF | Local LLM downloaded by user/app | Hugging Face URL configured in LLM settings | Downloaded model terms must be visible to users before relying on redistribution. |
+## Componentes bundleados/runtime conocidos
 
-## License risks already identified
+| Componente | Propósito | Fuente/ruta actual | Estado de revisión |
+| ---------- | --------- | ------------------ | ------------------ |
+| Pdfium | Renderizado PDF | `resources/lib/pdfium.dll`, librerías nativas del release runtime payload | Necesita traza de versión/licencia en notas de release o SBOM. |
+| ONNX Runtime | Consumidores ONNX en release runtime payloads | release payload `resources/lib/onnxruntime.dll` o `resources/lib/libonnxruntime.so` | El NER nativo ONNX fue removido; mantener ONNX Runtime en payloads de release solo para consumidores runtime validados. |
+| uv | Bootstrap del entorno Python administrado | `resources/tools/uv/*`, runtime payload `uv/` | Necesita traza de versión/licencia. |
+| Runtime Python | Runtime subprocess para OCR/NLP/transcripción | release runtime payload `python/` | Debe ser redistribuible y estar versionado. |
+| Wheelhouse Python | Instalación offline para dependencias IA | release runtime payload `wheelhouse/` | Debe generarse desde paquetes revisados. |
+| Caches Hugging Face | Seeds de faster-whisper/model cache | release runtime payload `caches/hf/` | Cada licencia de modelo debe revisarse. |
+| Caches PaddleX | Seeds de PaddleOCR-VL/layout model cache | release runtime payload `caches/paddlex/` | Cada licencia de modelo debe revisarse. |
+| Gemma GGUF | LLM local descargado por usuario/app | URL de Hugging Face configurada en LLM settings | Los términos del modelo descargado deben ser visibles para usuarios antes de depender de redistribución. |
 
-- If spaCy model packages are reintroduced in a future profile, verify their GPL-family terms before bundling; the current lightweight runtime path does not depend on spaCy.
-- Some Hugging Face models may not expose clear license metadata; do not bundle them until the license is confirmed.
-- Large PaddleOCR-VL cache artifacts can break Windows installer tooling; do not include oversized files unless the bundler has been validated.
+## Riesgos de licencia ya identificados
 
-## SBOM expectation
+- Si se reintroducen paquetes de modelos spaCy en un perfil futuro, verificar sus términos GPL-family antes de bundlearlos; el runtime liviano actual no depende de spaCy.
+- Algunos modelos de Hugging Face pueden no exponer metadata de licencia clara; no bundlearlos hasta confirmar la licencia.
+- Artefactos grandes de cache PaddleOCR-VL pueden romper tooling de instalador Windows; no incluir archivos sobredimensionados salvo que el bundler haya sido validado.
 
-The target release process should produce or attach an SBOM covering:
+## Expectativa de SBOM
 
-- Cargo dependencies;
-- pnpm dependencies;
-- Python wheels;
-- native DLL/shared libraries;
-- AI model files and seeded caches;
-- release runtime-pack manifest checksums.
+El proceso de release objetivo debería producir o adjuntar un SBOM que cubra:
 
-Until that SBOM exists, this file is the human-readable checklist for release reviewers.
+- dependencias Cargo;
+- dependencias pnpm;
+- wheels Python;
+- DLLs/librerías compartidas nativas;
+- archivos de modelos IA y caches presembrados;
+- checksums del manifest del release runtime-pack.
+
+Hasta que exista ese SBOM, este archivo es el checklist legible por humanos para revisores de release.

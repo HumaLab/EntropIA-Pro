@@ -1,43 +1,43 @@
-# SQLite de EntropIA Pro
+# EntropIA Pro SQLite
 
-**English:** [SQLite.en.md](./SQLite.en.md)
+**Español:** [SQLite.md](./SQLite.md)
 
-Documentación de la base SQLite activa de EntropIA Pro, cómo inspeccionarla y cuál es su esquema actual.
+Documentation for the active EntropIA Pro SQLite database: where it lives, how to inspect it, and what the current schema looks like.
 
-## Ubicación de la base activa
+## Active database location
 
-La base activa detectada para la app Tauri actual es:
+The active database detected for the current Tauri app is:
 
 ```text
 %APPDATA%\com.entropia.pro.desktop\entropia.sqlite
 ```
 
-El backend todavía reconoce una base legacy para migrar instalaciones antiguas:
+The backend still recognizes a legacy database path to migrate older installations:
 
 ```text
 %APPDATA%\com.entropia.app\entropia.sqlite
 ```
 
-## De dónde sale esta ruta
+## Where this path comes from
 
 - `apps/desktop/src-tauri/tauri.conf.json`
   - `identifier`: `com.entropia.pro.desktop`
   - `productName`: `EntropIA Pro`
 - `apps/desktop/src-tauri/src/lib.rs`
-  - usa `app.path().app_data_dir()`
-  - crea/abre `entropia.sqlite` dentro de ese directorio
+  - uses `app.path().app_data_dir()`
+  - creates/opens `entropia.sqlite` inside that directory
 
-## Cómo abrir la base
+## Open the database
 
-Si tenés `sqlite3` instalado:
+If you have `sqlite3` installed:
 
 ```powershell
 sqlite3 "$env:APPDATA\com.entropia.pro.desktop\entropia.sqlite"
 ```
 
-## Comandos básicos de inspección
+## Basic inspection commands
 
-Dentro de `sqlite3`:
+Inside `sqlite3`:
 
 ```sql
 .tables
@@ -46,23 +46,23 @@ Dentro de `sqlite3`:
 PRAGMA table_info(assets);
 ```
 
-## Contrato FTS5 canónico
+## Canonical FTS5 contract
 
-El índice `fts_items` es una tabla FTS5 **contentless**. El contrato obligatorio es:
+The `fts_items` index is a **contentless** FTS5 table. The mandatory contract is:
 
 - `fts_items.rowid = items.rowid`
-- `item_id` es solo un payload auxiliar, NO la identidad del índice
-- todos los inserts al índice deben escribir `rowid` explícito
-- los deletes por `item_id` son incompatibles con este diseño y NO se usan
-- cuando hay dudas de drift, el procedimiento seguro es `delete-all + rebuild`
+- `item_id` is only an auxiliary payload, NOT the index identity
+- every insert into the index must write an explicit `rowid`
+- deletes by `item_id` are incompatible with this design and are NOT used
+- when drift is suspected, the safe procedure is `delete-all + rebuild`
 
-En la base actual esto se corrige con:
+In the current database this is corrected with:
 
-- migración baseline `0004_fts5.sql` usando `rowid` explícito
-- migración correctiva `0018_fts_rowid_canonical.sql` para bases existentes
-- rebuild operativo desde los flujos de indexación de la app cuando haga falta recomputar el índice
+- baseline migration `0004_fts5.sql` using explicit `rowid`
+- corrective migration `0018_fts_rowid_canonical.sql` for existing databases
+- operational rebuild from app indexing flows whenever the index needs recomputation
 
-## Script SQL para listar tablas
+## SQL script to list tables
 
 ```sql
 SELECT name
@@ -72,16 +72,16 @@ WHERE type = 'table'
 ORDER BY name;
 ```
 
-## Script SQL para listar tabla -> columnas
+## SQL script to list table -> columns
 
 ```sql
 SELECT
-  m.name AS tabla,
+  m.name AS table_name,
   p.cid AS col_id,
-  p.name AS columna,
-  p.type AS tipo,
+  p.name AS column_name,
+  p.type AS type,
   p."notnull" AS not_null,
-  p.pk AS es_pk
+  p.pk AS is_pk
 FROM sqlite_master m
 JOIN pragma_table_info(m.name) p
 WHERE m.type = 'table'
@@ -89,7 +89,7 @@ WHERE m.type = 'table'
 ORDER BY m.name, p.cid;
 ```
 
-## Script SQL completo para inspección rápida
+## Full SQL script for quick inspection
 
 ```sql
 .tables
@@ -123,11 +123,11 @@ PRAGMA table_info(triples);
 PRAGMA table_info(vec_assets);
 ```
 
-> Si inspeccionás una base vieja y aparecen `vec_items` o `embeddings_fallback`, tomalos como leftovers legacy: la arquitectura runtime actual usa solo `vec_assets` para embeddings/similitud.
+> If you inspect an old database and see `vec_items` or `embeddings_fallback`, treat them as legacy leftovers: the current runtime architecture only uses `vec_assets` for embeddings/similarity.
 
-## Clasificación de tablas
+## Table classification
 
-### Tablas de negocio
+### Business tables
 
 - `collections`
 - `items`
@@ -144,17 +144,17 @@ PRAGMA table_info(vec_assets);
 - `llm_results`
 - `app_settings`
 
-### Tablas técnicas / infraestructura
+### Technical / infrastructure tables
 
 - `_migrations`
 - `vec_assets`
 
-### Legacy / archive (solo snapshots viejos)
+### Legacy / archive (old snapshots only)
 
 - `vec_items`
 - `embeddings_fallback`
 
-### Tablas internas de FTS5
+### FTS5 internal tables
 
 - `fts_items`
 - `fts_items_config`
@@ -162,11 +162,11 @@ PRAGMA table_info(vec_assets);
 - `fts_items_docsize`
 - `fts_items_idx`
 
-> Nota: `fts_items_*` pertenece al índice full-text y no representa entidades de negocio normales.
+> Note: `fts_items_*` belongs to the full-text index and does not represent normal business entities.
 
-> Nota importante: en EntropIA Pro la identidad real del índice NO es `fts_items.item_id`, sino `fts_items.rowid` alineado con `items.rowid`.
+> Important note: in EntropIA Pro, the real identity of the index is NOT `fts_items.item_id`, but `fts_items.rowid` aligned with `items.rowid`.
 
-## Árbol: base -> tablas -> variables
+## Tree: database -> tables -> variables
 
 ### `entropia.sqlite`
 
@@ -345,7 +345,7 @@ PRAGMA table_info(vec_assets);
 - `item_id`
 - `embedding`
 
-## Relaciones conceptuales
+## Conceptual relationships
 
 ```text
 collections -> items -> assets -> (extractions, transcriptions, layouts, annotations)
@@ -353,7 +353,7 @@ items -> (notes, entities, triples, item_topics)
 item_topics -> topics
 ```
 
-## Mini ERD ASCII
+## Mini ASCII ERD
 
 ```text
 collections
@@ -386,22 +386,22 @@ assets
   └── 1:1 -> vec_assets
 ```
 
-### Lectura rápida del ERD
+### Quick ERD reading
 
-- una `collection` agrupa muchos `items`
-- un `item` puede tener muchos `assets`
-- un `asset` concentra procesamiento derivado persistido: OCR, transcripción, layout y anotaciones
-- un `item` concentra conocimiento semántico: notas, entidades, triples y tópicos
-- la relación entre `items` y `topics` es muchos-a-muchos mediante `item_topics`
-- `vec_assets` soporta embeddings y similitud asset-level
-- `vec_items` y `embeddings_fallback` pertenecen a notas legacy, no al runtime activo
+- one `collection` groups many `items`
+- one `item` can have many `assets`
+- one `asset` concentrates persisted derived processing: OCR, transcription, layout, and annotations
+- one `item` concentrates semantic knowledge: notes, entities, triples, and topics
+- the relationship between `items` and `topics` is many-to-many through `item_topics`
+- `vec_assets` supports asset-level embeddings and similarity
+- `vec_items` and `embeddings_fallback` belong to legacy notes, not to the active runtime
 
-## PK/FK por tabla
+## PK/FK by table
 
 ### `_migrations`
 
 - PK: `id`
-- FK: ninguna
+- FK: none
 
 ### `annotations`
 
@@ -412,7 +412,7 @@ assets
 ### `app_settings`
 
 - PK: `key`
-- FK: ninguna
+- FK: none
 
 ### `assets`
 
@@ -423,12 +423,12 @@ assets
 ### `collections`
 
 - PK: `id`
-- FK: ninguna
+- FK: none
 
 ### `entities`
 
 - PK: `id`
-- FK conceptuales:
+- Conceptual FKs:
   - `item_id -> items.id`
   - `asset_id -> assets.id`
 
@@ -440,29 +440,29 @@ assets
 
 ### `fts_items`
 
-- PK: virtual FTS5, sin PK de negocio clásica
-- FK conceptual:
+- PK: virtual FTS5, no classic business PK
+- Conceptual FK:
   - `item_id -> items.id`
 
 ### `fts_items_config`
 
 - PK: `k`
-- FK: ninguna
+- FK: none
 
 ### `fts_items_data`
 
 - PK: `id`
-- FK: interna FTS5
+- FK: internal FTS5
 
 ### `fts_items_docsize`
 
 - PK: `id`
-- FK: interna FTS5
+- FK: internal FTS5
 
 ### `fts_items_idx`
 
-- PK compuesta: `segid`, `term`
-- FK: interna FTS5
+- Composite PK: `segid`, `term`
+- FK: internal FTS5
 
 ### `item_topics`
 
@@ -486,23 +486,23 @@ assets
 ### `llm_results`
 
 - PK: `id`
-- FK conceptual tipada:
+- Typed conceptual FK:
   - `target_type='asset' -> target_id -> assets.id`
   - `target_type='item' -> target_id -> items.id`
   - `target_type='collection' -> target_id -> collections.id`
-  - `target_type='unknown'` reservado para filas legacy no inferibles
+  - `target_type='unknown'` reserved for non-inferable legacy rows
 
 ### `notes`
 
 - PK: `id`
-- FK conceptuales:
+- Conceptual FKs:
   - `item_id -> items.id`
   - `asset_id -> assets.id`
 
 ### `topics`
 
 - PK: `id`
-- FK: ninguna
+- FK: none
 
 ### `transcriptions`
 
@@ -513,14 +513,14 @@ assets
 ### `triples`
 
 - PK: `id`
-- FK conceptuales:
+- Conceptual FKs:
   - `item_id -> items.id`
   - `asset_id -> assets.id`
 
 ### `vec_assets`
 
 - PK: `asset_id`
-- FK conceptual:
+- Conceptual FK:
   - `asset_id -> assets.id`
   - `item_id -> items.id`
 
@@ -546,15 +546,15 @@ erDiagram
     assets ||--|| vec_assets : embeds
 ```
 
-### Nota sobre FK reales vs conceptuales
+### Note about real vs conceptual FKs
 
-- Algunas relaciones están respaldadas por foreign keys reales en SQLite.
-- Otras aparecen por convención de esquema y uso en código, aunque no siempre estén reforzadas con constraint explícita.
-- Esto importa MUCHO: una cosa es el modelo lógico y otra el enforcement físico de SQLite.
+- Some relationships are backed by real SQLite foreign keys.
+- Others appear by schema and code-use convention, even when they are not always enforced by an explicit constraint.
+- This matters A LOT: the logical model and SQLite physical enforcement are different things.
 
-## Índices y constraints reales observados
+## Observed real indexes and constraints
 
-### Constraints destacadas por tabla
+### Highlighted constraints by table
 
 #### `_migrations`
 
@@ -567,7 +567,7 @@ erDiagram
 - `PRIMARY KEY (id)`
 - `FOREIGN KEY (asset_id) REFERENCES assets(id) ON DELETE CASCADE`
 - `CHECK kind IN ('rectangle', 'underline')`
-- `NOT NULL` en casi todas las columnas operativas
+- `NOT NULL` on almost every operational column
 
 #### `app_settings`
 
@@ -606,7 +606,7 @@ erDiagram
 
 #### `fts_items`
 
-- tabla virtual `FTS5`
+- virtual `FTS5` table
 - `tokenize='unicode61 remove_diacritics 1'`
 - `content=''` (contentless FTS)
 
@@ -633,13 +633,13 @@ erDiagram
 
 - `PRIMARY KEY (id)`
 - `target_type CHECK ('asset' | 'item' | 'collection' | 'unknown')`
-- sin FK física sobre `target_id`, pero con scope explícito por `target_type`
+- no physical FK on `target_id`, but explicit scope through `target_type`
 
 #### `notes`
 
 - `PRIMARY KEY (id)`
 - `FOREIGN KEY (item_id) REFERENCES items(id)`
-- `asset_id` existe pero sin FK física explícita en el schema observado
+- `asset_id` exists but has no explicit physical FK in the observed schema
 
 #### `topics`
 
@@ -657,15 +657,15 @@ erDiagram
 - `PRIMARY KEY (id)`
 - `FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE`
 - `DEFAULT created_at = strftime('%s', 'now')`
-- `asset_id` existe pero sin FK física explícita en el schema observado
+- `asset_id` exists but has no explicit physical FK in the observed schema
 
 #### `vec_assets`
 
 - `PRIMARY KEY (asset_id)`
 - `item_id NOT NULL`
-- sin FKs físicas explícitas en el schema observado
+- no explicit physical FKs in the observed schema
 
-### Índices observados
+### Observed indexes
 
 - `annotations_asset_id_idx` → `annotations(asset_id)`
 - `annotations_asset_page_idx` → `annotations(asset_id, page)`
@@ -692,17 +692,17 @@ erDiagram
 - `idx_vec_assets_item_id` → `vec_assets(item_id)`
 - `triples_item_id_idx` → `triples(item_id)`
 
-### Implicancias arquitectónicas
+### Architectural implications
 
-- `extractions` y `transcriptions` están modeladas efectivamente como **1:1 por asset** por sus índices únicos sobre `asset_id`.
-- `item_topics` evita duplicados lógicos con índice único `(item_id, topic_id)`.
-- `items.search_text` es una columna generada pensada para acelerar búsqueda/filtrado.
-- `notes.asset_id`, `triples.asset_id`, `entities.asset_id`, `vec_assets` y `llm_results.target_id` no siempre tienen FK física, así que parte de la integridad depende de la app; en `llm_results` el `target_type` reduce ambigüedad y permite cleanup explícito.
+- `extractions` and `transcriptions` are effectively modeled as **1:1 per asset** because of their unique indexes on `asset_id`.
+- `item_topics` prevents logical duplicates with the unique `(item_id, topic_id)` index.
+- `items.search_text` is a generated column meant to speed up search/filtering.
+- `notes.asset_id`, `triples.asset_id`, `entities.asset_id`, `vec_assets`, and `llm_results.target_id` do not always have a physical FK, so part of integrity depends on the app; in `llm_results`, `target_type` reduces ambiguity and enables explicit cleanup.
 
-## Query SQL de relaciones conceptuales
+## SQL query for conceptual relationships
 
 ```sql
-SELECT 'items -> collections' AS relacion, 'items.collection_id = collections.id'
+SELECT 'items -> collections' AS relationship, 'items.collection_id = collections.id'
 UNION ALL
 SELECT 'assets -> items', 'assets.item_id = items.id'
 UNION ALL
@@ -731,9 +731,9 @@ UNION ALL
 SELECT 'layouts -> assets', 'layouts.asset_id = assets.id';
 ```
 
-## Tablas observadas en la inspección actual
+## Tables observed in the current inspection
 
-La inspección en la base activa devolvió estas tablas:
+The active database inspection returned these tables:
 
 - `_migrations`
 - `annotations`
@@ -757,20 +757,20 @@ La inspección en la base activa devolvió estas tablas:
 - `triples`
 - `vec_assets`
 
-## Notas de arquitectura observadas en código
+## Architecture notes observed in code
 
-- La app configura SQLite con:
+- The app configures SQLite with:
   - `PRAGMA journal_mode=WAL;`
   - `PRAGMA foreign_keys=ON;`
-- En `apps/desktop/src-tauri/src/lib.rs` se fuerzan índices únicos por `asset_id` para:
+- In `apps/desktop/src-tauri/src/lib.rs`, unique indexes by `asset_id` are forced for:
   - `extractions`
   - `transcriptions`
-- La tabla `layouts` se asegura en startup para persistencia de regiones OCR/PaddleVL.
-- `app_settings` también se asegura en startup para configuración de usuario.
+- The `layouts` table is ensured on startup for OCR/PaddleVL region persistence.
+- `app_settings` is also ensured on startup for user configuration.
 
-## Recomendación de inspección rápida
+## Quick inspection recommendation
 
-Si querés mirar el corazón funcional de EntropIA, arrancá por estas tablas:
+If you want to inspect EntropIA's functional core, start with these tables:
 
 ```sql
 .schema items
@@ -781,11 +781,11 @@ Si querés mirar el corazón funcional de EntropIA, arrancá por estas tablas:
 .schema triples
 ```
 
-## Queries útiles por tabla
+## Useful queries by table
 
 ### `collections`
 
-Ver colecciones ordenadas por fecha:
+View collections ordered by date:
 
 ```sql
 SELECT id, name, description, created_at, updated_at
@@ -795,7 +795,7 @@ ORDER BY created_at DESC;
 
 ### `items`
 
-Ver ítems con su colección:
+View items with their collection:
 
 ```sql
 SELECT
@@ -811,26 +811,26 @@ ORDER BY i.created_at DESC;
 
 ### `assets`
 
-Ver assets de un ítem:
+View assets for an item:
 
 ```sql
 SELECT id, item_id, path, type, size, sort_index, created_at
 FROM assets
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY sort_index, created_at;
 ```
 
 ### `extractions`
 
-Ver OCR/extracción de un asset:
+View OCR/extraction for an asset:
 
 ```sql
 SELECT id, asset_id, method, confidence, created_at, text_content
 FROM extractions
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
-Buscar extractions por método:
+Search extractions by method:
 
 ```sql
 SELECT asset_id, method, confidence, created_at
@@ -841,59 +841,59 @@ ORDER BY created_at DESC;
 
 ### `transcriptions`
 
-Ver transcripción de un asset:
+View transcription for an asset:
 
 ```sql
 SELECT id, asset_id, language, duration_ms, model, confidence, created_at, text_content
 FROM transcriptions
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
 ### `layouts`
 
-Ver layout OCR persistido:
+View persisted OCR layout:
 
 ```sql
 SELECT id, asset_id, model, image_width, image_height, created_at, regions
 FROM layouts
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
 ### `annotations`
 
-Ver anotaciones de un asset:
+View annotations for an asset:
 
 ```sql
 SELECT id, asset_id, page, kind, color, x, y, width, height, created_at, updated_at
 FROM annotations
-WHERE asset_id = 'ASSET_ID_AQUI'
+WHERE asset_id = 'ASSET_ID_HERE'
 ORDER BY page, created_at;
 ```
 
 ### `notes`
 
-Ver notas por ítem o asset:
+View notes by item or asset:
 
 ```sql
 SELECT id, item_id, asset_id, content, created_at, updated_at
 FROM notes
-WHERE item_id = 'ITEM_ID_AQUI'
-   OR asset_id = 'ASSET_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
+   OR asset_id = 'ASSET_ID_HERE'
 ORDER BY updated_at DESC;
 ```
 
 ### `entities`
 
-Ver entidades de un ítem:
+View entities for an item:
 
 ```sql
 SELECT id, item_id, asset_id, entity_type, value, confidence, source, model_name, geo_status
 FROM entities
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY confidence DESC, value;
 ```
 
-Ver entidades geográficas resueltas:
+View resolved geographic entities:
 
 ```sql
 SELECT value, latitude, longitude, geo_status, confidence
@@ -905,30 +905,30 @@ ORDER BY confidence DESC;
 
 ### `triples`
 
-Ver triples de un ítem:
+View triples for an item:
 
 ```sql
 SELECT id, item_id, asset_id, subject, predicate, object, created_at
 FROM triples
-WHERE item_id = 'ITEM_ID_AQUI'
+WHERE item_id = 'ITEM_ID_HERE'
 ORDER BY created_at DESC;
 ```
 
 ### `topics` + `item_topics`
 
-Ver tópicos asociados a un ítem:
+View topics associated with an item:
 
 ```sql
 SELECT t.id, t.name, it.created_at
 FROM item_topics it
 JOIN topics t ON t.id = it.topic_id
-WHERE it.item_id = 'ITEM_ID_AQUI'
+WHERE it.item_id = 'ITEM_ID_HERE'
 ORDER BY t.name;
 ```
 
 ### `llm_results`
 
-Ver resultados LLM persistidos:
+View persisted LLM results:
 
 ```sql
 SELECT id, target_id, target_type, job_type, created_at, result
@@ -936,7 +936,7 @@ FROM llm_results
 ORDER BY created_at DESC;
 ```
 
-Chequeo de timestamps legacy que quedaron en segundos (NO debería devolver filas):
+Check for legacy timestamps that remained in seconds (should NOT return rows):
 
 ```sql
 SELECT id, target_id, target_type, job_type, created_at
@@ -947,7 +947,7 @@ ORDER BY created_at ASC;
 
 ### `fts_items`
 
-Buscar ítems por full-text:
+Search items by full-text:
 
 ```sql
 SELECT item_id, title, snippet(fts_items, 3, '[', ']', '...', 12) AS preview
@@ -958,7 +958,7 @@ LIMIT 20;
 
 ### `vec_assets`
 
-Inspección rápida de embeddings persistidos:
+Quick inspection of persisted embeddings:
 
 ```sql
 SELECT asset_id, item_id, length(embedding) AS embedding_bytes
@@ -966,9 +966,9 @@ FROM vec_assets
 LIMIT 20;
 ```
 
-## Queries de debugging cruzado
+## Cross-debugging queries
 
-### Ver un ítem completo con colección y assets
+### View one full item with collection and assets
 
 ```sql
 SELECT
@@ -982,11 +982,11 @@ SELECT
 FROM items i
 JOIN collections c ON c.id = i.collection_id
 LEFT JOIN assets a ON a.item_id = i.id
-WHERE i.id = 'ITEM_ID_AQUI'
+WHERE i.id = 'ITEM_ID_HERE'
 ORDER BY a.sort_index, a.created_at;
 ```
 
-### Ver qué assets ya tienen OCR/transcripción/layout
+### View which assets already have OCR/transcription/layout
 
 ```sql
 SELECT
@@ -999,11 +999,11 @@ FROM assets a
 LEFT JOIN extractions e ON e.asset_id = a.id
 LEFT JOIN transcriptions t ON t.asset_id = a.id
 LEFT JOIN layouts l ON l.asset_id = a.id
-WHERE a.item_id = 'ITEM_ID_AQUI'
+WHERE a.item_id = 'ITEM_ID_HERE'
 ORDER BY a.sort_index, a.created_at;
 ```
 
-### Ver texto consolidado por asset
+### View consolidated text by asset
 
 ```sql
 SELECT
@@ -1014,10 +1014,10 @@ SELECT
 FROM assets a
 LEFT JOIN extractions e ON e.asset_id = a.id
 LEFT JOIN transcriptions t ON t.asset_id = a.id
-WHERE a.item_id = 'ITEM_ID_AQUI';
+WHERE a.item_id = 'ITEM_ID_HERE';
 ```
 
-### Ver enriquecimiento semántico por ítem
+### View semantic enrichment by item
 
 ```sql
 SELECT
@@ -1028,18 +1028,18 @@ SELECT
   (SELECT COUNT(*) FROM notes n WHERE n.item_id = i.id) AS note_count,
   (SELECT COUNT(*) FROM item_topics it WHERE it.item_id = i.id) AS topic_count
 FROM items i
-WHERE i.id = 'ITEM_ID_AQUI';
+WHERE i.id = 'ITEM_ID_HERE';
 ```
 
-## Dónde mirar según el problema
+## Where to look depending on the problem
 
-### “No aparece mi colección o ítem”
+### “My collection or item does not show up”
 
-- mirar `collections`
-- mirar `items`
-- verificar `items.collection_id`
+- look at `collections`
+- look at `items`
+- verify `items.collection_id`
 
-Query útil:
+Useful query:
 
 ```sql
 SELECT i.id, i.title, i.collection_id, c.name
@@ -1048,12 +1048,12 @@ LEFT JOIN collections c ON c.id = i.collection_id
 ORDER BY i.created_at DESC;
 ```
 
-### “El asset está cargado pero no se procesa”
+### “The asset is loaded but does not process”
 
-- mirar `assets`
-- mirar `extractions`, `transcriptions`, `layouts`
+- look at `assets`
+- look at `extractions`, `transcriptions`, `layouts`
 
-Query útil:
+Useful query:
 
 ```sql
 SELECT
@@ -1067,70 +1067,70 @@ FROM assets a
 LEFT JOIN extractions e ON e.asset_id = a.id
 LEFT JOIN transcriptions t ON t.asset_id = a.id
 LEFT JOIN layouts l ON l.asset_id = a.id
-WHERE a.id = 'ASSET_ID_AQUI'
+WHERE a.id = 'ASSET_ID_HERE'
 LIMIT 1;
 ```
 
-### “Falló el OCR”
+### “OCR failed”
 
-- mirar `extractions.method`
-- mirar `extractions.confidence`
-- mirar `layouts` si era OCR High
+- look at `extractions.method`
+- look at `extractions.confidence`
+- look at `layouts` if it was OCR High
 
-### “Falló la transcripción”
+### “Transcription failed”
 
-- mirar `transcriptions`
-- revisar si existe fila persistida y con qué metadata/modelo
+- look at `transcriptions`
+- review whether a row exists and which metadata/model it has
 
-### “No veo entidades o triples”
+### “I cannot see entities or triples”
 
-- mirar `entities`
-- mirar `triples`
-- verificar que el `item_id` o `asset_id` correcto exista antes
+- look at `entities`
+- look at `triples`
+- verify that the correct `item_id` or `asset_id` exists first
 
-### “El tópico no aparece asociado”
+### “The topic does not appear associated”
 
-- mirar `topics`
-- mirar `item_topics`
+- look at `topics`
+- look at `item_topics`
 
-### “La búsqueda full-text no devuelve nada”
+### “Full-text search returns nothing”
 
-- mirar `fts_items`
-- validar que el ítem haya sido indexado
+- look at `fts_items`
+- validate that the item was indexed
 
-Query útil:
+Useful query:
 
 ```sql
 SELECT item_id, title, metadata, extracted_text
 FROM fts_items
-WHERE item_id = 'ITEM_ID_AQUI';
+WHERE item_id = 'ITEM_ID_HERE';
 ```
 
-### “La similitud / embeddings no funciona”
+### “Similarity / embeddings are not working”
 
-- mirar `vec_assets`
-- validar que `embedding` no esté vacío
+- look at `vec_assets`
+- validate that `embedding` is not empty
 
-Query útil:
+Useful query:
 
 ```sql
 SELECT asset_id, item_id, length(embedding) AS bytes
 FROM vec_assets
-WHERE asset_id = 'ASSET_ID_AQUI';
+WHERE asset_id = 'ASSET_ID_HERE';
 ```
 
-> Archivo legacy: si una base vieja todavía conserva `vec_items` o `embeddings_fallback`, no forman parte del contrato runtime/product actual.
+> Legacy file note: if an old database still keeps `vec_items` or `embeddings_fallback`, they are not part of the current runtime/product contract.
 
-## Checklist de debugging rápido
+## Quick debugging checklist
 
 ```text
-1. ¿Existe la collection?
-2. ¿Existe el item y apunta a la collection correcta?
-3. ¿Existen assets para ese item?
-4. ¿Se persistió extraction o transcription?
-5. ¿Se generó layout/anotación si correspondía?
-6. ¿Se generaron entities/triples/topics?
-7. ¿Se indexó en FTS o embeddings si el flujo lo requería?
+1. Does the collection exist?
+2. Does the item exist and point to the right collection?
+3. Do assets exist for that item?
+4. Was extraction or transcription persisted?
+5. Was layout/annotation generated if applicable?
+6. Were entities/triples/topics generated?
+7. Was FTS or embeddings indexing generated if the flow required it?
 ```
 
-> Compatibilidad: bases existentes pueden traer una tabla legacy `jobs` creada por migraciones viejas. La cleanup actual la elimina con `0021_drop_unused_processing_table`; no forma parte del esquema runtime soportado.
+> Compatibility: existing databases may include a legacy `jobs` table created by old migrations. The current cleanup removes it with `0021_drop_unused_processing_table`; it is not part of the supported runtime schema.

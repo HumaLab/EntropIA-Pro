@@ -1,14 +1,16 @@
-# Windows runtime-pack fixture
+# Fixture runtime-pack Windows
+
+**English:** [ASSEMBLY_NOTES.en.md](./ASSEMBLY_NOTES.en.md)
 
 - `payload_profile`: `fixture`
 - `release_injection_required`: `true`
-- Real release packaging must replace these placeholder files with redistributable Python, offline wheels and seeded caches.
-- This repo slice makes the runtime-pack structure testable and bundleable without lying about shipping the heavy payloads in git.
-- Expected runtime entrypoints after handoff: `python/python.exe` and `uv/uv.exe`.
-- Expected native asset handoff: `resources/lib/pdfium.dll` and `resources/lib/onnxruntime.dll`.
-- `build_runtime_pack.py --payload-root` accepts either a direct payload layout or `.../windows-x86_64/...`; the release workflow overlays that payload on top of this fixture and regenerates `manifest.json` plus `assembly-summary.json`.
+- El empaquetado de release real debe reemplazar estos archivos placeholder con Python redistribuible, wheels offline y caches presembradas.
+- Este slice del repo hace que la estructura de runtime-pack sea testeable y bundleable sin mentir diciendo que los payloads pesados están en git.
+- Entrypoints esperados del runtime después del handoff: `python/python.exe` y `uv/uv.exe`.
+- Handoff esperado de assets nativos: `resources/lib/pdfium.dll` y `resources/lib/onnxruntime.dll`.
+- `build_runtime_pack.py --payload-root` acepta tanto un layout directo como `.../windows-x86_64/...`; el workflow de release superpone ese payload sobre este fixture y regenera `manifest.json` más `assembly-summary.json`.
 
-Minimal Windows payload tree:
+Árbol mínimo de payload Windows:
 
 ```text
 windows-x86_64/

@@ -1,56 +1,58 @@
-# EntropIA Pro Code Signing Policy
+# Política de firma de código de EntropIA Pro
 
-EntropIA Pro signs release installers only when the release artifact is traceable, reproducible enough to review, and made from redistributable open-source components. Until that bar is met and a signing provider is approved, Windows installers may remain unsigned.
+**English:** [CODE_SIGNING.en.md](./CODE_SIGNING.en.md)
 
-## Quick path for a signed release
+EntropIA Pro firma instaladores de release solo cuando el artefacto de release es trazable, suficientemente reproducible para revisión y está construido con componentes open-source redistribuibles. Hasta cumplir ese estándar y aprobar un proveedor de firma, los instaladores Windows pueden permanecer sin firmar.
 
-1. Build the release runtime payload from audited source artifacts.
-2. Run the Release workflow with `runtime_payload_artifact=runtime-payloads` and the producing `runtime_payload_run_id`.
-3. Verify the release runtime-pack smoke checks pass before installer builds start.
-4. Review the draft release assets, hashes, and provenance.
-5. Sign only the reviewed installer assets for the exact release tag.
+## Camino rápido para una release firmada
 
-## Current signing status
+1. Construir el payload de runtime de release desde artefactos fuente auditados.
+2. Ejecutar el workflow Release con `runtime_payload_artifact=runtime-payloads` y el `runtime_payload_run_id` que produjo ese payload.
+3. Verificar que los smoke checks del runtime-pack de release pasen antes de que empiece la construcción de instaladores.
+4. Revisar assets, hashes y procedencia del draft release.
+5. Firmar solo los instaladores revisados para el tag exacto de release.
 
-| Area | Status |
+## Estado actual de firma
+
+| Área | Estado |
 | ---- | ------ |
-| Project license | MIT, see `LICENSE`. |
-| Public releases | GitHub Releases. |
-| Windows signing | Pending. Installers may be unsigned. |
-| Signing provider | Not integrated yet. SignPath Foundation is being evaluated. |
-| Release runtime gate | Required by `.github/workflows/release.yml`; fixture runtime packs must not reach installer builds. |
+| Licencia del proyecto | MIT, ver `LICENSE`. |
+| Releases públicas | GitHub Releases. |
+| Firma Windows | Pendiente. Los instaladores pueden no estar firmados. |
+| Proveedor de firma | No integrado todavía. Se está evaluando SignPath Foundation. |
+| Gate de runtime release | Requerido por `.github/workflows/release.yml`; los fixture runtime-packs no deben llegar a builds de instaladores. |
 
-## Signing rules
+## Reglas de firma
 
-- Do not sign local ad-hoc builds.
-- Do not sign artifacts produced from fixture runtime packs.
-- Do not sign installers if `payload_profile != release`, `release_injection_required != false`, or `external_artifacts_required` is non-empty.
-- Do not store certificate material, signing keys, or signing tokens in the repository.
-- Prefer manual approval for the signing step after release artifacts and hashes are visible.
+- No firmar builds locales ad hoc.
+- No firmar artefactos producidos desde fixture runtime-packs.
+- No firmar instaladores si `payload_profile != release`, `release_injection_required != false` o `external_artifacts_required` no está vacío.
+- No guardar material de certificados, claves de firma ni tokens de firma en el repositorio.
+- Preferir aprobación manual para el paso de firma después de que los artefactos y hashes de release estén visibles.
 
-## Release artifact provenance
+## Procedencia de artefactos de release
 
-Signed artifacts must be traceable to:
+Los artefactos firmados deben ser trazables a:
 
-- a Git tag;
-- the GitHub Actions Release workflow run;
-- the Runtime Payload workflow run used as input;
-- the runtime-pack manifest generated during release assembly;
-- the final installer hash published in the GitHub Release notes.
+- un tag Git;
+- la corrida del workflow Release de GitHub Actions;
+- la corrida del workflow Runtime Payload usada como input;
+- el manifest del runtime-pack generado durante el armado de release;
+- el hash final del instalador publicado en las notas de GitHub Release.
 
-## Incident response
+## Respuesta ante incidentes
 
-If a signed artifact is suspected to be compromised:
+Si se sospecha que un artefacto firmado está comprometido:
 
-1. Mark the GitHub Release as withdrawn or prerelease with a warning.
-2. Remove affected installer assets if needed.
-3. Publish the affected hashes and versions.
-4. Rotate signing credentials through the signing provider.
-5. Ship a corrected release from a clean workflow run.
+1. Marcar la GitHub Release como retirada o prerelease con una advertencia.
+2. Remover los assets de instalador afectados si hace falta.
+3. Publicar hashes y versiones afectadas.
+4. Rotar credenciales de firma mediante el proveedor de firma.
+5. Publicar una release corregida desde una corrida limpia del workflow.
 
-## Open items before signing integration
+## Pendientes antes de integrar firma
 
-- Complete third-party notices and runtime payload license review.
-- Confirm every bundled model, wheel, native library, and runtime cache is redistributable.
-- Decide the final signing provider and approval policy.
-- Add signing as a post-build release step only after the runtime payload gate passes.
+- Completar third-party notices y revisión de licencias del runtime payload.
+- Confirmar que cada modelo, wheel, librería nativa y cache de runtime bundleado sea redistribuible.
+- Decidir proveedor final de firma y política de aprobación.
+- Agregar la firma como paso post-build de release solo después de que pase el gate de runtime payload.
