@@ -451,6 +451,11 @@ fn normalize_sql(sql: &str) -> String {
         .to_ascii_lowercase()
 }
 
+fn sql_references_sensitive_table(sql: &str) -> bool {
+    sql.split(|ch: char| !(ch.is_ascii_alphanumeric() || ch == '_'))
+        .any(|token| token == "app_settings")
+}
+
 fn validate_sql_row_query(sql: &str) -> Result<(), String> {
     let normalized = normalize_sql(sql);
 
@@ -462,6 +467,10 @@ fn validate_sql_row_query(sql: &str) -> Result<(), String> {
         if normalized.starts_with(forbidden) || normalized.contains(&format!(" {forbidden}")) {
             return Err("Restricted SQL statement for db_select/db_select_rows".to_string());
         }
+    }
+
+    if sql_references_sensitive_table(&normalized) {
+        return Err("Restricted sensitive table for db_select/db_select_rows".to_string());
     }
 
     if normalized.starts_with("select ") || normalized.starts_with("with ") {
@@ -484,9 +493,11 @@ fn validate_sql_row_query(sql: &str) -> Result<(), String> {
 
 fn validate_sql_execute(sql: &str) -> Result<(), String> {
     let normalized = normalize_sql(sql);
+
     if normalized.contains(';') {
         return Err("db_execute accepts only a single SQL statement".to_string());
     }
+
     if normalized.starts_with("pragma ")
         || normalized.starts_with("attach ")
         || normalized.starts_with("detach ")
@@ -494,7 +505,18 @@ fn validate_sql_execute(sql: &str) -> Result<(), String> {
     {
         return Err("Restricted SQL statement for db_execute".to_string());
     }
-    Ok(())
+    if sql_references_sensitive_table(&normalized) {
+        return Err("Restricted sensitive table for db_execute".to_string());
+    }
+
+    if normalized.starts_with("insert ")
+        || normalized.starts_with("update ")
+        || normalized.starts_with("delete ")
+    {
+        return Ok(());
+    }
+
+    Err("Only INSERT, UPDATE, or DELETE statements are allowed in db_execute".to_string())
 }
 
 fn validate_sql_batch(sql: &str) -> Result<(), String> {
@@ -503,6 +525,9 @@ fn validate_sql_batch(sql: &str) -> Result<(), String> {
         if normalized.contains(forbidden) {
             return Err("Restricted SQL statement in db_execute_batch".to_string());
         }
+    }
+    if sql_references_sensitive_table(&normalized) {
+        return Err("Restricted sensitive table in db_execute_batch".to_string());
     }
     Ok(())
 }
@@ -540,6 +565,59 @@ mod tests {
         assert!(names.contains(&"collections".to_string()));
         assert!(names.contains(&"items".to_string()));
         assert!(!names.contains(&"app_settings".to_string()));
+    }
+
+    #[test]
+    fn sql_validators_reject_sensitive_app_settings_table() {
+        assert_eq!(
+            validate_sql_row_query("SELECT key, value FROM app_settings").unwrap_err(),
+            "Restricted sensitive table for db_select/db_select_rows"
+        );
+        assert_eq!(
+            validate_sql_row_query("SELECT key FROM \"app_settings\"").unwrap_err(),
+            "Restricted sensitive table for db_select/db_select_rows"
+        );
+        assert_eq!(
+            validate_sql_execute("UPDATE app_settings SET value = ? WHERE key = ?").unwrap_err(),
+            "Restricted sensitive table for db_execute"
+        );
+        assert_eq!(
+            validate_sql_batch("BEGIN; DELETE FROM app_settings; COMMIT;").unwrap_err(),
+            "Restricted sensitive table in db_execute_batch"
+        );
+    }
+
+    #[test]
+    fn sql_validators_still_allow_regular_store_queries() {
+        assert!(
+            validate_sql_row_query("SELECT id, title FROM items WHERE collection_id = ?").is_ok()
+        );
+        assert!(validate_sql_execute("UPDATE items SET title = ? WHERE id = ?").is_ok());
+        assert!(
+            validate_sql_execute("INSERT INTO notes (id, item_id, content) VALUES (?, ?, ?)")
+                .is_ok()
+        );
+        assert!(validate_sql_execute("DELETE FROM notes WHERE id = ?").is_ok());
+        assert!(
+            validate_sql_batch("BEGIN; DELETE FROM notes WHERE item_id = 'item-1'; COMMIT;")
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn db_execute_rejects_schema_mutating_statements() {
+        assert_eq!(
+            validate_sql_execute("DROP TABLE items").unwrap_err(),
+            "Only INSERT, UPDATE, or DELETE statements are allowed in db_execute"
+        );
+        assert_eq!(
+            validate_sql_execute("ALTER TABLE items ADD COLUMN unsafe TEXT").unwrap_err(),
+            "Only INSERT, UPDATE, or DELETE statements are allowed in db_execute"
+        );
+        assert_eq!(
+            validate_sql_execute("CREATE TABLE unsafe_table (id TEXT)").unwrap_err(),
+            "Only INSERT, UPDATE, or DELETE statements are allowed in db_execute"
+        );
     }
 
     #[test]

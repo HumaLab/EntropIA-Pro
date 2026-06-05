@@ -28,17 +28,17 @@ use transcription::TranscriptionQueue;
 const LEGACY_APP_IDENTIFIER: &str = "com.entropia.app";
 const LEGACY_MIGRATION_MARKER: &str = ".legacy-app-dir-merged";
 const SQLITE_BASENAME: &str = "entropia.sqlite";
+const EXTERNAL_URL_DISALLOWED_CHARS: &[char] =
+    &['\0', '\n', '\r', '\t', ' ', '"', '\'', '<', '>', '`', '|'];
 
 #[tauri::command]
 fn open_external_url(url: String) -> Result<(), String> {
-    if !(url.starts_with("https://") || url.starts_with("http://")) {
-        return Err("Only HTTP(S) URLs are allowed".to_string());
-    }
+    validate_external_url(&url)?;
 
     #[cfg(target_os = "windows")]
     let mut command = {
-        let mut cmd = Command::new("cmd");
-        cmd.args(["/C", "start", "", &url]);
+        let mut cmd = Command::new("rundll32.exe");
+        cmd.args(["url.dll,FileProtocolHandler", &url]);
         cmd
     };
 
@@ -59,6 +59,27 @@ fn open_external_url(url: String) -> Result<(), String> {
     command
         .spawn()
         .map_err(|error| format!("Failed to open URL: {error}"))?;
+
+    Ok(())
+}
+
+fn validate_external_url(url: &str) -> Result<(), String> {
+    if url.trim() != url {
+        return Err("External URL must not contain leading or trailing whitespace".to_string());
+    }
+
+    if !(url.starts_with("https://") || url.starts_with("http://")) {
+        return Err("Only HTTP(S) URLs are allowed".to_string());
+    }
+
+    if url.chars().any(|ch| {
+        ch.is_ascii_control()
+            || EXTERNAL_URL_DISALLOWED_CHARS
+                .iter()
+                .any(|blocked| *blocked == ch)
+    }) {
+        return Err("External URL contains unsafe characters".to_string());
+    }
 
     Ok(())
 }
@@ -970,6 +991,26 @@ fn ensure_layouts_schema(conn: &Connection) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn validate_external_url_accepts_http_and_https_urls() {
+        validate_external_url("https://github.com/hlabrepo/EntropIA-Pro?tab=readme").unwrap();
+        validate_external_url("https://example.com/search?q=one&lang=es#results").unwrap();
+        validate_external_url("http://localhost:1420/docs").unwrap();
+    }
+
+    #[test]
+    fn validate_external_url_rejects_non_http_schemes() {
+        assert!(validate_external_url("file:///C:/Users/user/secrets.txt").is_err());
+        assert!(validate_external_url("javascript:alert(1)").is_err());
+    }
+
+    #[test]
+    fn validate_external_url_rejects_shell_metacharacters_and_whitespace() {
+        assert!(validate_external_url("https://example.com|calc.exe").is_err());
+        assert!(validate_external_url(" https://example.com").is_err());
+        assert!(validate_external_url("https://example.com/path with spaces").is_err());
+    }
 
     #[test]
     fn migrate_extractions_method_check_removes_legacy_check_and_preserves_upsert_target() {

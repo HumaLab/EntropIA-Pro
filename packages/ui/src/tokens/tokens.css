@@ -43,9 +43,9 @@
   --space-8: 32px;
 
   /* Typography */
-  --font-display: 'Poppins', system-ui, sans-serif;
-  --font-sans: 'Source Sans Pro', 'Inter', system-ui, sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --font-display: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
+  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
   --font-size-xs: 12px;
   --font-size-sm: 14px;
   --font-size-md: 16px;

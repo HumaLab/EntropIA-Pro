@@ -8,6 +8,7 @@ use crate::runtime::bootstrap::BootstrapRemoteSource;
 pub const RUNTIME_BOOTSTRAP_MANIFEST_URL_KEY: &str = "runtime_bootstrap_manifest_url";
 pub const RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID_KEY: &str = "runtime_bootstrap_public_key_id";
 pub const RUNTIME_BOOTSTRAP_PUBLIC_KEY_KEY_PREFIX: &str = "runtime_bootstrap_public_key.";
+const REDACTED_SETTING_VALUE: &str = "[redacted]";
 const BUILTIN_RUNTIME_BOOTSTRAP_MANIFEST_URL_ENV: &str = "ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL";
 const BUILTIN_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID_ENV: &str =
     "ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID";
@@ -95,10 +96,11 @@ pub async fn settings_get_all(db: State<'_, AppDbState>) -> Result<Vec<SettingEn
         .map_err(|e| format!("Failed to prepare settings query: {e}"))?;
     let rows = stmt
         .query_map([], |row| {
-            Ok(SettingEntry {
+            let entry = SettingEntry {
                 key: row.get(0)?,
                 value: row.get(1)?,
-            })
+            };
+            Ok(redact_setting_entry(entry))
         })
         .map_err(|e| format!("Failed to query settings: {e}"))?;
     let mut entries = Vec::new();
@@ -108,6 +110,26 @@ pub async fn settings_get_all(db: State<'_, AppDbState>) -> Result<Vec<SettingEn
         }
     }
     Ok(entries)
+}
+
+fn redact_setting_entry(entry: SettingEntry) -> SettingEntry {
+    if is_sensitive_setting_key(&entry.key) {
+        SettingEntry {
+            key: entry.key,
+            value: REDACTED_SETTING_VALUE.to_string(),
+        }
+    } else {
+        entry
+    }
+}
+
+fn is_sensitive_setting_key(key: &str) -> bool {
+    let normalized = key.to_ascii_lowercase();
+    normalized.ends_with("_api_key")
+        || normalized.contains("secret")
+        || normalized.contains("token")
+        || normalized.contains("password")
+        || normalized.contains("credential")
 }
 
 #[tauri::command]
@@ -336,6 +358,38 @@ mod tests {
         )
         .expect("create app_settings");
         conn
+    }
+
+    #[test]
+    fn redact_setting_entry_hides_sensitive_values_for_bulk_reads() {
+        for key in [
+            "openrouter_api_key",
+            "assemblyai_api_key",
+            "glm_ocr_api_key",
+            "provider_secret",
+            "refresh_token",
+            "account_password",
+            "cloud_credential",
+        ] {
+            let entry = redact_setting_entry(SettingEntry {
+                key: key.to_string(),
+                value: "super-secret-value".to_string(),
+            });
+
+            assert_eq!(entry.key, key);
+            assert_eq!(entry.value, REDACTED_SETTING_VALUE);
+        }
+    }
+
+    #[test]
+    fn redact_setting_entry_keeps_non_sensitive_values_for_bulk_reads() {
+        let entry = redact_setting_entry(SettingEntry {
+            key: "openrouter_model".to_string(),
+            value: "google/gemma-3-4b-it".to_string(),
+        });
+
+        assert_eq!(entry.key, "openrouter_model");
+        assert_eq!(entry.value, "google/gemma-3-4b-it");
     }
 
     #[test]
