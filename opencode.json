@@ -32,6 +32,90 @@
         "X-MCP-Toolsets": "context,repos,issues,pull_requests,actions"
       },
       "timeout": 30000
+    },
+    "tauri": {
+      "type": "local",
+      "command": ["npx", "-y", "@hypothesi/tauri-mcp-server"],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "docsrs": {
+      "type": "local",
+      "command": ["cmd", "/c", "npx", "-y", "@nuskey8/docs-rs-mcp@1.0.1"],
+      "enabled": true,
+      "timeout": 60000
+    },
+    "serena": {
+      "type": "local",
+      "command": ["C:\\Users\\agusn\\.local\\bin\\serena.exe", "start-mcp-server", "--context", "ide"],
+      "enabled": true,
+      "timeout": 20000
+    },
+    "playwright": {
+      "type": "local",
+      "command": ["npx", "-y", "@playwright/mcp@latest"],
+      "enabled": false,
+      "timeout": 15000
+    },
+    "gh_grep": {
+      "type": "remote",
+      "url": "https://mcp.grep.app",
+      "enabled": false,
+      "timeout": 15000
+    },
+    "semgrep": {
+      "type": "local",
+      "command": ["C:\\Users\\agusn\\.local\\bin\\semgrep.exe", "mcp", "--transport", "stdio"],
+      "enabled": false,
+      "timeout": 30000
+    },
+    "sqlite_dev": {
+      "type": "local",
+      "command": [
+        "npx",
+        "-y",
+        "@berthojoris/mcp-sqlite-server",
+        "sqlite://./dev.sqlite",
+        "list,read"
+      ],
+      "enabled": false,
+      "timeout": 15000
     }
+  },
+  "permission": {
+    "read": {
+      "*": "allow",
+      "**/.env": "deny",
+      "**/.env.*": "deny",
+      "**/credentials.json": "deny",
+      "**/secrets/**": "deny",
+      "*.env": "deny",
+      "*.env.*": "deny",
+      "*.env.example": "allow"
+    },
+    "bash": {
+      "*": "ask",
+      "git status*": "allow",
+      "git diff*": "allow",
+      "git log*": "allow",
+      "cargo fmt*": "ask",
+      "cargo check*": "ask",
+      "cargo clippy*": "ask",
+      "cargo test*": "ask",
+      "pnpm lint*": "ask",
+      "pnpm test*": "ask",
+      "npm run*": "ask",
+      "npx playwright install*": "ask",
+      "rm -rf *": "deny",
+      "git push*": "ask",
+      "git commit*": "ask"
+    },
+    "tauri_*": "ask",
+    "docsrs_*": "allow",
+    "serena_*": "ask",
+    "playwright_*": "ask",
+    "gh_grep_*": "allow",
+    "semgrep_*": "ask",
+    "sqlite_dev_*": "ask"
   }
 }
