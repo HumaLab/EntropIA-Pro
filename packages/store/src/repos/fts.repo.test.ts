@@ -121,6 +121,11 @@ function createMockDbClient(): DbClient & {
       return selectResults as T[]
     },
 
+    async selectRows(sql: string, params?: unknown[]): Promise<unknown[][]> {
+      const rows = await this.select<Record<string, unknown>>(sql, params)
+      return rows.map((row) => Object.values(row))
+    },
+
     async executeBatch(_sql: string): Promise<void> {
       // No-op for unit tests
     },

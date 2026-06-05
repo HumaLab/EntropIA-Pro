@@ -1,7 +1,7 @@
 import type { SqliteRemoteDatabase } from 'drizzle-orm/sqlite-proxy'
 
 /**
- * Low-level database client interface that wraps Tauri IPC calls.
+ * Low-level database client port.
  * Used by both the migration runner and the Drizzle sqlite-proxy adapter.
  */
 export interface DbClient {
@@ -11,6 +11,8 @@ export interface DbClient {
   executeBatch(sql: string): Promise<void>
   /** Execute a read query (SELECT) and return typed rows. */
   select<T = Record<string, unknown>>(sql: string, params?: unknown[]): Promise<T[]>
+  /** Execute a row-returning query and preserve database column order. */
+  selectRows(sql: string, params?: unknown[]): Promise<unknown[][]>
 }
 
 export interface LayoutBoundingBox {

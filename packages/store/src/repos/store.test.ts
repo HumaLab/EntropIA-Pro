@@ -2,7 +2,6 @@ import { describe, it, expect, vi, beforeEach } from 'vitest'
 
 // Mock the client module before imports
 vi.mock('../client', () => ({
-  createDbClient: vi.fn(),
   createDrizzleClient: vi.fn(),
 }))
 
@@ -12,7 +11,7 @@ vi.mock('../runner', () => ({
 
 import { initStore } from './store'
 import type { StoreApi } from './store'
-import { createDbClient, createDrizzleClient } from '../client'
+import { createDrizzleClient } from '../client'
 import { runMigrations } from '../runner'
 import { CollectionRepo } from './collection.repo'
 import { ItemRepo } from './item.repo'
@@ -28,19 +27,20 @@ import { TripleRepo } from './triple.repo'
 describe('initStore', () => {
   const mockDbClient = {
     execute: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+    executeBatch: vi.fn().mockResolvedValue(undefined),
     select: vi.fn().mockResolvedValue([]),
+    selectRows: vi.fn().mockResolvedValue([]),
   }
   const mockDrizzle = { select: vi.fn(), insert: vi.fn(), update: vi.fn(), delete: vi.fn() }
 
   beforeEach(() => {
     vi.clearAllMocks()
-    ;(createDbClient as ReturnType<typeof vi.fn>).mockReturnValue(mockDbClient)
     ;(createDrizzleClient as ReturnType<typeof vi.fn>).mockReturnValue(mockDrizzle)
     ;(runMigrations as ReturnType<typeof vi.fn>).mockResolvedValue(undefined)
   })
 
   it('returns a StoreApi with all repos', async () => {
-    const store: StoreApi = await initStore()
+    const store: StoreApi = await initStore(mockDbClient)
 
     expect(store.collections).toBeInstanceOf(CollectionRepo)
     expect(store.items).toBeInstanceOf(ItemRepo)
@@ -54,10 +54,9 @@ describe('initStore', () => {
     expect(store.triples).toBeInstanceOf(TripleRepo)
   })
 
-  it('calls createDbClient, runMigrations, and createDrizzleClient in order', async () => {
-    await initStore()
+  it('uses the injected DbClient for migrations and drizzle', async () => {
+    await initStore(mockDbClient)
 
-    expect(createDbClient).toHaveBeenCalledOnce()
     expect(runMigrations).toHaveBeenCalledOnce()
     expect(runMigrations).toHaveBeenCalledWith(mockDbClient)
     expect(createDrizzleClient).toHaveBeenCalledOnce()
@@ -74,7 +73,7 @@ describe('initStore', () => {
       return mockDrizzle
     })
 
-    await initStore()
+    await initStore(mockDbClient)
 
     expect(callOrder).toEqual(['migrations', 'drizzle'])
   })

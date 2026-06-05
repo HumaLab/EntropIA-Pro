@@ -10,7 +10,6 @@
   },
   "devDependencies": {
     "@entropia/config-ts": "workspace:*",
-    "@tauri-apps/api": "^2",
     "typescript": "^5",
     "vitest": "^3"
   },

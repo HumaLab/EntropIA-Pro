@@ -133,6 +133,12 @@ export class CollectionRepo {
         COMMIT;
       `)
     } catch (e) {
+      try {
+        await this.rawClient.execute('ROLLBACK;')
+      } catch {
+        /* rollback is best-effort; preserve the original failure */
+      }
+
       throw new Error(
         `Failed to delete collection ${id}: ${e instanceof Error ? e.message : String(e)}`
       )

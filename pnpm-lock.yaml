@@ -171,9 +171,6 @@ importers:
       '@entropia/config-ts':
         specifier: workspace:*
         version: link:../config-ts
-      '@tauri-apps/api':
-        specifier: ^2
-        version: 2.10.1
       typescript:
         specifier: ^5
         version: 5.9.3

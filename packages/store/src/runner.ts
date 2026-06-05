@@ -365,7 +365,7 @@ DROP TABLE IF EXISTS jobs
 
 async function applyLayoutsMigration(client: DbClient): Promise<void> {
   const now = Date.now()
-  await client.execute(`
+  await client.executeBatch(`
     CREATE TABLE IF NOT EXISTS layouts (
       id TEXT PRIMARY KEY,
       asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
@@ -379,7 +379,7 @@ async function applyLayoutsMigration(client: DbClient): Promise<void> {
   `)
 
   try {
-    await client.execute("ALTER TABLE layouts ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
+    await client.executeBatch("ALTER TABLE layouts ADD COLUMN blocks TEXT NOT NULL DEFAULT '[]'")
   } catch (error) {
     const message = String(error).toLowerCase()
     if (!message.includes('duplicate column name')) {
@@ -393,10 +393,10 @@ async function applyLayoutsMigration(client: DbClient): Promise<void> {
       SELECT MAX(rowid) FROM layouts GROUP BY asset_id
     )
   `)
-  await client.execute(
+  await client.executeBatch(
     'CREATE UNIQUE INDEX IF NOT EXISTS idx_layouts_asset_id_unique ON layouts(asset_id)'
   )
-  await client.execute('CREATE INDEX IF NOT EXISTS idx_layouts_asset_id ON layouts(asset_id)')
+  await client.executeBatch('CREATE INDEX IF NOT EXISTS idx_layouts_asset_id ON layouts(asset_id)')
   await client.execute(`
     UPDATE layouts
     SET created_at = ${now}

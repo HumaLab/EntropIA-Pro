@@ -1,5 +1,6 @@
-import { createDbClient, createDrizzleClient } from '../client'
+import { createDrizzleClient } from '../client'
 import { runMigrations } from '../runner'
+import type { DbClient } from '../types'
 import { CollectionRepo } from './collection.repo'
 import { ItemRepo } from './item.repo'
 import { AssetRepo } from './asset.repo'
@@ -28,10 +29,8 @@ export interface StoreApi {
   topics: TopicRepo
 }
 
-export async function initStore(): Promise<StoreApi> {
+export async function initStore(client: DbClient): Promise<StoreApi> {
   console.log('[store] initStore start')
-  const client = createDbClient()
-  console.log('[store] client created')
   await runMigrations(client)
   console.log('[store] migrations done')
   const db = createDrizzleClient(client)

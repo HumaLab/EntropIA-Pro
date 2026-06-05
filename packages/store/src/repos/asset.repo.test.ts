@@ -250,12 +250,41 @@ describe('AssetRepo', () => {
       expect(result).toEqual(asset)
       expect(rawClient.executeBatch).toHaveBeenCalledOnce()
       const batchSql = rawClient.executeBatch.mock.calls[0]?.[0] as string
+      expect(batchSql).toContain('BEGIN;')
       expect(batchSql).toContain('DELETE FROM extractions')
       expect(batchSql).toContain('DELETE FROM layouts')
       expect(batchSql).toContain('DELETE FROM llm_results')
       expect(batchSql).toContain('DELETE FROM annotations')
       expect(batchSql).toContain('DELETE FROM assets')
+      expect(batchSql).toContain('COMMIT;')
       expect(batchSql).toContain('asset-1')
+    })
+
+    it('escapes asset ids inside the transactional batch', async () => {
+      const asset = {
+        id: "asset-'quoted",
+        itemId: 'item-1',
+        path: '/app-data/assets/coll-1/item-1/quoted.pdf',
+        type: 'pdf',
+        size: 1024,
+        createdAt: 100,
+      }
+
+      const selectResult = createChainMock([asset])
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const rawClient = {
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        executeBatch: vi.fn().mockResolvedValue(undefined),
+        select: vi.fn().mockResolvedValue([asset]),
+      } as unknown as DbClient & { executeBatch: ReturnType<typeof vi.fn> }
+      const repoWithRaw = new AssetRepo(db.db, rawClient)
+
+      await repoWithRaw.deleteWithCascade("asset-'quoted")
+
+      const batchSql = rawClient.executeBatch.mock.calls[0]?.[0] as string
+      expect(batchSql).toContain("asset-''quoted")
+      expect(batchSql).not.toContain("asset-'quoted';")
     })
 
     it('rethrows error when batch execution fails', async () => {
@@ -282,6 +311,7 @@ describe('AssetRepo', () => {
       await expect(repoWithRaw.deleteWithCascade('asset-1')).rejects.toThrow(
         'Failed to delete asset cascade for asset-1: constraint violation'
       )
+      expect(rawClient.execute).toHaveBeenCalledWith('ROLLBACK;')
     })
   })
 })

@@ -1,7 +1,7 @@
 // @entropia/store — barrel export
 
 // Client
-export { createDbClient, createDrizzleClient } from './client'
+export { createDrizzleClient } from './client'
 
 // Schema tables
 export {

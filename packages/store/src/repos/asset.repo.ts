@@ -84,7 +84,7 @@ export class AssetRepo {
    * so the caller can remove the associated file from the filesystem.
    *
    * @throws Error if the asset is not found
-   * @throws Error if the transaction fails (partial cleanup possible)
+   * @throws Error if the transaction fails before committing
    */
   async deleteWithCascade(id: string): Promise<Asset> {
     if (!this.rawClient) {
@@ -97,19 +97,31 @@ export class AssetRepo {
       throw new Error(`Asset not found: ${id}`)
     }
 
-    // Step 2: Execute all deletes in a single transaction
-    // Using a single SQL batch ensures atomicity (all or nothing)
+    const escapedId = id.replace(/'/g, "''")
+
+    // Step 2: Execute all deletes in a single transaction.
+    // Keep BEGIN/COMMIT inside the batch because executeBatch delegates to the
+    // backend SQL runner and must not rely on implicit transaction behavior.
     try {
       await this.rawClient.executeBatch(`
-        DELETE FROM extractions WHERE asset_id = '${id.replace(/'/g, "''")}';
-        DELETE FROM layouts WHERE asset_id = '${id.replace(/'/g, "''")}';
-        DELETE FROM transcriptions WHERE asset_id = '${id.replace(/'/g, "''")}';
-        DELETE FROM llm_results WHERE target_id = '${id.replace(/'/g, "''")}' AND (target_type = 'asset' OR target_type = 'unknown');
-        DELETE FROM annotations WHERE asset_id = '${id.replace(/'/g, "''")}';
-        DELETE FROM assets WHERE id = '${id.replace(/'/g, "''")}';
+        BEGIN;
+        DELETE FROM extractions WHERE asset_id = '${escapedId}';
+        DELETE FROM layouts WHERE asset_id = '${escapedId}';
+        DELETE FROM transcriptions WHERE asset_id = '${escapedId}';
+        DELETE FROM llm_results WHERE target_id = '${escapedId}' AND (target_type = 'asset' OR target_type = 'unknown');
+        DELETE FROM annotations WHERE asset_id = '${escapedId}';
+        DELETE FROM assets WHERE id = '${escapedId}';
+        COMMIT;
       `)
     } catch (e) {
-      // Transaction failed — rethrow with context
+      // Transaction failed — ensure the explicit BEGIN does not leave the
+      // connection in an open transaction if the backend stops before COMMIT.
+      try {
+        await this.rawClient.execute('ROLLBACK;')
+      } catch {
+        /* rollback is best-effort; preserve the original failure */
+      }
+
       throw new Error(
         `Failed to delete asset cascade for ${id}: ${e instanceof Error ? e.message : String(e)}`
       )

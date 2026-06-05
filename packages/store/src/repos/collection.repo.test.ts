@@ -296,6 +296,7 @@ describe('CollectionRepo', () => {
       await expect(repoWithRaw.delete('col-1')).rejects.toThrow(
         'Failed to delete collection col-1: constraint violation'
       )
+      expect(rawClient.execute).toHaveBeenCalledWith('ROLLBACK;')
     })
   })
 
