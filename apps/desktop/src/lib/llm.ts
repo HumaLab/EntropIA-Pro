@@ -67,6 +67,7 @@ export class LlmStore {
   private state: Map<string, ItemLlmState> = new Map()
   private listeners: Array<() => void> = []
   private unlisteners: UnlistenFn[] = []
+  private listenGeneration = 0
   private onComplete?: (id: string, job: string, result: string) => void
   private onCorrectOcr?: (id: string, result: string) => void
   private onError?: (id: string, job: string, error: string) => void
@@ -126,7 +127,9 @@ export class LlmStore {
   }
 
   async startListening() {
-    this.unlisteners.push(
+    const generation = ++this.listenGeneration
+
+    const unlisteners = [
       await listen<LlmProgressPayload>('llm:progress', (event) => {
         const { id, job, pct } = event.payload
         this.update(id, {
@@ -157,10 +160,20 @@ export class LlmStore {
         })
         this.onError?.(id, job, error)
       }),
-    )
+    ]
+
+    // stopListening may run while the listen() promises above are still in
+    // flight; unlisten late registrations immediately instead of leaking them.
+    if (generation !== this.listenGeneration) {
+      unlisteners.forEach((fn) => fn())
+      return
+    }
+
+    this.unlisteners.push(...unlisteners)
   }
 
   stopListening() {
+    this.listenGeneration++
     this.unlisteners.forEach((fn) => fn())
     this.unlisteners = []
   }

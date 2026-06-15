@@ -9,6 +9,7 @@ import {
   importSingleFile,
   deleteAssetFile,
   generatePdfThumbnail,
+  loadAudioPreviewBlob,
   deletePdfThumbnail,
 } from './file-import'
 
@@ -317,6 +318,29 @@ describe('generatePdfThumbnail', () => {
     const result = await generatePdfThumbnail('/path/to/document.pdf', 'existing-asset')
 
     expect(result).toBe('https://asset.localhost/cached/thumb.png')
+  })
+})
+
+describe('loadAudioPreviewBlob', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+  })
+
+  it('prepares the preview through Rust and reads the cached WAV', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const { readFile } = await import('@tauri-apps/plugin-fs')
+
+    vi.mocked(invoke).mockResolvedValueOnce('C:\\app-data\\audio-previews\\asset.wav')
+    vi.mocked(readFile).mockResolvedValueOnce(new Uint8Array([1, 2, 3]))
+
+    const blob = await loadAudioPreviewBlob('C:\\app-data\\assets\\source.wav')
+
+    expect(invoke).toHaveBeenCalledWith('prepare_audio_preview', {
+      assetPath: 'C:\\app-data\\assets\\source.wav',
+    })
+    expect(readFile).toHaveBeenCalledWith('C:\\app-data\\audio-previews\\asset.wav')
+    expect(blob.type).toBe('audio/wav')
+    expect(await blob.arrayBuffer()).toEqual(new Uint8Array([1, 2, 3]).buffer)
   })
 })
 

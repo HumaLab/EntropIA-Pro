@@ -1,6 +1,8 @@
 <script lang="ts">
+  import type { PDFDocumentLoadingTask, PDFDocumentProxy, RenderTask } from 'pdfjs-dist'
   import AnnotationToolbar from '../AnnotationToolbar/AnnotationToolbar.svelte'
   import AudioPlayer from '../AudioPlayer/AudioPlayer.svelte'
+  import { ActionIcon } from '../Button'
   import type { DocumentViewerLabels, DocumentViewerProps } from './DocumentViewer.types'
   import type { AnnotationTool, EditTool, ViewerAnnotation } from './DocumentViewer.types'
 
@@ -31,9 +33,11 @@
     onEditToolChange = () => {},
     onRotateLeft = () => {},
     onRotateRight = () => {},
+    onFineRotateCommit = () => {},
     onUndo = () => {},
     onPageChange = () => {},
     onDimensionsChange = () => {},
+    audioFallbackBlobLoader,
     labels: labelsProp = {},
     annotationToolbarLabels = {},
   }: DocumentViewerProps = $props()
@@ -62,6 +66,9 @@
   }
 
   const labels = $derived({ ...defaultLabels, ...labelsProp })
+  const audioPlayerFallbackBlobLoader = $derived(
+    audioFallbackBlobLoader ? () => audioFallbackBlobLoader(_path) : undefined
+  )
 
   const presetColors = [
     { value: 'var(--color-accent)', label: 'Accent' },
@@ -75,6 +82,8 @@
   const MIN_ZOOM = 0.4
   const MAX_ZOOM = 3.0
   const ZOOM_STEP = 0.1
+  const MIN_FINE_ROTATION_DEGREES = -30
+  const MAX_FINE_ROTATION_DEGREES = 30
   const SIZE_DEADBAND_PX = 1.5
 
   // PDF state
@@ -87,9 +96,13 @@
   let canvasEl: HTMLCanvasElement | undefined = $state()
   let imgEl: HTMLImageElement | undefined = $state()
   let containerEl: HTMLElement | undefined = $state()
-  let pdfDoc: any = null
+  let pdfDoc: PDFDocumentProxy | null = null
   let pdfCanvasW = $state(0)
   let pdfCanvasH = $state(0)
+  let renderRequestId = 0
+  let activeRenderTask: RenderTask | null = null
+  let loadRequestId = 0
+  let activeLoadingTask: PDFDocumentLoadingTask | null = null
 
   // Image geometry — natural (intrinsic) dimensions of the source file
   let naturalW = $state(0)
@@ -101,7 +114,17 @@
 
   // Manual zoom multiplier applied on top of auto-fit sizing.
   let imageZoom = $state(1.0)
+  let imageRotation = $state(0)
   let containerMeasureFrame = $state<number | null>(null)
+  let panToolActive = $state(false)
+  let isPanning = $state(false)
+  let panDrag: {
+    pointerId: number
+    startClientX: number
+    startClientY: number
+    startScrollLeft: number
+    startScrollTop: number
+  } | null = null
 
   let draft = $state<{
     startX: number
@@ -137,6 +160,8 @@
 
   const canZoomIn = $derived(imageZoom < MAX_ZOOM - 0.001)
   const canZoomOut = $derived(imageZoom > MIN_ZOOM + 0.001)
+  const canFineRotateLeft = $derived(imageRotation > MIN_FINE_ROTATION_DEGREES)
+  const canFineRotateRight = $derived(imageRotation < MAX_FINE_ROTATION_DEGREES)
 
   const canGoPrev = $derived(pdfPage > 1)
   const canGoNext = $derived(pdfPage < totalPages)
@@ -144,10 +169,20 @@
   const canPdfZoomOut = $derived(pdfZoom > MIN_ZOOM + 0.001)
 
   const overlayCursor = $derived(
-    editTool !== 'none' ? 'crosshair' : annotationTool === 'select' ? 'default' : 'crosshair'
+    isPanning
+      ? 'grabbing'
+      : panToolActive
+        ? 'grab'
+        : editTool !== 'none'
+          ? 'crosshair'
+          : annotationTool === 'select'
+            ? 'default'
+            : 'crosshair'
   )
 
-  const layoutOverlayInteractive = $derived(annotationTool === 'select' && editTool === 'none')
+  const layoutOverlayInteractive = $derived(
+    annotationTool === 'select' && editTool === 'none' && !panToolActive
+  )
   const layoutViewportW = $derived(type === 'image' ? naturalW : layoutReferenceWidth)
   const layoutViewportH = $derived(type === 'image' ? naturalH : layoutReferenceHeight)
   const layoutDisplayW = $derived(type === 'image' ? displayW : pdfCanvasW)
@@ -173,6 +208,10 @@
 
   function clampZoom(value: number) {
     return Number(Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, value)).toFixed(2))
+  }
+
+  function clampFineRotation(value: number) {
+    return Math.min(MAX_FINE_ROTATION_DEGREES, Math.max(MIN_FINE_ROTATION_DEGREES, value))
   }
 
   function readPx(value: string) {
@@ -214,10 +253,29 @@
   }
 
   /** Convert a viewport PointerEvent to normalized [0,1] coordinates.
-   *  Uses getBoundingClientRect which accounts for CSS transforms, so this
-   *  works correctly at any zoom level. */
+   *  Prefer the SVG screen matrix so rotation/zoom transforms are inverted
+   *  before translating the pointer to natural-image coordinates. */
   function getNormalizedPoint(event: PointerEvent) {
     const target = event.currentTarget as SVGSVGElement
+    const ctm = target.getScreenCTM?.()
+
+    if (ctm && typeof ctm.inverse === 'function' && typeof target.createSVGPoint === 'function') {
+      const point = target.createSVGPoint()
+      point.x = event.clientX
+      point.y = event.clientY
+
+      if (typeof point.matrixTransform === 'function') {
+        const localPoint = point.matrixTransform(ctm.inverse())
+
+        if (Number.isFinite(localPoint.x) && Number.isFinite(localPoint.y)) {
+          return {
+            x: clamp01(localPoint.x / Math.max(naturalW, 1)),
+            y: clamp01(localPoint.y / Math.max(naturalH, 1)),
+          }
+        }
+      }
+    }
+
     const rect = target.getBoundingClientRect()
     if (rect.width === 0 || rect.height === 0) return null
 
@@ -312,6 +370,9 @@
 
   // ── Handlers ────────────────────────────────────────────────────────
   function handleToolbarToolChange(tool: AnnotationTool) {
+    panToolActive = false
+    panDrag = null
+    isPanning = false
     onAnnotationToolChange(tool)
     // Reset edit tool when switching to annotation mode
     if (tool !== 'select') {
@@ -319,6 +380,27 @@
     }
     if (tool !== annotationTool) {
       draft = null
+    }
+  }
+
+  function handleToolbarEditToolChange(tool: EditTool) {
+    panToolActive = false
+    panDrag = null
+    isPanning = false
+    onEditToolChange(tool)
+  }
+
+  function handlePanToggle() {
+    const nextActive = !panToolActive
+    panToolActive = nextActive
+    panDrag = null
+    isPanning = false
+    draft = null
+    editDraft = null
+    if (nextActive) {
+      onEditToolChange('none')
+      onAnnotationToolChange('select')
+      onSelectedAnnotationIdChange(null)
     }
   }
 
@@ -399,8 +481,41 @@
     onSelectedAnnotationIdChange(null)
   }
 
+  function captureOverlayPointer(event: PointerEvent) {
+    ;(event.currentTarget as SVGSVGElement).setPointerCapture?.(event.pointerId)
+  }
+
+  function releaseOverlayPointer(event: PointerEvent) {
+    const target = event.currentTarget as SVGSVGElement
+    if (!target.hasPointerCapture?.(event.pointerId)) return
+    target.releasePointerCapture?.(event.pointerId)
+  }
+
+  function cancelDrafts(event: PointerEvent) {
+    releaseOverlayPointer(event)
+    panDrag = null
+    isPanning = false
+    draft = null
+    editDraft = null
+  }
+
   function handleOverlayPointerDown(event: PointerEvent) {
     if (!hasRenderableBounds || event.button !== 0) return
+
+    if (panToolActive && containerEl) {
+      event.preventDefault()
+      panDrag = {
+        pointerId: event.pointerId,
+        startClientX: event.clientX,
+        startClientY: event.clientY,
+        startScrollLeft: containerEl.scrollLeft,
+        startScrollTop: containerEl.scrollTop,
+      }
+      isPanning = true
+      captureOverlayPointer(event)
+      return
+    }
+
     const point = getNormalizedPoint(event)
     if (!point) return
 
@@ -412,6 +527,7 @@
         currentX: point.x,
         currentY: point.y,
       }
+      captureOverlayPointer(event)
       return
     }
 
@@ -427,9 +543,17 @@
       currentY: point.y,
       kind: annotationTool,
     }
+    captureOverlayPointer(event)
   }
 
   function handleOverlayPointerMove(event: PointerEvent) {
+    if (panDrag && containerEl) {
+      event.preventDefault()
+      containerEl.scrollLeft = panDrag.startScrollLeft + (panDrag.startClientX - event.clientX)
+      containerEl.scrollTop = panDrag.startScrollTop + (panDrag.startClientY - event.clientY)
+      return
+    }
+
     if (editDraft) {
       const point = getNormalizedPoint(event)
       if (!point) return
@@ -451,7 +575,15 @@
     }
   }
 
-  function finishDraft() {
+  function finishDraft(event?: PointerEvent) {
+    if (event) releaseOverlayPointer(event)
+
+    if (panDrag) {
+      panDrag = null
+      isPanning = false
+      return
+    }
+
     // Handle edit draft completion
     if (editDraft) {
       const box = toEditBox(editDraft)
@@ -537,14 +669,51 @@
     if (canZoomOut) imageZoom = clampZoom(imageZoom - ZOOM_STEP)
   }
 
+  function adjustFineRotation(deltaDegrees: number) {
+    imageRotation = clampFineRotation(imageRotation + deltaDegrees)
+  }
+
+  function commitFineRotation() {
+    if (imageRotation === 0) return
+    void onFineRotateCommit(imageRotation)
+  }
+
   // ── PDF ─────────────────────────────────────────────────────────────
+  function cancelActiveRenderTask() {
+    if (!activeRenderTask || typeof activeRenderTask.cancel !== 'function') return
+    activeRenderTask.cancel()
+  }
+
+  function isRenderCancellation(err: unknown) {
+    return err instanceof Error && err.name === 'RenderingCancelledException'
+  }
+
+  function destroyPdfResources() {
+    const loadingTask = activeLoadingTask
+    activeLoadingTask = null
+    pdfDoc = null
+    if (!loadingTask || typeof loadingTask.destroy !== 'function') return
+    // destroy() frees the parsed document and terminates its dedicated worker.
+    void loadingTask.destroy().catch(() => {
+      // Aborted loads reject on destroy; nothing left to release.
+    })
+  }
+
+  function teardownPdf() {
+    renderRequestId++
+    loadRequestId++
+    cancelActiveRenderTask()
+    activeRenderTask = null
+    destroyPdfResources()
+  }
+
   function resetViewerState() {
+    teardownPdf()
     loading = false
     error = null
     pdfPage = 1
     totalPages = 0
     pdfZoom = 1.0
-    pdfDoc = null
     pdfCanvasW = 0
     pdfCanvasH = 0
   }
@@ -553,7 +722,8 @@
     error = null
   }
 
-  async function loadPdf() {
+  async function loadPdf(url: string) {
+    const requestId = ++loadRequestId
     try {
       activatePdfMode()
       const pdfjs = await import('pdfjs-dist')
@@ -561,33 +731,56 @@
         'pdfjs-dist/build/pdf.worker.min.mjs',
         import.meta.url
       ).href
-      const loadingTask = pdfjs.getDocument(assetUrl)
-      pdfDoc = await loadingTask.promise
-      totalPages = pdfDoc.numPages
-      pdfPage = Math.min(Math.max(currentPage, 1), Math.max(pdfDoc.numPages, 1))
+      if (requestId !== loadRequestId) return
+      const loadingTask = pdfjs.getDocument(url)
+      activeLoadingTask = loadingTask
+      const doc = await loadingTask.promise
+      if (requestId !== loadRequestId) return
+      pdfDoc = doc
+      totalPages = doc.numPages
+      pdfPage = Math.min(Math.max(currentPage, 1), Math.max(doc.numPages, 1))
       await renderPage()
     } catch (err) {
+      if (requestId !== loadRequestId) return
       error = err instanceof Error ? err.message : labels.pdfLoadError
     } finally {
-      loading = false
+      if (requestId === loadRequestId) {
+        loading = false
+      }
     }
   }
 
   async function renderPage() {
     if (!pdfDoc || !canvasEl) return
+    const requestId = ++renderRequestId
+    const requestedPage = pdfPage
+    const requestedZoom = pdfZoom
+    cancelActiveRenderTask()
+    activeRenderTask = null
+
     try {
-      const page = await pdfDoc.getPage(pdfPage)
-      const viewport = page.getViewport({ scale: pdfZoom })
+      const page = await pdfDoc.getPage(requestedPage)
+      if (requestId !== renderRequestId) return
+
+      const viewport = page.getViewport({ scale: requestedZoom })
       const context = canvasEl.getContext('2d')
       if (!context) return
       canvasEl.width = viewport.width
       canvasEl.height = viewport.height
       pdfCanvasW = viewport.width
       pdfCanvasH = viewport.height
-      await page.render({ canvasContext: context, viewport }).promise
-      onPageChange(pdfPage, totalPages)
+      const renderTask = page.render({ canvasContext: context, viewport })
+      activeRenderTask = renderTask
+      await renderTask.promise
+      if (requestId !== renderRequestId) return
+      onPageChange(requestedPage, totalPages)
     } catch (err) {
+      if (requestId !== renderRequestId || isRenderCancellation(err)) return
       error = err instanceof Error ? err.message : labels.pdfRenderError
+    } finally {
+      if (requestId === renderRequestId) {
+        activeRenderTask = null
+      }
     }
   }
 
@@ -623,6 +816,7 @@
     const _url = assetUrl
     if (type === 'image') {
       imageZoom = 1.0
+      imageRotation = 0
     }
   })
 
@@ -652,8 +846,13 @@
       resetViewerState()
       return
     }
+    // Read synchronously so the effect re-runs when the asset changes (pdf -> pdf)
+    const url = assetUrl
     activatePdfMode()
-    void loadPdf()
+    void loadPdf(url)
+    return () => {
+      teardownPdf()
+    }
   })
 
   $effect(() => {
@@ -683,24 +882,29 @@
   )
 </script>
 
-<div class="document-viewer">
+<div class="document-viewer" class:document-viewer--image={type === 'image'} bind:this={containerEl}>
   {#if type === 'image'}
-    <!-- svelte-ignore a11y_no_static_element_interactions — overlay needs pointer events -->
-    <div class="document-viewer__image-container" bind:this={containerEl}>
       <div class="document-viewer__toolbar-anchor">
         <AnnotationToolbar
           tool={annotationTool}
           {editTool}
+          panActive={panToolActive}
           color={annotationColor}
           hasSelection={selectedAnnotationId !== null}
           {canUndo}
           colors={presetColors}
           onToolChange={handleToolbarToolChange}
-          {onEditToolChange}
+          onEditToolChange={handleToolbarEditToolChange}
+          onPanToggle={handlePanToggle}
           onColorChange={handleToolbarColorChange}
           onDeleteSelected={handleDeleteSelected}
           {onRotateLeft}
           {onRotateRight}
+          fineRotationDegrees={imageRotation}
+          {canFineRotateLeft}
+          {canFineRotateRight}
+          onFineRotate={adjustFineRotation}
+          onFineRotateCommit={commitFineRotation}
           {onUndo}
           zoomPercent={Math.round(imageZoom * 100)}
           {canZoomOut}
@@ -724,6 +928,11 @@
             class="document-viewer__image-stage-content"
             style={`width:${baseDisplayW}px;height:${baseDisplayH}px;transform: scale(${imageZoom});`}
           >
+            <div
+              class="document-viewer__image-rotator"
+              data-testid="image-rotator"
+              style={`width:${baseDisplayW}px;height:${baseDisplayH}px;transform: rotate(${imageRotation}deg);`}
+            >
             {#key assetUrl}
               <img
                 bind:this={imgEl}
@@ -748,7 +957,7 @@
                 onpointerdown={handleOverlayPointerDown}
                 onpointermove={handleOverlayPointerMove}
                 onpointerup={finishDraft}
-                onpointerleave={finishDraft}
+                onpointercancel={cancelDrafts}
               >
                 {#if canRenderLayoutOverlay}
                   {#each layoutRegions as region (region.id)}
@@ -802,7 +1011,7 @@
                         : annotation.color}
                       stroke-width={annotation.id === selectedAnnotationId ? 2 : 1.5}
                       vector-effect="non-scaling-stroke"
-                      style={editTool !== 'none' ? 'pointer-events:none' : ''}
+                      style={editTool !== 'none' || panToolActive ? 'pointer-events:none' : ''}
                       role="button"
                       tabindex="-1"
                       aria-label={labels.annotationAriaLabel(annotation.id)}
@@ -814,7 +1023,7 @@
                       onpointerdown={(event) => handleShapePointerDown(event, annotation.id)}
                     />
                   {:else}
-                    <g style={editTool !== 'none' ? 'pointer-events:none' : ''}>
+                    <g style={editTool !== 'none' || panToolActive ? 'pointer-events:none' : ''}>
                       <rect
                         data-testid={`annotation-hitbox-${annotation.id}`}
                         x={px(annotation.x, 'x')}
@@ -943,13 +1152,14 @@
                 {/if}
               </svg>
             {/if}
+            </div>
           </div>
         </div>
       </div>
-    </div>
   {:else if type === 'audio'}
     <AudioPlayer
       src={assetUrl}
+      fallbackBlobLoader={audioPlayerFallbackBlobLoader}
       labels={{
         skipBack: labels.audioSkipBack,
         play: labels.audioPlay,
@@ -980,7 +1190,7 @@
         onclick={prevPage}
         aria-label={labels.pdfPreviousPage}
       >
-        &#8249;
+        <ActionIcon name="chevron-left" size={18} />
       </button>
       <span class="document-viewer__page-info" data-testid="pdf-page-info"
         >{pdfPage} / {totalPages}</span
@@ -994,28 +1204,7 @@
         onclick={pdfZoomOut}
         aria-label={labels.pdfZoomOut}
       >
-        <svg
-          class="document-viewer__toolbar-icon"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-          <path
-            d="M16 16 21 21"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-          <path
-            d="M8.5 11h5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-        </svg>
+        <ActionIcon name="zoom-out" size={16} />
       </button>
       <span class="document-viewer__zoom-info" data-testid="pdf-zoom-info"
         >{Math.round(pdfZoom * 100)}%</span
@@ -1028,35 +1217,7 @@
         onclick={pdfZoomIn}
         aria-label={labels.pdfZoomIn}
       >
-        <svg
-          class="document-viewer__toolbar-icon"
-          viewBox="0 0 24 24"
-          aria-hidden="true"
-          focusable="false"
-        >
-          <circle cx="11" cy="11" r="6.5" fill="none" stroke="currentColor" stroke-width="1.8" />
-          <path
-            d="M16 16 21 21"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-          <path
-            d="M8.5 11h5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-          <path
-            d="M11 8.5v5"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.8"
-            stroke-linecap="round"
-          />
-        </svg>
+        <ActionIcon name="zoom-in" size={16} />
       </button>
       <span class="document-viewer__separator"></span>
       <button
@@ -1067,7 +1228,7 @@
         onclick={nextPage}
         aria-label={labels.pdfNextPage}
       >
-        &#8250;
+        <ActionIcon name="chevron-right" size={18} />
       </button>
     </div>
 
@@ -1122,30 +1283,39 @@
     display: flex;
     flex-direction: column;
     height: 100%;
-    background-color: var(--color-bg);
-    border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    min-height: 0;
+    background-color: transparent;
+    border: 0;
+    border-radius: 0;
     overflow: hidden;
   }
 
-  .document-viewer__image-container {
+  .document-viewer--image {
+    position: relative;
     flex: 1;
     overflow: auto;
     scrollbar-gutter: stable both-edges;
-    padding: var(--space-4);
-    position: relative;
+    padding: 0;
   }
 
   .document-viewer__toolbar-anchor {
     position: sticky;
     top: 0;
+    left: 0;
+    right: 0;
     z-index: 3;
     display: flex;
     justify-content: flex-end;
     align-items: flex-start;
     gap: var(--space-2);
+    width: 100%;
+    inline-size: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
     pointer-events: none;
-    padding: 0 var(--space-2) var(--space-2) 0;
+    height: 0;
+    min-height: 0;
+    padding: 0 var(--space-2) 0 0;
   }
 
   .document-viewer__image-stage {
@@ -1164,6 +1334,12 @@
   .document-viewer__image-stage-content {
     position: relative;
     transform-origin: top left;
+  }
+
+  .document-viewer__image-rotator {
+    position: relative;
+    transform-origin: center center;
+    transition: transform 0.08s linear;
   }
 
   .document-viewer__image {
@@ -1251,15 +1427,15 @@
     height: 32px;
     padding: 0;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     background-color: transparent;
     color: var(--color-text-primary);
     cursor: pointer;
     font-size: var(--font-size-lg);
     line-height: 1;
     transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease;
+      background-color var(--transition-base),
+      border-color var(--transition-base);
   }
 
   .document-viewer__btn:hover:not(:disabled) {
@@ -1267,14 +1443,13 @@
     border-color: var(--color-text-muted);
   }
 
-  .document-viewer__toolbar-icon {
-    width: 16px;
-    height: 16px;
-    display: block;
+  .document-viewer__btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .document-viewer__btn:disabled {
-    opacity: 0.4;
+    opacity: 0.48;
     cursor: not-allowed;
   }
 

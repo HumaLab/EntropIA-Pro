@@ -1,5 +1,5 @@
 /**
- * Transcription frontend client for EntropIA Pro desktop app.
+ * Transcription frontend client for EntropIA desktop app.
  * Plain TypeScript (not .svelte.ts) for full testability in Vitest.
  *
  * Communicates with the Rust backend via Tauri invoke + event listeners.
@@ -91,10 +91,11 @@ interface ProgressPayload {
 
 interface CompletePayload {
   asset_id: string
-  text: string
-  language: string
-  duration_ms: number
-  segments_count: number
+  text?: string
+  text_content?: string
+  language?: string
+  duration_ms?: number
+  segments_count?: number
 }
 
 interface ErrorPayload {
@@ -116,6 +117,7 @@ export interface TranscriptionStoreOptions {
 export class TranscriptionStore {
   private states = new Map<string, AssetTranscriptionState>()
   private cleanupFns: Array<() => void> = []
+  private listenGeneration = 0
   private onComplete?: (assetId: string) => void
 
   constructor(options?: TranscriptionStoreOptions) {
@@ -134,6 +136,8 @@ export class TranscriptionStore {
   async startListening(
     listen: (event: string, callback: (e: { payload: unknown }) => void) => Promise<() => void>
   ): Promise<void> {
+    const generation = ++this.listenGeneration
+
     const unlistenProgress = await listen('transcription:progress', (e) => {
       const p = e.payload as ProgressPayload
       this._updateState(p.asset_id, { status: 'running', progress: p.pct, stage: p.stage })
@@ -145,12 +149,12 @@ export class TranscriptionStore {
         status: 'done',
         progress: 100,
         stage: 'done',
-        text: p.text,
+        text: p.text ?? p.text_content ?? '',
         language: p.language,
-        durationMs: p.duration_ms,
-        segmentsCount: p.segments_count,
+        durationMs: p.duration_ms ?? 0,
+        segmentsCount: p.segments_count ?? 0,
       })
-      // Notify caller (e.g., to trigger FTS indexing after transcription completes)
+      // Notify caller so views can refresh visible transcription-dependent state.
       this.onComplete?.(p.asset_id)
     })
 
@@ -159,11 +163,23 @@ export class TranscriptionStore {
       this._updateState(p.asset_id, { status: 'error', error: p.error, stage: 'error' })
     })
 
-    this.cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+    const cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+
+    // stopListening may run while the listen() promises above are still in
+    // flight; unlisten late registrations immediately instead of leaking them.
+    if (generation !== this.listenGeneration) {
+      for (const fn of cleanupFns) {
+        fn()
+      }
+      return
+    }
+
+    this.cleanupFns = cleanupFns
   }
 
   /** Calls all cleanup functions returned by listen(), removing event listeners. */
   stopListening(): void {
+    this.listenGeneration++
     for (const fn of this.cleanupFns) {
       fn()
     }
@@ -190,7 +206,8 @@ export class TranscriptionStore {
 
 /**
  * Calls the Rust `transcribe_audio` command to kick off a transcription job.
- * Sets the asset state to 'pending' before the invocation resolves.
+ * Does not mutate store state; callers own pending-state handling
+ * (see runPendingAssetJob in item-view-media-jobs.ts).
  */
 export async function transcribeAudio(assetId: string, assetPath: string): Promise<void> {
   await invoke('transcribe_audio', { assetId, assetPath })

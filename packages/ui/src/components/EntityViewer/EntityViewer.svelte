@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from 'svelte'
+  import { ActionIcon } from '../Button'
   import type { Entity, EntityType, EntityViewerLabels } from './EntityViewer.types'
   import { ENTITY_TYPE_LABELS, ENTITY_TYPE_TAGS } from './EntityViewer.types'
 
@@ -170,12 +171,14 @@
 
 {#if entities.length === 0}
   <div class="entity-viewer__empty" data-testid="entity-viewer-empty">
-    <span class="entity-viewer__empty-icon" aria-hidden="true">&#128270;</span>
+    <span class="entity-viewer__empty-icon" aria-hidden="true">
+      <ActionIcon name="search-x" size={28} />
+    </span>
     <p class="entity-viewer__empty-text">{labels.emptyText}</p>
   </div>
 {:else}
   <div class="entity-viewer">
-    {#each TYPE_ORDER as type}
+    {#each TYPE_ORDER as type (type)}
       {#if grouped.has(type)}
         <div class="entity-viewer__group" data-testid="entity-group">
           <span class="entity-viewer__group-label entity-viewer__group-label--{type}">
@@ -301,7 +304,7 @@
   }
 
   .entity-viewer__empty-icon {
-    font-size: 24px;
+    display: inline-flex;
     opacity: 0.4;
   }
 
@@ -320,7 +323,7 @@
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
     text-transform: uppercase;
-    letter-spacing: 0.05em;
+    letter-spacing: 0.075em;
     color: var(--color-text-muted);
   }
 
@@ -339,9 +342,9 @@
   .entity-viewer__pill {
     display: inline-flex;
     align-items: center;
-    gap: 6px;
+    gap: var(--space-1);
     padding: 2px var(--space-2);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-control);
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
     font-family: var(--font-sans);
@@ -349,13 +352,11 @@
     border: none;
     transition:
       opacity 0.15s ease,
-      transform 0.1s ease,
       box-shadow 0.15s ease;
   }
 
   .entity-viewer__pill:hover {
     opacity: 0.85;
-    transform: scale(1.02);
   }
 
   .entity-viewer__pill:focus-visible {
@@ -390,11 +391,11 @@
     height: 18px;
     padding: 0 6px;
     border: none;
-    border-radius: 999px;
+    border-radius: var(--radius-control);
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    background: color-mix(in srgb, black 12%, white 72%);
+    background: color-mix(in srgb, var(--color-surface-elevated) 86%, transparent);
     color: inherit;
     cursor: pointer;
     opacity: 0;
@@ -411,12 +412,12 @@
   }
 
   .entity-viewer__delete:hover {
-    background: color-mix(in srgb, black 20%, white 68%);
+    background: var(--color-surface-elevated);
   }
 
   .entity-viewer__delete--pending {
-    background: var(--color-danger);
-    color: white;
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
     opacity: 1;
     transform: translateY(-50%) scale(1);
   }
@@ -427,8 +428,8 @@
   }
 
   .entity-viewer__delete-label {
-    font-size: 10px;
-    font-weight: 700;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
     letter-spacing: 0.01em;
     line-height: 1;
     white-space: nowrap;
@@ -436,33 +437,33 @@
 
   /* Color-coded pills per entity type */
   .entity-viewer__pill--person {
-    background-color: #dbeafe;
-    color: #1e40af;
+    background-color: color-mix(in srgb, var(--color-info) 12%, var(--surface-card));
+    color: var(--color-info);
   }
 
   .entity-viewer__pill--place {
-    background-color: #dcfce7;
-    color: #166534;
+    background-color: color-mix(in srgb, var(--color-success) 12%, var(--surface-card));
+    color: var(--color-success);
   }
 
   .entity-viewer__pill--date {
-    background-color: #fef9c3;
-    color: #854d0e;
+    background-color: color-mix(in srgb, var(--color-warning) 12%, var(--surface-card));
+    color: var(--color-warning);
   }
 
   .entity-viewer__pill--institution {
-    background-color: #fce7f3;
-    color: #9d174d;
+    background-color: color-mix(in srgb, var(--color-danger) 11%, var(--surface-card));
+    color: var(--color-danger);
   }
 
   .entity-viewer__pill--organization {
-    background-color: #ede9fe;
-    color: #5b21b6;
+    background-color: var(--color-accent-faint);
+    color: var(--color-accent-hover);
   }
 
   .entity-viewer__pill--misc {
-    background-color: #f3f4f6;
-    color: #374151;
+    background-color: var(--surface-card);
+    color: var(--color-text-secondary);
   }
 
   .entity-viewer__pill--custom {
@@ -471,8 +472,8 @@
   }
 
   .entity-viewer__tag {
-    font-size: 10px;
-    font-weight: 700;
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-bold);
     letter-spacing: 0.04em;
     opacity: 0.9;
   }

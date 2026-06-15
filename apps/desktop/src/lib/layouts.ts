@@ -92,6 +92,19 @@ export interface LayoutBlockView {
 export type LayoutPageEntry = { page?: number }
 export type LayoutPageBlockCounts = Record<number, number>
 
+export interface LayoutInteractionState {
+  blockId: string | null
+  regionId: string | null
+  hasMatch: boolean
+}
+
+export interface LayoutInteractionSelectionState {
+  selectedBlockId: string | null
+  selectedRegionId: string | null
+  hoveredBlockId: string | null
+  hoveredRegionId: string | null
+}
+
 function toFiniteNumber(value: number | undefined, fallback = 0) {
   return typeof value === 'number' && Number.isFinite(value) ? value : fallback
 }
@@ -214,6 +227,65 @@ export function getBlockCountByPage<T extends LayoutPageEntry>(blocks: T[]): Lay
   }
 
   return counts
+}
+
+export function findLayoutBlockById<T extends Pick<LayoutBlockView, 'id'>>(
+  blocks: T[],
+  blockId: string | null
+): T | null {
+  if (!blockId) return null
+  return blocks.find((block) => block.id === blockId) ?? null
+}
+
+export function findLayoutBlockByRegionId<T extends Pick<LayoutBlockView, 'regionId'>>(
+  blocks: T[],
+  regionId: string | null
+): T | null {
+  if (!regionId) return null
+  return blocks.find((block) => block.regionId === regionId) ?? null
+}
+
+export function getLayoutInteractionStateFromBlockId<T extends Pick<LayoutBlockView, 'id' | 'regionId'>>(
+  blocks: T[],
+  blockId: string | null
+): LayoutInteractionState {
+  const block = findLayoutBlockById(blocks, blockId)
+
+  return {
+    blockId: block?.id ?? null,
+    regionId: block?.regionId ?? null,
+    hasMatch: Boolean(block),
+  }
+}
+
+export function getLayoutInteractionStateFromRegionId<T extends Pick<LayoutBlockView, 'id' | 'regionId'>>(
+  blocks: T[],
+  regionId: string | null
+): LayoutInteractionState {
+  const block = findLayoutBlockByRegionId(blocks, regionId)
+
+  return {
+    blockId: block?.id ?? null,
+    regionId: block?.regionId ?? null,
+    hasMatch: Boolean(block),
+  }
+}
+
+export function pruneLayoutInteractionSelectionState<
+  T extends Pick<LayoutBlockView, 'id' | 'regionId'>,
+>(
+  blocks: T[],
+  state: LayoutInteractionSelectionState
+): LayoutInteractionSelectionState {
+  const selected = getLayoutInteractionStateFromBlockId(blocks, state.selectedBlockId)
+  const hovered = getLayoutInteractionStateFromBlockId(blocks, state.hoveredBlockId)
+
+  return {
+    selectedBlockId: selected.blockId,
+    selectedRegionId: selected.regionId,
+    hoveredBlockId: hovered.blockId,
+    hoveredRegionId: hovered.regionId,
+  }
 }
 
 export function categoriesMatch(blockLabel: string, regionCategory: string) {

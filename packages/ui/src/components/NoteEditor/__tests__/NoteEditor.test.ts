@@ -82,27 +82,31 @@ describe('NoteEditor', () => {
     expect(screen.getByRole('button', { name: 'Remove link' })).toBeInTheDocument()
   })
 
-  it('uses localized compact labels for visible toolbar text', () => {
+  it('renders icon-only toolbar buttons with localized tooltips and accessible names', () => {
     render(NoteEditor, {
       props: {
         labels: {
           bulletList: 'Lista con viñetas',
-          bulletListShort: 'Lista',
           orderedList: 'Lista ordenada',
-          orderedListShort: '1. Lista',
           quote: 'Cita',
-          quoteShort: 'Cita',
           addLink: 'Agregar link',
-          addLinkShort: 'Enlace',
           removeLink: 'Quitar link',
-          removeLinkShort: 'Quitar',
         },
       },
     })
 
-    expect(screen.getByRole('button', { name: 'Agregar link' })).toHaveTextContent('Enlace')
-    expect(screen.getByRole('button', { name: 'Quitar link' })).toHaveTextContent('Quitar')
-    expect(screen.getByRole('button', { name: 'Lista con viñetas' })).toHaveTextContent('Lista')
+    const addLink = screen.getByRole('button', { name: 'Agregar link' })
+    const removeLink = screen.getByRole('button', { name: 'Quitar link' })
+    const bulletList = screen.getByRole('button', { name: 'Lista con viñetas' })
+
+    expect(addLink).toHaveAttribute('title', 'Agregar link')
+    expect(removeLink).toHaveAttribute('title', 'Quitar link')
+    expect(bulletList).toHaveAttribute('title', 'Lista con viñetas')
+
+    expect(addLink.querySelector('svg')).not.toBeNull()
+    expect(addLink.textContent?.trim()).toBe('')
+    expect(bulletList.querySelector('svg')).not.toBeNull()
+    expect(bulletList.textContent?.trim()).toBe('')
   })
 
   it('shows concise helper text for note editing affordances', () => {

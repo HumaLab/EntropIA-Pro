@@ -108,7 +108,7 @@
       <span class="metadata-editor__header-spacer"></span>
     </div>
 
-    {#each rows as row, index}
+    {#each rows as row, index (index)}
       <div class="metadata-editor__row">
         <input
           class="metadata-editor__input metadata-editor__key"
@@ -185,9 +185,11 @@
     color: var(--color-text-primary);
     background-color: var(--color-surface);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     outline: none;
-    transition: border-color 0.15s ease;
+    transition:
+      border-color var(--transition-smooth),
+      box-shadow var(--transition-smooth);
   }
 
   .metadata-editor__input::placeholder {
@@ -196,6 +198,7 @@
 
   .metadata-editor__input:focus {
     border-color: var(--color-accent);
+    box-shadow: var(--focus-ring);
   }
 
   .metadata-editor__key {

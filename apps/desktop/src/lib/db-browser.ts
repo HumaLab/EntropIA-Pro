@@ -1,5 +1,7 @@
 import { invoke } from '@tauri-apps/api/core'
 
+export const DB_BROWSER_EXPORT_PAGE_SIZE = 1000
+
 export type DbBrowserSortDirection = 'asc' | 'desc'
 
 export interface DbBrowserTable {
@@ -49,4 +51,35 @@ export function queryDbBrowserRows(
     sortDirection: request.sortDirection,
     search: request.search,
   })
+}
+
+export async function queryAllDbBrowserRowsInChunks(
+  request: Omit<DbBrowserQueryRequest, 'page' | 'pageSize'>,
+  chunkSize = DB_BROWSER_EXPORT_PAGE_SIZE
+): Promise<DbBrowserQueryResponse> {
+  const rows: Record<string, unknown>[] = []
+  let total = 0
+  let page = 1
+
+  do {
+    const response = await queryDbBrowserRows({
+      ...request,
+      page,
+      pageSize: chunkSize,
+    })
+
+    total = response.total
+    rows.push(...response.rows)
+
+    if (response.rows.length === 0) break
+    page += 1
+  } while (rows.length < total)
+
+  return {
+    table: request.table,
+    page: 1,
+    pageSize: chunkSize,
+    total,
+    rows,
+  }
 }

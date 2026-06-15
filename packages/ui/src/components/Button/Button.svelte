@@ -43,7 +43,7 @@
     min-height: var(--control-height-md);
     padding: 0 var(--space-4);
     border: 1px solid transparent;
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     font-family: var(--font-sans);
     font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
@@ -54,7 +54,7 @@
       border-color var(--transition-smooth),
       color var(--transition-smooth),
       box-shadow var(--transition-smooth),
-      transform var(--transition-smooth);
+      opacity var(--transition-smooth);
     position: relative;
     white-space: nowrap;
     user-select: none;
@@ -72,36 +72,36 @@
     box-shadow: var(--focus-ring);
   }
 
-  .btn:hover:not(:disabled) {
-    transform: translateY(-1px);
-  }
-
   /* ─── Variants ─── */
   .btn--primary {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 44%),
-      var(--color-accent);
+    background: var(--color-accent);
     color: var(--color-bg);
     border-color: var(--color-accent);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.2),
-      0 10px 24px color-mix(in srgb, var(--color-accent) 24%, transparent);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.14);
   }
   .btn--primary:hover:not(:disabled) {
-    background-color: var(--color-accent-hover);
+    background: var(--color-accent-hover);
     border-color: var(--color-accent-hover);
   }
 
   .btn--secondary {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 55%),
-      var(--color-surface-raised);
+    background: var(--color-surface-raised);
     color: var(--color-text-primary);
     border-color: var(--color-hairline);
   }
   .btn--secondary:hover:not(:disabled) {
-    background-color: var(--color-surface-elevated);
+    background: var(--color-surface-elevated);
     border-color: var(--color-border-strong);
+  }
+
+  .btn--outline {
+    background: transparent;
+    color: var(--color-text-primary);
+    border-color: var(--color-border);
+  }
+  .btn--outline:hover:not(:disabled) {
+    background: var(--color-accent-faint);
+    border-color: var(--color-border-hover);
   }
 
   .btn--ghost {
@@ -114,19 +114,26 @@
     color: var(--color-text-primary);
   }
 
+  .btn--subtle {
+    background: var(--color-accent-faint);
+    color: var(--color-text-primary);
+    border-color: transparent;
+  }
+  .btn--subtle:hover:not(:disabled) {
+    background: var(--color-accent-soft);
+    border-color: color-mix(in srgb, var(--color-accent) 18%, transparent);
+  }
+
   .btn--danger {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.1), transparent 44%),
-      var(--color-danger);
-    color: #ffffff;
-    border-color: var(--color-danger);
-    box-shadow:
-      inset 0 1px 0 rgba(255, 255, 255, 0.16),
-      0 10px 24px color-mix(in srgb, var(--color-danger) 22%, transparent);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+    border-color: color-mix(in srgb, var(--color-danger) 34%, transparent);
+    box-shadow: none;
   }
   .btn--danger:hover:not(:disabled) {
-    background-color: var(--color-danger-hover);
-    border-color: var(--color-danger-hover);
+    background: color-mix(in srgb, var(--color-danger) 16%, transparent);
+    border-color: color-mix(in srgb, var(--color-danger) 48%, transparent);
+    color: var(--color-danger-hover);
   }
 
   /* ─── Sizes ─── */
@@ -142,8 +149,8 @@
   }
   .btn--lg {
     min-height: var(--control-height-lg);
-    padding: 0 var(--space-6);
-    font-size: var(--font-size-lg);
+    padding: 0 var(--space-5);
+    font-size: var(--font-size-sm);
   }
 
   /* ─── Spinner ─── */

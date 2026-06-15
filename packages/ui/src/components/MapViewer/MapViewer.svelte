@@ -1,8 +1,11 @@
 <script lang="ts">
-  import type { MapViewerProps, MapMarker } from './MapViewer.types'
+  import type { MapViewerProps } from './MapViewer.types'
   import { onMount, onDestroy, tick } from 'svelte'
   import L from 'leaflet'
   import 'leaflet/dist/leaflet.css'
+  import markerIconUrl from 'leaflet/dist/images/marker-icon.png'
+  import markerIcon2xUrl from 'leaflet/dist/images/marker-icon-2x.png'
+  import markerShadowUrl from 'leaflet/dist/images/marker-shadow.png'
 
   let { markers = [], height = '300px', visible = true, onmarkerclick }: MapViewerProps = $props()
 
@@ -15,6 +18,23 @@
 
   const defaultCenter: L.LatLngExpression = [-34.6, -58.4] // Buenos Aires default
   const defaultZoom = 3
+
+  function configureDefaultMarkerIcon() {
+    delete (L.Icon.Default.prototype as unknown as { _getIconUrl?: unknown })._getIconUrl
+    L.Icon.Default.mergeOptions({
+      iconRetinaUrl: markerIcon2xUrl,
+      iconUrl: markerIconUrl,
+      shadowUrl: markerShadowUrl,
+      iconSize: [25, 41],
+      iconAnchor: [12, 41],
+      popupAnchor: [1, -34],
+      tooltipAnchor: [16, -28],
+      shadowSize: [41, 41],
+      shadowAnchor: [12, 41],
+    })
+  }
+
+  configureDefaultMarkerIcon()
 
   async function invalidateMapSize() {
     if (!map || !rootEl || !visible) return
@@ -141,7 +161,7 @@
     position: relative;
     width: 100%;
     min-width: 0;
-    border: 1px solid var(--color-border, #e2e8f0);
+    border: 1px solid var(--color-border);
     border-radius: var(--radius-sm, 4px);
     overflow: hidden;
   }
@@ -158,12 +178,12 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: var(--color-surface, #f8fafc);
+    background: var(--color-surface);
     pointer-events: none;
   }
 
   .map-viewer__empty p {
-    color: var(--color-text-muted, #94a3b8);
+    color: var(--color-text-muted);
     font-size: var(--font-size-sm, 0.875rem);
   }
 </style>

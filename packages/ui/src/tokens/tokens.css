@@ -1,36 +1,59 @@
 :root {
   /* Colors */
-  --color-bg: #07080d;
-  --color-bg-ambient: #0b0d13;
-  --color-surface: #0f1118;
-  --color-surface-raised: #151720;
-  --color-surface-elevated: #1b1d28;
-  --color-surface-sunken: #090b11;
-  --color-surface-glass: #11131b;
-  --color-border: #292d3a;
-  --color-border-subtle: #1d202b;
-  --color-border-strong: #3a3f50;
-  --color-border-hover: #4d5366;
-  --color-hairline: rgba(232, 235, 255, 0.08);
-  --color-text-primary: #d8d3c8;
-  --color-text-secondary: #a6a196;
-  --color-text-muted: #746f67;
-  --color-accent: #aeb6d8;
-  --color-accent-hover: #c3c9e6;
-  --color-accent-soft: rgba(174, 182, 216, 0.14);
-  --color-accent-faint: rgba(174, 182, 216, 0.055);
-  --color-danger: #f07b8b;
-  --color-danger-hover: #ff93a0;
-  --color-danger-soft: rgba(240, 123, 139, 0.12);
-  --color-success: #72c7a1;
-  --color-success-soft: rgba(114, 199, 161, 0.12);
-  --color-warning: #f4bd72;
-  --color-warning-soft: rgba(244, 189, 114, 0.13);
-  --color-info: #82b7ff;
-  --color-info-soft: rgba(130, 183, 255, 0.12);
+  --color-bg: #07080c;
+  --color-bg-ambient: #0a0c11;
+  --color-surface: #0d1017;
+  --color-surface-raised: #12151d;
+  --color-surface-elevated: #171a23;
+  --color-surface-sunken: #090b10;
+  --color-surface-glass: #10131a;
+  --color-border: #252a35;
+  --color-border-subtle: #1a1f29;
+  --color-border-strong: #343a48;
+  --color-border-hover: #464d5f;
+  --color-hairline: rgba(226, 232, 255, 0.075);
+  --color-text-primary: #e2e6ee;
+  --color-text-secondary: #a5adbc;
+  /* Muted text must keep >= 4.5:1 (WCAG AA) on --color-bg and raised surfaces. */
+  --color-text-muted: #7d8596;
+  --color-accent: #9aa4c7;
+  --color-accent-hover: #b2bbd8;
+  --color-accent-soft: rgba(154, 164, 199, 0.13);
+  --color-accent-faint: rgba(154, 164, 199, 0.06);
+  --color-danger: #e26f7f;
+  --color-danger-hover: #f28a98;
+  --color-danger-soft: rgba(226, 111, 127, 0.11);
+  --color-success: #79c39f;
+  --color-success-soft: rgba(121, 195, 159, 0.11);
+  --color-warning: #d8ad6a;
+  --color-warning-soft: rgba(216, 173, 106, 0.11);
+  --color-info: #86aef4;
+  --color-info-soft: rgba(134, 174, 244, 0.11);
   --color-overlay: rgba(3, 6, 12, 0.68);
   --color-primary: var(--color-accent);
   --color-primary-subtle: var(--color-accent-soft);
+
+  /* Semantic aliases */
+  --surface-app: var(--color-bg);
+  --surface-panel: var(--color-surface);
+  --surface-toolbar: var(--color-surface-raised);
+  --surface-card: var(--color-surface-raised);
+  --surface-input: var(--color-surface-sunken);
+  --surface-overlay: var(--color-overlay);
+  --surface-glass: var(--color-surface-glass);
+  --border-panel: var(--color-border);
+  --border-subtle: var(--color-border-subtle);
+  --border-focus: var(--color-accent);
+  --color-error: var(--color-danger);
+  --color-error-hover: var(--color-danger-hover);
+  --color-error-soft: var(--color-danger-soft);
+  --focus-ring-error: var(--focus-ring-danger);
+  --state-ai: var(--color-accent);
+  --state-ai-soft: var(--color-accent-soft);
+  --state-ai-border: color-mix(in srgb, var(--color-accent) 28%, transparent);
+  --state-evidence: var(--color-info);
+  --state-evidence-soft: var(--color-info-soft);
+  --state-evidence-border: color-mix(in srgb, var(--color-info) 28%, transparent);
 
   /* Spacing (4px base unit) */
   --space-1: 4px;
@@ -43,42 +66,50 @@
   --space-8: 32px;
 
   /* Typography */
-  --font-display: 'Inter Variable', 'Inter', system-ui, sans-serif;
-  --font-sans: 'Inter Variable', 'Inter', system-ui, sans-serif;
-  --font-mono: ui-monospace, 'SFMono-Regular', Consolas, 'Liberation Mono', monospace;
+  --font-display: 'Geist', 'Inter', system-ui, sans-serif;
+  --font-sans: 'Geist', 'Inter', system-ui, sans-serif;
+  --font-mono: 'Geist Mono', 'JetBrains Mono', ui-monospace, monospace;
+  --font-size-2xs: 11px;
   --font-size-xs: 12px;
   --font-size-sm: 14px;
   --font-size-md: 16px;
-  --font-size-lg: 20px;
-  --font-size-xl: 24px;
+  --font-size-base: var(--font-size-md);
+  --font-size-lg: 18px;
+  --font-size-xl: 22px;
   --font-weight-normal: 400;
   --font-weight-medium: 500;
   --font-weight-semibold: 600;
   --font-weight-bold: 600;
-  --line-height-tight: 1.2;
-  --line-height-base: 1.5;
+  --line-height-tight: 1.22;
+  --line-height-base: 1.46;
 
   /* Border Radius */
-  --radius-sm: 8px;
-  --radius-md: 12px;
-  --radius-lg: 16px;
-  --radius-xl: 22px;
+  --radius-xs: 4px;
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 10px;
+  --radius-xl: 12px;
+  --radius-control: 6px;
+  --radius-input: 8px;
+  --radius-surface: 10px;
+  --radius-dialog: 12px;
   --radius-full: 9999px;
 
   /* Shadows */
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28), 0 8px 18px rgba(0, 0, 0, 0.14);
-  --shadow-md: 0 14px 30px rgba(0, 0, 0, 0.22);
-  --shadow-lg: 0 22px 48px rgba(0, 0, 0, 0.32);
-  --shadow-glow: 0 0 0 1px var(--color-hairline), 0 14px 32px rgba(0, 0, 0, 0.2);
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.28);
+  --shadow-md: 0 8px 18px rgba(0, 0, 0, 0.22);
+  --shadow-lg: 0 18px 42px rgba(0, 0, 0, 0.34);
+  --shadow-glow: 0 0 0 1px var(--color-hairline), 0 10px 24px rgba(0, 0, 0, 0.18);
+  --shadow-surface: 0 1px 0 rgba(255, 255, 255, 0.025) inset, 0 1px 2px rgba(0, 0, 0, 0.28);
 
   /* Controls */
-  --control-height-sm: 32px;
-  --control-height-md: 40px;
-  --control-height-lg: 48px;
-  --focus-ring: 0 0 0 3px rgba(154, 167, 255, 0.24);
-  --focus-ring-danger: 0 0 0 3px rgba(240, 123, 139, 0.24);
-  --transition-base: 0.16s ease;
-  --transition-smooth: 0.22s cubic-bezier(0.2, 0.8, 0.2, 1);
+  --control-height-sm: 30px;
+  --control-height-md: 36px;
+  --control-height-lg: 40px;
+  --focus-ring: 0 0 0 2px rgba(154, 164, 199, 0.22);
+  --focus-ring-danger: 0 0 0 2px rgba(226, 111, 127, 0.22);
+  --transition-base: 0.14s ease;
+  --transition-smooth: 0.18s cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 :root[data-theme='dim'] {
@@ -119,8 +150,9 @@
   --color-border-hover: #bbb;
   --color-hairline: rgba(0, 0, 0, 0.08);
   --color-text-primary: #1a1a1a;
-  --color-text-secondary: #777;
-  --color-text-muted: #999;
+  /* Secondary/muted text must keep >= 4.5:1 (WCAG AA) on --color-bg #ffffff. */
+  --color-text-secondary: #6b6b6b;
+  --color-text-muted: #767676;
   --color-accent: #5a67d8;
   --color-accent-hover: #4c5ac7;
   --color-accent-soft: rgba(90, 103, 216, 0.08);

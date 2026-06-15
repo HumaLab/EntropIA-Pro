@@ -1,5 +1,6 @@
 <script lang="ts">
   import ActionIcon from '../Button/ActionIcon.svelte'
+  import type { ActionIconName } from '../Button/ActionIcon.types'
   import type { AnnotationTool, EditTool } from '../DocumentViewer/DocumentViewer.types'
 
   export interface AnnotationColorOption {
@@ -13,13 +14,20 @@
     color: string
     hasSelection: boolean
     canUndo?: boolean
+    panActive?: boolean
     colors: AnnotationColorOption[]
     onToolChange?: (tool: AnnotationTool) => void
     onEditToolChange?: (tool: EditTool) => void
+    onPanToggle?: () => void
     onColorChange?: (color: string) => void
     onDeleteSelected?: () => void
     onRotateLeft?: () => void
     onRotateRight?: () => void
+    fineRotationDegrees?: number | null
+    canFineRotateLeft?: boolean
+    canFineRotateRight?: boolean
+    onFineRotate?: (deltaDegrees: number) => void
+    onFineRotateCommit?: () => void | Promise<void>
     onUndo?: () => void
     zoomPercent?: number | null
     canZoomOut?: boolean
@@ -37,12 +45,16 @@
     toolbarAriaLabel: string
     undo: string
     undoTitle: string
+    panTool: string
     rectangleTool: string
     underlineTool: string
     cropTool: string
     eraseTool: string
     rotateLeft: string
     rotateRight: string
+    fineRotateLeft: string
+    fineRotateRight: string
+    fineRotationAngle: (degrees: number) => string
     zoomOut: string
     zoomIn: string
     deleteSelected: string
@@ -57,12 +69,16 @@
     toolbarAriaLabel: 'Image editing tools',
     undo: 'Undo last edit',
     undoTitle: 'Undo',
+    panTool: 'Pan image (hand tool)',
     rectangleTool: 'Rectangle annotation tool',
     underlineTool: 'Underline annotation tool',
     cropTool: 'Crop to selection',
     eraseTool: 'Erase region (white fill)',
     rotateLeft: 'Rotate 90° left',
     rotateRight: 'Rotate 90° right',
+    fineRotateLeft: 'Fine rotation left, degree by degree',
+    fineRotateRight: 'Fine rotation right, degree by degree',
+    fineRotationAngle: (degrees: number) => `Fine rotation ${formatSignedDegrees(degrees)}`,
     zoomOut: 'Zoom out',
     zoomIn: 'Zoom in',
     deleteSelected: 'Delete selected annotation',
@@ -75,13 +91,20 @@
     color,
     hasSelection,
     canUndo = false,
+    panActive = false,
     colors,
     onToolChange = () => {},
     onEditToolChange = () => {},
+    onPanToggle = () => {},
     onColorChange = () => {},
     onDeleteSelected = () => {},
     onRotateLeft = () => {},
     onRotateRight = () => {},
+    fineRotationDegrees = null,
+    canFineRotateLeft = true,
+    canFineRotateRight = true,
+    onFineRotate = () => {},
+    onFineRotateCommit = () => {},
     onUndo = () => {},
     zoomPercent = null,
     canZoomOut = false,
@@ -94,15 +117,42 @@
   const labels = $derived({ ...defaultLabels, ...labelsProp })
 
   let collapsed = $state(false)
+  let toolbarEl: HTMLDivElement | undefined = $state()
+  let toolbarAvailableHeight = $state(720)
+  let fineRotationDrag = $state<{
+    pointerId: number
+    direction: -1 | 1
+    startClientX: number
+    startClientY: number
+    lastSteps: number
+    applied: boolean
+  } | null>(null)
+  let suppressFineRotationClick = false
+
+  const TOOLBAR_BASE_CONTROL_SIZE = 30
+  const TOOLBAR_BASE_PADDING = 6
+  const TOOLBAR_BASE_GAP = 4
+  const TOOLBAR_SAFE_INSET = 12
+  const TOOLBAR_MIN_SINGLE_COLUMN_SCALE = 0.78
+  const TOOLBAR_MIN_SCALE = 0.64
+  const FINE_ROTATION_DRAG_PX_PER_DEGREE = 12
+
+  function toolbarHeightForRows(rows: number) {
+    return (
+      rows * TOOLBAR_BASE_CONTROL_SIZE +
+      Math.max(0, rows - 1) * TOOLBAR_BASE_GAP +
+      TOOLBAR_BASE_PADDING * 2
+    )
+  }
 
   const toolOptions = $derived.by(
     (): Array<{
       value: Exclude<AnnotationTool, 'select'>
       label: string
-      short: string
+      icon: ActionIconName
     }> => [
-      { value: 'rectangle', label: labels.rectangleTool, short: '▭' },
-      { value: 'underline', label: labels.underlineTool, short: '▁' },
+      { value: 'rectangle', label: labels.rectangleTool, icon: 'rectangle' },
+      { value: 'underline', label: labels.underlineTool, icon: 'underline' },
     ]
   )
 
@@ -110,12 +160,57 @@
     (): Array<{
       value: Exclude<EditTool, 'none'>
       label: string
-      short?: string
+      icon: ActionIconName
     }> => [
-      { value: 'crop', label: labels.cropTool, short: '✂' },
-      { value: 'erase', label: labels.eraseTool },
+      { value: 'crop', label: labels.cropTool, icon: 'crop' },
+      { value: 'erase', label: labels.eraseTool, icon: 'eraser' },
     ]
   )
+
+  const visibleToolbarItemCount = $derived(
+    2 +
+      toolOptions.length +
+      editToolOptions.length +
+      2 +
+      (fineRotationDegrees !== null ? 3 : 0) +
+      (zoomPercent !== null ? 3 : 0) +
+      colors.length +
+      2
+  )
+  const singleColumnNaturalHeight = $derived(toolbarHeightForRows(visibleToolbarItemCount))
+  const toolbarColumns = $derived(
+    singleColumnNaturalHeight * TOOLBAR_MIN_SINGLE_COLUMN_SCALE <= toolbarAvailableHeight ? 1 : 2
+  )
+  const toolbarRows = $derived(Math.ceil(visibleToolbarItemCount / toolbarColumns))
+  const toolbarNaturalHeight = $derived(toolbarHeightForRows(toolbarRows))
+  const toolbarMinScale = $derived(
+    toolbarColumns === 1 ? TOOLBAR_MIN_SINGLE_COLUMN_SCALE : TOOLBAR_MIN_SCALE
+  )
+  const toolbarScale = $derived(
+    Math.max(
+      toolbarMinScale,
+      Math.min(1, toolbarAvailableHeight / Math.max(toolbarNaturalHeight, 1))
+    )
+  )
+
+  $effect(() => {
+    if (!toolbarEl) return
+    const container = toolbarEl.closest('.document-viewer--image') ?? toolbarEl.parentElement
+    if (!container) return
+
+    function updateAvailableHeight() {
+      if (!container) return
+      const nextHeight = container.getBoundingClientRect().height
+      if (nextHeight <= 0) return
+      toolbarAvailableHeight = Math.max(0, nextHeight - TOOLBAR_SAFE_INSET)
+    }
+
+    updateAvailableHeight()
+    const observer = new ResizeObserver(updateAvailableHeight)
+    observer.observe(container)
+
+    return () => observer.disconnect()
+  })
 
   function handleToolClick(option: (typeof toolOptions)[number]) {
     if (tool === option.value) {
@@ -132,6 +227,99 @@
       onEditToolChange(option.value)
     }
   }
+
+  function formatSignedDegrees(degrees: number) {
+    if (degrees > 0) return `+${degrees}°`
+    return `${degrees}°`
+  }
+
+  function canApplyFineRotation(direction: -1 | 1) {
+    return direction === -1 ? canFineRotateLeft : canFineRotateRight
+  }
+
+  function applyFineRotation(direction: -1 | 1, steps = 1) {
+    if (!canApplyFineRotation(direction)) return
+    onFineRotate(direction * steps)
+  }
+
+  function commitFineRotation() {
+    void onFineRotateCommit()
+  }
+
+  function startFineRotationDrag(direction: -1 | 1, event: PointerEvent) {
+    if (!canApplyFineRotation(direction)) return
+    event.preventDefault()
+    ;(event.currentTarget as HTMLButtonElement).setPointerCapture?.(event.pointerId)
+    fineRotationDrag = {
+      pointerId: event.pointerId,
+      direction,
+      startClientX: event.clientX,
+      startClientY: event.clientY,
+      lastSteps: 0,
+      applied: false,
+    }
+  }
+
+  function handleFineRotationPointerMove(event: PointerEvent) {
+    if (!fineRotationDrag || fineRotationDrag.pointerId !== event.pointerId) return
+    event.preventDefault()
+
+    const distance = Math.hypot(
+      event.clientX - fineRotationDrag.startClientX,
+      event.clientY - fineRotationDrag.startClientY
+    )
+    const nextSteps = Math.floor(distance / FINE_ROTATION_DRAG_PX_PER_DEGREE)
+    const deltaSteps = nextSteps - fineRotationDrag.lastSteps
+
+    if (deltaSteps <= 0) return
+
+    applyFineRotation(fineRotationDrag.direction, deltaSteps)
+    fineRotationDrag.lastSteps = nextSteps
+    fineRotationDrag.applied = true
+  }
+
+  function finishFineRotationDrag(event: PointerEvent, applyOnRelease = true) {
+    if (!fineRotationDrag || fineRotationDrag.pointerId !== event.pointerId) return
+
+    const target = event.currentTarget as HTMLButtonElement
+    if (target.hasPointerCapture?.(event.pointerId)) {
+      target.releasePointerCapture?.(event.pointerId)
+    }
+
+    if (applyOnRelease && !fineRotationDrag.applied) {
+      applyFineRotation(fineRotationDrag.direction, 1)
+    }
+
+    if (applyOnRelease) {
+      commitFineRotation()
+    }
+
+    fineRotationDrag = null
+    suppressFineRotationClick = true
+    setTimeout(() => {
+      suppressFineRotationClick = false
+    }, 0)
+  }
+
+  function handleFineRotationClick(direction: -1 | 1) {
+    if (suppressFineRotationClick) {
+      suppressFineRotationClick = false
+      return
+    }
+
+    applyFineRotation(direction, 1)
+    commitFineRotation()
+  }
+
+  function handleFineRotationWheel(direction: -1 | 1, event: WheelEvent) {
+    if (!canApplyFineRotation(direction)) return
+    event.preventDefault()
+    const wheelDistance = Math.max(Math.abs(event.deltaY), Math.abs(event.deltaX))
+    const steps = Math.max(1, Math.round(wheelDistance / 100))
+    applyFineRotation(direction, steps)
+    commitFineRotation()
+  }
+
 </script>
 
 {#if collapsed}
@@ -143,16 +331,19 @@
     title={labels.expandToolbarTitle}
     onclick={() => (collapsed = false)}
   >
-    ✎
+    <ActionIcon name="pencil" size={18} />
   </button>
 {:else}
   <div
+    bind:this={toolbarEl}
     class="annotation-toolbar"
+    class:annotation-toolbar--multi-column={toolbarColumns > 1}
     data-testid="annotation-toolbar"
     role="toolbar"
+    aria-orientation="vertical"
     aria-label={labels.toolbarAriaLabel}
+    style={`--annotation-toolbar-scale:${toolbarScale};grid-template-rows:repeat(${toolbarRows},max-content);grid-template-columns:repeat(${toolbarColumns},max-content);`}
   >
-    <div class="annotation-toolbar__group">
       <button
         type="button"
         class="annotation-toolbar__button"
@@ -161,11 +352,19 @@
         disabled={!canUndo}
         onclick={onUndo}
       >
-        ↶
+        <ActionIcon name="undo" size={18} />
       </button>
-
-      <span class="annotation-toolbar__separator"></span>
-
+      <button
+        type="button"
+        class="annotation-toolbar__button"
+        class:annotation-toolbar__button--active={panActive}
+        aria-label={labels.panTool}
+        aria-pressed={panActive}
+        title={labels.panTool}
+        onclick={onPanToggle}
+      >
+        <ActionIcon name="hand" size={18} />
+      </button>
       {#each toolOptions as option (option.value)}
         <button
           type="button"
@@ -176,12 +375,9 @@
           title={option.label}
           onclick={() => handleToolClick(option)}
         >
-          {option.short}
+          <ActionIcon name={option.icon} size={18} />
         </button>
       {/each}
-
-      <span class="annotation-toolbar__separator"></span>
-
       {#each editToolOptions as option (option.value)}
         <button
           type="button"
@@ -192,43 +388,9 @@
           title={option.label}
           onclick={() => handleEditToolClick(option)}
         >
-          {#if option.value === 'erase'}
-            <svg
-              class="annotation-toolbar__icon"
-              viewBox="0 0 24 24"
-              aria-hidden="true"
-              focusable="false"
-            >
-              <path
-                d="M3 15.5 12.5 6a2 2 0 0 1 2.8 0l4.7 4.7a2 2 0 0 1 0 2.8L13.5 20H8z"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linejoin="round"
-              />
-              <path
-                d="M11 19.5h10"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-              />
-              <path
-                d="m9 18 7-7"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="1.8"
-                stroke-linecap="round"
-              />
-            </svg>
-          {:else}
-            {option.short}
-          {/if}
+          <ActionIcon name={option.icon} size={18} />
         </button>
       {/each}
-
-      <span class="annotation-toolbar__separator"></span>
-
       <button
         type="button"
         class="annotation-toolbar__button"
@@ -236,7 +398,7 @@
         title={labels.rotateLeft}
         onclick={onRotateLeft}
       >
-        ↺
+        <ActionIcon name="rotate-ccw" size={18} />
       </button>
 
       <button
@@ -246,12 +408,53 @@
         title={labels.rotateRight}
         onclick={onRotateRight}
       >
-        ↻
+        <ActionIcon name="rotate-cw" size={18} />
       </button>
 
-      {#if zoomPercent !== null}
-        <span class="annotation-toolbar__separator"></span>
+      {#if fineRotationDegrees !== null}
+        <button
+          type="button"
+          class="annotation-toolbar__button"
+          class:annotation-toolbar__button--active={fineRotationDrag?.direction === -1}
+          aria-label={labels.fineRotateLeft}
+          title={`${labels.fineRotateLeft} · ${labels.fineRotationAngle(fineRotationDegrees)}`}
+          disabled={!canFineRotateLeft}
+          onclick={() => handleFineRotationClick(-1)}
+          onpointerdown={(event) => startFineRotationDrag(-1, event)}
+          onpointermove={handleFineRotationPointerMove}
+          onpointerup={(event) => finishFineRotationDrag(event)}
+          onpointercancel={(event) => finishFineRotationDrag(event, false)}
+          onwheel={(event) => handleFineRotationWheel(-1, event)}
+        >
+          <ActionIcon name="rotate-fine-ccw" size={18} />
+        </button>
 
+        <span
+          class="annotation-toolbar__rotation"
+          data-testid="toolbar-fine-rotation-info"
+          title={labels.fineRotationAngle(fineRotationDegrees)}
+          >{formatSignedDegrees(fineRotationDegrees)}</span
+        >
+
+        <button
+          type="button"
+          class="annotation-toolbar__button"
+          class:annotation-toolbar__button--active={fineRotationDrag?.direction === 1}
+          aria-label={labels.fineRotateRight}
+          title={`${labels.fineRotateRight} · ${labels.fineRotationAngle(fineRotationDegrees)}`}
+          disabled={!canFineRotateRight}
+          onclick={() => handleFineRotationClick(1)}
+          onpointerdown={(event) => startFineRotationDrag(1, event)}
+          onpointermove={handleFineRotationPointerMove}
+          onpointerup={(event) => finishFineRotationDrag(event)}
+          onpointercancel={(event) => finishFineRotationDrag(event, false)}
+          onwheel={(event) => handleFineRotationWheel(1, event)}
+        >
+          <ActionIcon name="rotate-fine-cw" size={18} />
+        </button>
+      {/if}
+
+      {#if zoomPercent !== null}
         <button
           type="button"
           class="annotation-toolbar__button"
@@ -325,9 +528,7 @@
           </svg>
         </button>
       {/if}
-    </div>
 
-    <div class="annotation-toolbar__group">
       {#each colors as option (option.value)}
         <button
           type="button"
@@ -341,7 +542,6 @@
           <span class="annotation-toolbar__swatch-fill" style={`background:${option.value}`}></span>
         </button>
       {/each}
-    </div>
 
     <button
       type="button"
@@ -361,34 +561,94 @@
       title={labels.collapseToolbarTitle}
       onclick={() => (collapsed = true)}
     >
-      ›
+      <ActionIcon name="chevron-up" size={18} />
     </button>
   </div>
 {/if}
 
 <style>
+  .annotation-toolbar,
+  .annotation-toolbar__fab {
+    --annotation-toolbar-scale: 1;
+    --annotation-toolbar-control-size: calc(30px * var(--annotation-toolbar-scale));
+    --annotation-toolbar-icon-size: calc(17px * var(--annotation-toolbar-scale));
+    --annotation-toolbar-padding: calc(6px * var(--annotation-toolbar-scale));
+    --annotation-toolbar-gap: calc(4px * var(--annotation-toolbar-scale));
+    --annotation-toolbar-swatch-size: calc(13px * var(--annotation-toolbar-scale));
+    --annotation-toolbar-radius: calc(8px * var(--annotation-toolbar-scale));
+  }
+
   .annotation-toolbar {
-    display: flex;
+    display: grid;
+    grid-auto-flow: column;
     align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2);
+    justify-items: center;
+    gap: var(--annotation-toolbar-gap);
+    width: max-content;
+    max-width: max-content;
+    overflow: visible;
+    box-sizing: border-box;
+    padding: var(--annotation-toolbar-padding);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-lg);
+    border-radius: var(--annotation-toolbar-radius);
     background: color-mix(in srgb, var(--color-surface-raised) 92%, transparent);
     box-shadow: var(--shadow-md);
     backdrop-filter: blur(10px);
     pointer-events: auto;
   }
 
+  .annotation-toolbar--multi-column {
+    column-gap: calc(var(--annotation-toolbar-gap) * 1.35);
+  }
+
+  @media (max-height: 760px) {
+    .annotation-toolbar,
+    .annotation-toolbar__fab {
+      --annotation-toolbar-scale: 0.9;
+    }
+  }
+
+  @media (max-height: 680px) {
+    .annotation-toolbar,
+    .annotation-toolbar__fab {
+      --annotation-toolbar-scale: 0.82;
+    }
+  }
+
+  @media (max-height: 600px), (max-width: 520px) {
+    .annotation-toolbar,
+    .annotation-toolbar__fab {
+      --annotation-toolbar-scale: 0.78;
+    }
+
+    .annotation-toolbar--multi-column {
+      column-gap: calc(var(--annotation-toolbar-gap) * 1.25);
+    }
+  }
+
+  @media (max-height: 480px) {
+    .annotation-toolbar,
+    .annotation-toolbar__fab {
+      --annotation-toolbar-scale: 0.68;
+    }
+  }
+
+  @media (max-height: 420px) {
+    .annotation-toolbar,
+    .annotation-toolbar__fab {
+      --annotation-toolbar-scale: 0.6;
+    }
+  }
+
   .annotation-toolbar__fab {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: var(--annotation-toolbar-control-size);
+    height: var(--annotation-toolbar-control-size);
     padding: 0;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--annotation-toolbar-radius);
     background: color-mix(in srgb, var(--color-surface-raised) 90%, transparent);
     box-shadow: var(--shadow-sm);
     backdrop-filter: blur(10px);
@@ -398,8 +658,8 @@
     line-height: 1;
     pointer-events: auto;
     transition:
-      background-color 0.15s ease,
-      color 0.15s ease;
+      background-color var(--transition-base),
+      color var(--transition-base);
   }
 
   .annotation-toolbar__fab:hover {
@@ -407,24 +667,14 @@
     color: var(--color-text-primary);
   }
 
-  .annotation-toolbar__group {
-    display: flex;
-    align-items: center;
-    gap: var(--space-1);
-  }
-
-  .annotation-toolbar__separator {
-    width: 1px;
-    height: 20px;
-    background-color: var(--color-border);
-    margin: 0 var(--space-1);
-  }
-
-  .annotation-toolbar__zoom {
-    min-width: 52px;
+  .annotation-toolbar__zoom,
+  .annotation-toolbar__rotation {
+    min-width: calc(var(--annotation-toolbar-control-size) + 2px);
+    max-width: calc(var(--annotation-toolbar-control-size) + 8px);
+    padding-inline: 1px;
     text-align: center;
     font-family: var(--font-mono);
-    font-size: var(--font-size-sm);
+    font-size: calc(0.78rem * var(--annotation-toolbar-scale));
     color: var(--color-text-secondary);
     font-variant-numeric: tabular-nums;
   }
@@ -434,18 +684,19 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 32px;
-    height: 32px;
+    width: var(--annotation-toolbar-control-size);
+    height: var(--annotation-toolbar-control-size);
+    flex: 0 0 var(--annotation-toolbar-control-size);
     padding: 0;
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--annotation-toolbar-radius);
     background: var(--color-surface);
     color: var(--color-text-primary);
     cursor: pointer;
     transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease,
-      transform 0.15s ease;
+      background-color var(--transition-base),
+      border-color var(--transition-base),
+      transform var(--transition-base);
   }
 
   .annotation-toolbar__button:hover:not(:disabled),
@@ -455,15 +706,28 @@
   }
 
   .annotation-toolbar__icon {
-    width: 18px;
-    height: 18px;
+    width: var(--annotation-toolbar-icon-size);
+    height: var(--annotation-toolbar-icon-size);
     display: block;
+  }
+
+  .annotation-toolbar__button :global(svg),
+  .annotation-toolbar__fab :global(svg) {
+    width: var(--annotation-toolbar-icon-size);
+    height: var(--annotation-toolbar-icon-size);
   }
 
   .annotation-toolbar__button:disabled,
   .annotation-toolbar__swatch:disabled {
-    opacity: 0.4;
+    opacity: 0.48;
     cursor: not-allowed;
+  }
+
+  .annotation-toolbar__button:focus-visible,
+  .annotation-toolbar__swatch:focus-visible,
+  .annotation-toolbar__fab:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .annotation-toolbar__button--active,
@@ -490,15 +754,15 @@
   }
 
   .annotation-toolbar__swatch-fill {
-    width: 14px;
-    height: 14px;
+    width: var(--annotation-toolbar-swatch-size);
+    height: var(--annotation-toolbar-swatch-size);
     border-radius: var(--radius-full);
     border: 1px solid color-mix(in srgb, var(--color-text-primary) 35%, transparent);
   }
 
-  @media (max-width: 720px) {
+  @media (max-width: 420px), (max-height: 520px) {
     .annotation-toolbar {
-      flex-wrap: wrap;
+      box-shadow: var(--shadow-sm);
     }
   }
 </style>

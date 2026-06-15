@@ -103,16 +103,13 @@
     flex-direction: column;
     gap: var(--space-2);
     padding: var(--space-4);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.004) 62%),
-      var(--color-surface);
+    background: var(--color-surface);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-surface);
     cursor: pointer;
     transition:
       border-color var(--transition-smooth),
-      box-shadow var(--transition-smooth),
-      transform var(--transition-smooth);
+      box-shadow var(--transition-smooth);
     text-align: left;
     width: 100%;
     font-family: var(--font-sans);
@@ -121,8 +118,7 @@
 
   .collection-card:hover {
     border-color: color-mix(in srgb, var(--color-accent) 28%, var(--color-border-strong));
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+    box-shadow: var(--shadow-surface);
   }
 
   .collection-card:focus-visible {
@@ -139,7 +135,7 @@
 
   .collection-card__name {
     margin: 0;
-    font-size: var(--font-size-lg);
+    font-size: var(--font-size-md);
     font-weight: var(--font-weight-bold);
     color: var(--color-text-primary);
   }
@@ -152,7 +148,7 @@
     color: var(--color-accent-hover);
     background-color: var(--color-accent-faint);
     border: 1px solid color-mix(in srgb, var(--color-accent) 22%, transparent);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-control);
   }
 
   .collection-card__description {

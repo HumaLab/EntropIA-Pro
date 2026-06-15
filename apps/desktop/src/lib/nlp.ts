@@ -1,5 +1,5 @@
 /**
- * NLP frontend client for EntropIA Pro desktop app.
+ * NLP frontend client for EntropIA desktop app.
  * Plain TypeScript (not .svelte.ts) for full testability in Vitest.
  *
  * Communicates with the Rust backend via Tauri invoke + event listeners.
@@ -20,6 +20,8 @@ export interface ItemNlpState {
   embed: NlpStatus
   ner: NlpStatus
   triples: NlpStatus
+  /** Entities persisted by the last completed NER run (NER jobs only). */
+  entityCount?: number
   errors?: {
     fts?: string
     embed?: string
@@ -41,6 +43,7 @@ export interface SimilarAsset {
   collectionId: string
   assetPath: string
   assetType: string
+  textPreview?: string
   similarity: number
 }
 
@@ -69,17 +72,22 @@ export interface AssetEmbeddingBackfillReport {
 
 interface ProgressPayload {
   item_id: string
+  asset_id?: string
   job: string
   pct: number
 }
 
 interface CompletePayload {
   item_id: string
+  asset_id?: string
   job: string
+  /** Entities persisted by NER jobs; absent for non-NER jobs. */
+  entity_count?: number
 }
 
 interface ErrorPayload {
   item_id: string
+  asset_id?: string
   job: string
   error: string
 }
@@ -89,14 +97,24 @@ interface ErrorPayload {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const IDLE_STATE: ItemNlpState = { fts: 'idle', embed: 'idle', ner: 'idle', triples: 'idle' }
+type StoredNlpState = Partial<ItemNlpState>
 
 export class NlpStore {
-  private states = new Map<string, ItemNlpState>()
+  private states = new Map<string, StoredNlpState>()
   private cleanupFns: Array<() => void> = []
+  private listenGeneration = 0
 
-  /** Returns the current NLP state for an item, or idle if unknown. */
-  getState(itemId: string): ItemNlpState {
-    return this.states.get(itemId) ?? { ...IDLE_STATE }
+  /** Returns item NLP state, optionally overlaid with asset-scoped job state. */
+  getState(itemId: string, assetId?: string | null): ItemNlpState {
+    const itemState = this.states.get(this._key(itemId)) ?? {}
+    const assetState = assetId ? (this.states.get(this._key(itemId, assetId)) ?? {}) : {}
+    const errors = { ...itemState.errors, ...assetState.errors }
+    return {
+      ...IDLE_STATE,
+      ...itemState,
+      ...assetState,
+      ...(Object.keys(errors).length > 0 ? { errors } : {}),
+    }
   }
 
   /**
@@ -106,40 +124,85 @@ export class NlpStore {
   async startListening(
     listen: (event: string, callback: (e: { payload: unknown }) => void) => Promise<() => void>
   ): Promise<void> {
+    const generation = ++this.listenGeneration
+
     const unlistenProgress = await listen('nlp:progress', (e) => {
       const p = e.payload as ProgressPayload
-      this._setJobStatus(p.item_id, p.job as NlpJobType, 'running')
+      this._setJobStatus(p.item_id, p.job as NlpJobType, 'running', undefined, p.asset_id)
     })
 
     const unlistenComplete = await listen('nlp:complete', (e) => {
       const p = e.payload as CompletePayload
-      this._setJobStatus(p.item_id, p.job as NlpJobType, 'done')
+      // Record the count before the status flip so consumers reacting to
+      // the 'done' transition already see the fresh count.
+      if (p.job === 'ner') {
+        this._setEntityCount(p.item_id, p.entity_count, p.asset_id)
+      }
+      this._setJobStatus(p.item_id, p.job as NlpJobType, 'done', undefined, p.asset_id)
     })
 
     const unlistenError = await listen('nlp:error', (e) => {
       const p = e.payload as ErrorPayload
-      this._setJobStatus(p.item_id, p.job as NlpJobType, 'error', p.error)
+      this._setJobStatus(p.item_id, p.job as NlpJobType, 'error', p.error, p.asset_id)
     })
 
-    this.cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+    const cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+
+    // stopListening may run while the listen() promises above are still in
+    // flight; unlisten late registrations immediately instead of leaking them.
+    if (generation !== this.listenGeneration) {
+      for (const fn of cleanupFns) {
+        fn()
+      }
+      return
+    }
+
+    this.cleanupFns = cleanupFns
   }
 
   /** Calls all cleanup functions returned by listen(), removing event listeners. */
   stopListening(): void {
+    this.listenGeneration++
     for (const fn of this.cleanupFns) {
       fn()
     }
     this.cleanupFns = []
   }
 
-  /** Updates a single job's status in the state map for the given itemId. */
-  _setJobStatus(itemId: string, job: NlpJobType, status: NlpStatus, error?: string): void {
-    const current = this.states.get(itemId) ?? { ...IDLE_STATE }
-    const updated: ItemNlpState = { ...current, [job]: status }
+  /**
+   * Records the entity count reported by the last completed NER run.
+   * `undefined` clears a stale count (e.g. a run skipped for lack of text).
+   */
+  _setEntityCount(itemId: string, entityCount?: number, assetId?: string | null): void {
+    const key = this._key(itemId, assetId)
+    const updated: StoredNlpState = { ...(this.states.get(key) ?? {}) }
+    if (typeof entityCount === 'number') {
+      updated.entityCount = entityCount
+    } else {
+      delete updated.entityCount
+    }
+    this.states.set(key, updated)
+  }
+
+  /** Updates a single job's status for an item or a specific asset within it. */
+  _setJobStatus(
+    itemId: string,
+    job: NlpJobType,
+    status: NlpStatus,
+    error?: string,
+    assetId?: string | null
+  ): void {
+    const key = this._key(itemId, assetId)
+    const current = this.states.get(key) ?? {}
+    const updated: StoredNlpState = { ...current, [job]: status }
     if (error) {
       updated.errors = { ...current.errors, [job]: error }
     }
-    this.states.set(itemId, updated)
+    this.states.set(key, updated)
+  }
+
+  private _key(itemId: string, assetId?: string | null): string {
+    return assetId ? `${itemId}::${assetId}` : itemId
   }
 }
 

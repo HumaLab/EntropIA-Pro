@@ -1,2 +1,25 @@
-# Keep the pnpm lockfile byte-stable across runners
+* text=auto eol=lf
+
+# Keep the pnpm lockfile byte-stable across runners.
 pnpm-lock.yaml text eol=lf
+
+# Binary assets and bundled/native artifacts.
+*.gif binary
+*.ico binary
+*.icns binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.webp binary
+*.pdf binary
+*.dll binary
+*.exe binary
+*.so binary
+*.dylib binary
+*.mnn binary
+*.onnx binary
+*.onnx_data binary
+*.zip binary
+*.7z binary
+*.tar binary
+*.gz binary

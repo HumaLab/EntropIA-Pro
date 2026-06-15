@@ -28,12 +28,10 @@
   .card {
     display: flex;
     flex-direction: column;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.022), rgba(255, 255, 255, 0.004) 58%),
-      var(--color-surface-elevated);
+    background: var(--color-surface-elevated);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
-    box-shadow: var(--shadow-glow);
+    border-radius: var(--radius-surface);
+    box-shadow: var(--shadow-surface);
     overflow: hidden;
     transition:
       box-shadow var(--transition-base),
@@ -42,8 +40,8 @@
   }
 
   .card--hoverable:hover {
-    box-shadow: var(--shadow-md);
-    border-color: var(--color-border-strong);
+    box-shadow: var(--shadow-surface);
+    border-color: var(--color-border-hover);
   }
 
   /* ─── Padding ─── */

@@ -144,17 +144,17 @@
     align-items: center;
     gap: var(--space-2);
     padding: var(--space-2);
-    min-height: 40px;
+    min-height: var(--control-height-lg);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     background-color: var(--color-surface);
-    transition: border-color 0.15s ease;
+    transition: border-color var(--transition-base);
     cursor: text;
   }
 
   .topic-editor__input-area:focus-within {
     border-color: var(--color-accent);
-    box-shadow: 0 0 0 2px rgba(108, 142, 245, 0.2);
+    box-shadow: var(--focus-ring);
   }
 
   .topic-editor__chip {
@@ -224,7 +224,7 @@
     background-color: var(--color-surface);
     border: 1px solid var(--color-border);
     border-radius: var(--radius-md);
-    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+    box-shadow: var(--shadow-md);
   }
 
   .topic-editor__suggestion {

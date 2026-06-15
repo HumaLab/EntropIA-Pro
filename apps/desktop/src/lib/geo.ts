@@ -1,5 +1,5 @@
 /**
- * Geocoding frontend client for EntropIA Pro desktop app.
+ * Geocoding frontend client for EntropIA desktop app.
  * Communicates with the Rust geo backend (Nominatim/OpenStreetMap).
  */
 
@@ -42,6 +42,7 @@ interface GeoErrorPayload {
 export class GeoStore {
   private unlisteners: UnlistenFn[] = []
   private listeners: Array<() => void> = []
+  private listenGeneration = 0
   private onEntityComplete?: (entity: GeocodedEntity) => void
   private onItemComplete?: (itemId: string, geocoded: number, notFound: number) => void
 
@@ -62,7 +63,9 @@ export class GeoStore {
   }
 
   async startListening() {
-    this.unlisteners.push(
+    const generation = ++this.listenGeneration
+
+    const unlisteners = [
       await listen<GeoEntityCompletePayload>('geo:entity-complete', (event) => {
         const { entity_id, latitude, longitude, display_name } = event.payload
         this.onEntityComplete?.({
@@ -82,10 +85,20 @@ export class GeoStore {
         console.error('[geo]', event.payload.error)
         this.notify()
       }),
-    )
+    ]
+
+    // stopListening may run while the listen() promises above are still in
+    // flight; unlisten late registrations immediately instead of leaking them.
+    if (generation !== this.listenGeneration) {
+      unlisteners.forEach((fn) => fn())
+      return
+    }
+
+    this.unlisteners.push(...unlisteners)
   }
 
   stopListening() {
+    this.listenGeneration++
     this.unlisteners.forEach((fn) => fn())
     this.unlisteners = []
   }

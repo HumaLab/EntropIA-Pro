@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { ActionIcon } from '../Button'
 
   interface AudioPlayerLabels {
     skipBack: string
@@ -12,9 +13,11 @@
 
   let {
     src,
+    fallbackBlobLoader,
     labels: labelsProp = {},
   }: {
     src: string
+    fallbackBlobLoader?: () => Promise<Blob>
     labels?: Partial<AudioPlayerLabels>
   } = $props()
 
@@ -36,18 +39,34 @@
   let audioEl: HTMLAudioElement | undefined = $state()
   let blobUrl = $state<string | null>(null)
   let loadError = $state(false)
+  let fallbackDiagnostic = $state<string | null>(null)
+  let fallbackStage = $state<string | null>(null)
+  let activeBlobUrl: string | null = null
+  let lastSrc: string | null = null
+  let fallbackAttempt = 0
 
   $effect(() => {
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl)
-      blobUrl = null
+    if (src === lastSrc) return
+
+    lastSrc = src
+    fallbackAttempt += 1
+    playing = false
+    currentTime = 0
+    duration = 0
+    loadError = false
+    fallbackDiagnostic = null
+    fallbackStage = null
+    clearBlobUrl()
+
+    if (audioEl) {
+      audioEl.pause()
+      audioEl.currentTime = 0
+      audioEl.load()
     }
   })
 
   onDestroy(() => {
-    if (blobUrl) {
-      URL.revokeObjectURL(blobUrl)
-    }
+    clearBlobUrl()
   })
 
   const progress = $derived(duration > 0 ? currentTime / duration : 0)
@@ -56,6 +75,8 @@
   const formattedDuration = $derived(formatTime(duration))
 
   function formatTime(seconds: number): string {
+    if (!Number.isFinite(seconds) || seconds <= 0) return '0:00'
+
     const s = Math.floor(seconds)
     const m = Math.floor(s / 60)
     const sec = s % 60
@@ -77,7 +98,7 @@
   }
 
   function seek(e: MouseEvent) {
-    if (!audioEl || duration === 0) return
+    if (!audioEl || duration <= 0) return
     const target = e.currentTarget as HTMLElement
     const rect = target.getBoundingClientRect()
     const ratio = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width))
@@ -98,12 +119,12 @@
 
   function handleTimeUpdate() {
     if (!audioEl) return
-    currentTime = audioEl.currentTime
+    currentTime = Number.isFinite(audioEl.currentTime) ? audioEl.currentTime : 0
   }
 
   function handleLoadedMetadata() {
     if (!audioEl) return
-    duration = audioEl.duration
+    duration = Number.isFinite(audioEl.duration) && audioEl.duration > 0 ? audioEl.duration : 0
   }
 
   function handlePlay() {
@@ -124,22 +145,118 @@
     volume = audioEl.volume
   }
 
-  function handleError() {
-    if (!src || blobUrl || !audioEl) return
-    fetch(src)
-      .then((response) => {
-        if (!response.ok) throw new Error(`HTTP ${response.status}`)
-        return response.blob()
-      })
-      .then((blob) => {
-        blobUrl = URL.createObjectURL(blob)
-        audioEl!.src = blobUrl
-        void audioEl!.play()
-      })
-      .catch((err) => {
-        console.error('[AudioPlayer] Fallback load failed:', err)
-        loadError = true
-      })
+  async function handleError() {
+    if (!src || !audioEl) return
+
+    if (blobUrl) {
+      failFallbackPlayback()
+      loadError = true
+      return
+    }
+
+    const attemptedSrc = src
+    const attempt = ++fallbackAttempt
+
+    try {
+      const blob = fallbackBlobLoader
+        ? await fallbackBlobLoader()
+        : await fetchFallbackBlob(attemptedSrc)
+      if (attempt !== fallbackAttempt || attemptedSrc !== src || !audioEl) return
+
+      const typedBlob = ensureAudioBlobType(blob, attemptedSrc)
+      const nextBlobUrl = URL.createObjectURL(typedBlob)
+      replaceBlobUrl(nextBlobUrl)
+      fallbackStage = 'custom-loader'
+      audioEl.src = nextBlobUrl
+      audioEl.load()
+    } catch (customFallbackError) {
+      if (attempt !== fallbackAttempt || attemptedSrc !== src || !audioEl) return
+
+      if (!fallbackBlobLoader) {
+        failFallbackLoad(customFallbackError)
+        return
+      }
+
+      try {
+        const blob = await fetchFallbackBlob(attemptedSrc)
+        if (attempt !== fallbackAttempt || attemptedSrc !== src || !audioEl) return
+
+        const typedBlob = ensureAudioBlobType(blob, attemptedSrc)
+        const nextBlobUrl = URL.createObjectURL(typedBlob)
+        replaceBlobUrl(nextBlobUrl)
+        fallbackStage = 'fetch'
+        audioEl.src = nextBlobUrl
+        audioEl.load()
+      } catch (fetchFallbackError) {
+        if (attempt !== fallbackAttempt) return
+        failFallbackLoad(fetchFallbackError, customFallbackError)
+      }
+    }
+  }
+
+  async function fetchFallbackBlob(source: string): Promise<Blob> {
+    const response = await fetch(source)
+    if (!response.ok) throw new Error(`HTTP ${response.status}`)
+    return response.blob()
+  }
+
+  function failFallbackLoad(error: unknown, customFallbackError?: unknown) {
+    console.error('[AudioPlayer] Fallback load failed:', error)
+    if (customFallbackError) {
+      console.error('[AudioPlayer] Custom fallback load failed:', customFallbackError)
+    }
+    fallbackDiagnostic = error instanceof Error ? error.message : null
+    loadError = true
+  }
+
+  function failFallbackPlayback() {
+    const code = audioEl?.error?.code
+    const detail = code ? `media error code ${code}` : 'unknown media error'
+    fallbackDiagnostic = `Fallback audio loaded via ${fallbackStage ?? 'blob'}, but playback failed (${detail})`
+    console.error('[AudioPlayer] Fallback playback failed:', fallbackDiagnostic)
+  }
+
+  function replaceBlobUrl(nextBlobUrl: string) {
+    if (activeBlobUrl) {
+      URL.revokeObjectURL(activeBlobUrl)
+    }
+    activeBlobUrl = nextBlobUrl
+    blobUrl = nextBlobUrl
+  }
+
+  function clearBlobUrl() {
+    if (activeBlobUrl) {
+      URL.revokeObjectURL(activeBlobUrl)
+      activeBlobUrl = null
+    }
+    blobUrl = null
+  }
+
+  function ensureAudioBlobType(blob: Blob, source: string): Blob {
+    if (blob.type && blob.type !== 'application/octet-stream') return blob
+
+    const mimeType = audioMimeTypeFromSource(source)
+    return mimeType ? new Blob([blob], { type: mimeType }) : blob
+  }
+
+  function audioMimeTypeFromSource(source: string): string | null {
+    const extension = source.split(/[?#]/, 1)[0]?.split('.').pop()?.toLowerCase()
+    switch (extension) {
+      case 'wav':
+        return 'audio/wav'
+      case 'mp3':
+        return 'audio/mpeg'
+      case 'flac':
+        return 'audio/flac'
+      case 'm4a':
+        return 'audio/mp4'
+      case 'aac':
+        return 'audio/aac'
+      case 'ogg':
+        return 'audio/ogg'
+      default:
+        return null
+    }
   }
 </script>
 
@@ -159,8 +276,8 @@
 
   {#if loadError}
     <p class="audio-player__error" data-testid="audio-load-error">
-      No se pudo reproducir el audio. En Linux, esto suele deberse a una incompatibilidad entre
-      WebKitGTK y GStreamer. Verificá que tu sistema tenga GStreamer ≥ 1.22.
+      No se pudo reproducir el audio. Probá abrir el archivo original o convertirlo a un formato
+      compatible.{#if fallbackDiagnostic} Detalle: {fallbackDiagnostic}.{/if}
     </p>
   {/if}
 
@@ -173,7 +290,8 @@
       aria-label={labels.skipBack}
       onclick={() => skip(-5)}
     >
-      &#8634; 5s
+      <ActionIcon name="skip-back" size={16} />
+      <span>5s</span>
     </button>
 
     <button
@@ -183,7 +301,7 @@
       aria-label={playing ? labels.pause : labels.play}
       onclick={togglePlay}
     >
-      {playing ? '⏸' : '▶'}
+      <ActionIcon name={playing ? 'pause' : 'play'} size={22} />
     </button>
 
     <button
@@ -193,7 +311,8 @@
       aria-label={labels.skipForward}
       onclick={() => skip(5)}
     >
-      5s &#8635;
+      <span>5s</span>
+      <ActionIcon name="skip-forward" size={16} />
     </button>
   </div>
 
@@ -232,7 +351,9 @@
 
   <!-- Volume -->
   <div class="audio-player__volume">
-    <label class="audio-player__volume-label" for="audio-volume-slider">🔊</label>
+    <label class="audio-player__volume-label" for="audio-volume-slider">
+      <ActionIcon name="volume" size={18} />
+    </label>
     <input
       id="audio-volume-slider"
       type="range"
@@ -270,16 +391,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
+    gap: var(--space-1);
     padding: var(--space-2) var(--space-3);
     border: 1px solid var(--color-border);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     background-color: var(--color-surface);
     color: var(--color-text-primary);
     cursor: pointer;
     font-size: var(--font-size-sm);
     transition:
-      background-color 0.15s ease,
-      border-color 0.15s ease;
+      background-color var(--transition-base),
+      border-color var(--transition-base);
   }
 
   .audio-player__btn:hover {
@@ -287,10 +409,15 @@
     border-color: var(--color-text-muted);
   }
 
+  .audio-player__btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
   .audio-player__btn--play {
     width: 56px;
     height: 56px;
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-surface);
     font-size: var(--font-size-xl);
     border-color: var(--color-accent);
     background-color: var(--color-surface-raised);
@@ -298,7 +425,7 @@
 
   .audio-player__btn--play:hover {
     background-color: var(--color-accent);
-    color: var(--color-text-on-accent, #fff);
+    color: var(--color-bg);
   }
 
   .audio-player__progress {
@@ -306,7 +433,7 @@
     max-width: 480px;
     height: 6px;
     background-color: var(--color-border);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-xs);
     cursor: pointer;
     position: relative;
     overflow: hidden;
@@ -319,7 +446,7 @@
   .audio-player__progress-fill {
     height: 100%;
     background-color: var(--color-accent);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-xs);
     transition: width 0.1s linear;
   }
 
@@ -342,7 +469,7 @@
   }
 
   .audio-player__volume-label {
-    font-size: var(--font-size-md);
+    display: inline-flex;
     cursor: default;
   }
 
@@ -355,8 +482,8 @@
     margin: 0;
     padding: var(--space-2) var(--space-3);
     border-radius: var(--radius-md);
-    background: rgba(255, 143, 143, 0.12);
-    color: #ff8f8f;
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
     font-size: var(--font-size-sm);
     text-align: center;
     max-width: 480px;

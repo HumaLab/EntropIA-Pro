@@ -1,10 +1,13 @@
 import { defineConfig } from 'vite'
 import { svelte } from '@sveltejs/vite-plugin-svelte'
-import tailwindcss from '@tailwindcss/vite'
 import { resolve } from 'path'
 
+// Tauri 2 injects TAURI_ENV_DEBUG as the string 'true'/'false'; an explicit
+// comparison is required because 'false' is truthy.
+const isTauriDebug = process.env.TAURI_ENV_DEBUG === 'true'
+
 export default defineConfig({
-  plugins: [tailwindcss(), svelte()],
+  plugins: [svelte()],
   optimizeDeps: {
     // Restrict dep-scan to the real frontend entry.
     // Without this, Vite may crawl every HTML file under apps/desktop,
@@ -59,7 +62,7 @@ export default defineConfig({
   },
   build: {
     target: 'chrome105',
-    minify: !process.env.TAURI_DEBUG ? 'esbuild' : false,
-    sourcemap: !!process.env.TAURI_DEBUG,
+    minify: isTauriDebug ? false : 'esbuild',
+    sourcemap: isTauriDebug,
   },
 })

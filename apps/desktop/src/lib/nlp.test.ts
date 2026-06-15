@@ -62,6 +62,24 @@ describe('NlpStore', () => {
     expect(stateB.fts).toBe('idle')
   })
 
+  it('getState keeps asset-scoped jobs isolated within the same item', () => {
+    store._setJobStatus('item-a', 'embed', 'done', undefined, 'asset-a')
+
+    expect(store.getState('item-a', 'asset-a').embed).toBe('done')
+    expect(store.getState('item-a', 'asset-b').embed).toBe('idle')
+  })
+
+  it('getState falls back to item-wide job state when an asset has no override', () => {
+    store._setJobStatus('item-a', 'fts', 'done')
+    store._setJobStatus('item-a', 'embed', 'running', undefined, 'asset-a')
+
+    const assetState = store.getState('item-a', 'asset-a')
+    expect(assetState.fts).toBe('done')
+    expect(assetState.embed).toBe('running')
+    expect(store.getState('item-a', 'asset-b').fts).toBe('done')
+    expect(store.getState('item-a', 'asset-b').embed).toBe('idle')
+  })
+
   // ─────────────────────────────────────────────────────────────────────────
   // invoke wrappers
   // ─────────────────────────────────────────────────────────────────────────
@@ -232,6 +250,27 @@ describe('NlpStore', () => {
     expect(state.ner).toBe('idle')
   })
 
+  it('nlp:progress with asset_id updates only that asset state', async () => {
+    let progressCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:progress') {
+        progressCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    progressCallback!({
+      payload: { item_id: 'item-emb', asset_id: 'asset-a', job: 'embed', pct: 10 },
+    })
+
+    expect(store.getState('item-emb', 'asset-a').embed).toBe('running')
+    expect(store.getState('item-emb', 'asset-b').embed).toBe('idle')
+    expect(store.getState('item-emb').embed).toBe('idle')
+  })
+
   it('nlp:progress for ner job sets ner status to running', async () => {
     let progressCallback: ((event: { payload: unknown }) => void) | null = null
 
@@ -311,6 +350,25 @@ describe('NlpStore', () => {
     expect(store.getState('item-2').embed).toBe('done')
   })
 
+  it('nlp:complete with asset_id does not mark sibling assets done', async () => {
+    let completeCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:complete') {
+        completeCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    completeCallback!({ payload: { item_id: 'item-2', asset_id: 'asset-a', job: 'embed' } })
+
+    expect(store.getState('item-2', 'asset-a').embed).toBe('done')
+    expect(store.getState('item-2', 'asset-b').embed).toBe('idle')
+    expect(store.getState('item-2').embed).toBe('idle')
+  })
+
   it('nlp:complete for ner job transitions ner to done', async () => {
     let completeCallback: ((event: { payload: unknown }) => void) | null = null
 
@@ -326,6 +384,85 @@ describe('NlpStore', () => {
     completeCallback!({ payload: { item_id: 'item-3', job: 'ner' } })
 
     expect(store.getState('item-3').ner).toBe('done')
+  })
+
+  it('nlp:complete with entity_count stores the count for the NER job', async () => {
+    let completeCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:complete') {
+        completeCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    completeCallback!({ payload: { item_id: 'item-count', job: 'ner', entity_count: 0 } })
+
+    const state = store.getState('item-count')
+    expect(state.ner).toBe('done')
+    expect(state.entityCount).toBe(0)
+  })
+
+  it('nlp:complete with asset-scoped entity_count keeps the count on that asset', async () => {
+    let completeCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:complete') {
+        completeCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    completeCallback!({
+      payload: { item_id: 'item-count', asset_id: 'asset-a', job: 'ner', entity_count: 3 },
+    })
+
+    expect(store.getState('item-count', 'asset-a').entityCount).toBe(3)
+    expect(store.getState('item-count', 'asset-b').entityCount).toBeUndefined()
+    expect(store.getState('item-count').entityCount).toBeUndefined()
+  })
+
+  it('nlp:complete without entity_count clears a stale NER count', async () => {
+    let completeCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:complete') {
+        completeCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    completeCallback!({ payload: { item_id: 'item-count', job: 'ner', entity_count: 7 } })
+    expect(store.getState('item-count').entityCount).toBe(7)
+
+    completeCallback!({ payload: { item_id: 'item-count', job: 'ner' } })
+    expect(store.getState('item-count').entityCount).toBeUndefined()
+  })
+
+  it('nlp:complete for non-NER jobs does not touch entityCount', async () => {
+    let completeCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:complete') {
+        completeCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    completeCallback!({ payload: { item_id: 'item-count', job: 'ner', entity_count: 4 } })
+    completeCallback!({ payload: { item_id: 'item-count', job: 'fts' } })
+
+    const state = store.getState('item-count')
+    expect(state.fts).toBe('done')
+    expect(state.entityCount).toBe(4)
   })
 
   it('nlp:complete for triples job transitions triples to done', async () => {
@@ -385,6 +522,28 @@ describe('NlpStore', () => {
     const state = store.getState('item-err2')
     expect(state.embed).toBe('error')
     expect(state.errors?.embed).toBe('BGE-M3 failed')
+  })
+
+  it('nlp:error with asset_id stores the error only on that asset', async () => {
+    let errorCallback: ((event: { payload: unknown }) => void) | null = null
+
+    vi.mocked(listen).mockImplementation((eventName, callback) => {
+      if (eventName === 'nlp:error') {
+        errorCallback = callback as (event: { payload: unknown }) => void
+      }
+      return Promise.resolve(vi.fn())
+    })
+
+    await store.startListening(listen)
+
+    errorCallback!({
+      payload: { item_id: 'item-err2', asset_id: 'asset-a', job: 'embed', error: 'BGE-M3 failed' },
+    })
+
+    expect(store.getState('item-err2', 'asset-a').embed).toBe('error')
+    expect(store.getState('item-err2', 'asset-a').errors?.embed).toBe('BGE-M3 failed')
+    expect(store.getState('item-err2', 'asset-b').embed).toBe('idle')
+    expect(store.getState('item-err2', 'asset-b').errors?.embed).toBeUndefined()
   })
 
   it('nlp:error for ner job transitions ner to error with message', async () => {
@@ -464,6 +623,33 @@ describe('NlpStore', () => {
 
     expect(cleanup).toHaveBeenCalledTimes(3) // 3 listeners registered (progress, complete, error)
   })
+
+  it('stopListening before startListening resolves unlistens late registrations', async () => {
+    const cleanup = vi.fn()
+    let resolveFirstListen: ((unlisten: () => void) => void) | null = null
+
+    let callCount = 0
+    vi.mocked(listen).mockImplementation(() => {
+      callCount++
+      if (callCount === 1) {
+        return new Promise((resolve) => {
+          resolveFirstListen = resolve
+        })
+      }
+      return Promise.resolve(cleanup)
+    })
+
+    const startPromise = store.startListening(listen)
+
+    // Unmount happens while the listen() registrations are still in flight
+    store.stopListening()
+
+    resolveFirstListen!(cleanup)
+    await startPromise
+
+    // All late registrations must be unlistened immediately, not leaked
+    expect(cleanup).toHaveBeenCalledTimes(3)
+  })
 })
 
 describe('embedding architecture governance', () => {
@@ -481,7 +667,7 @@ describe('embedding architecture governance', () => {
     expect(embeddingsRs).toContain('baai/bge-m3')
     expect(embeddingsRs).toContain('https://openrouter.ai/api/v1/embeddings')
     expect(embeddingsRs).not.toContain('fallback is disabled')
-    expect(embeddingsRs).not.toContain(`No hay fallback a Python/${'fastembed'}`)
+    expect(embeddingsRs).not.toContain(`No hay fallback a ${'fastembed'}`)
     expect(embeddingsRs).not.toContain('Command::new')
     expect(embeddingsRs).not.toContain('script_path')
   })

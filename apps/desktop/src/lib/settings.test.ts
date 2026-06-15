@@ -17,8 +17,13 @@ import {
   SETTINGS_KEYS,
   DEFAULT_OPENROUTER_MODEL,
   DEFAULT_LLM_MODE,
+  DEFAULT_EMBEDDING_PROVIDER,
   DEFAULT_STT_MODE,
   DEFAULT_OCRH_MODE,
+  DEFAULT_PROMPTS,
+  DEFAULT_MODEL_PARAMS,
+  DEFAULT_MODEL_PARAMS_BY_FLOW,
+  DEFAULT_RAG_PARAMS,
 } from './settings'
 
 const mockInvoke = vi.mocked(invoke)
@@ -77,7 +82,7 @@ describe('settings', () => {
 
   describe('testOpenrouterConnection', () => {
     it('calls invoke with api key', async () => {
-      const mockModels = [{ id: 'google/gemma-3-4b-it', name: 'Gemma 3 4B', context_length: 8192 }]
+      const mockModels = [{ id: 'google/gemma-4-26b-a4b-it', name: 'Gemma 4 26B', context_length: 8192 }]
       mockInvoke.mockResolvedValueOnce(mockModels)
       const result = await testOpenrouterConnection('sk-or-test')
       expect(mockInvoke).toHaveBeenCalledWith('test_openrouter_connection', {
@@ -113,18 +118,83 @@ describe('settings', () => {
       expect(SETTINGS_KEYS.OPENROUTER_MODEL).toBe('openrouter_model')
       expect(SETTINGS_KEYS.LLM_MODE).toBe('llm_mode')
       expect(SETTINGS_KEYS.ASSEMBLYAI_API_KEY).toBe('assemblyai_api_key')
+      expect(SETTINGS_KEYS.ASSEMBLYAI_SPEAKER_LABELS).toBe(
+        'assemblyai_role_speaker_identification'
+      )
       expect(SETTINGS_KEYS.STT_MODE).toBe('stt_mode')
       expect(SETTINGS_KEYS.GLM_OCR_API_KEY).toBe('glm_ocr_api_key')
       expect(SETTINGS_KEYS.OCRH_MODE).toBe('ocrh_mode')
       expect(SETTINGS_KEYS.LANGUAGE).toBe('language')
+    })
+
+    it('exports local-model setting keys (Pro)', () => {
+      expect(SETTINGS_KEYS.DEPS_VENV_PYTHON_PATH).toBe('deps_venv_python_path')
       expect(SETTINGS_KEYS.PYTHON_RUNTIME_SELECTION).toBe('python.runtime_selection')
+      expect(SETTINGS_KEYS.LOCAL_MODEL_FILENAME).toBe('local_model_filename')
+      expect(SETTINGS_KEYS.LOCAL_MODEL_SOURCE_URL).toBe('local_model_source_url')
+      expect(SETTINGS_KEYS.LOCAL_EMBEDDING_MODEL_DIR).toBe('local_embedding_model_dir')
+    })
+
+    it('exports prompt setting keys', () => {
+      expect(SETTINGS_KEYS.OCR_CORRECTION_PROMPT).toBe('prompt_ocr_correction')
+      expect(SETTINGS_KEYS.SUMMARY_PROMPT).toBe('prompt_summary')
+      expect(SETTINGS_KEYS.NER_PROMPT).toBe('prompt_ner')
+      expect(SETTINGS_KEYS.TRIPLETS_PROMPT).toBe('prompt_triplets')
+    })
+
+    it('exports RAG setting keys', () => {
+      expect(SETTINGS_KEYS.RAG_ACTIVE_CONVERSATION).toBe('rag_active_conversation')
+      expect(SETTINGS_KEYS.RAG_TOP_K).toBe('rag_top_k')
+      expect(SETTINGS_KEYS.RAG_MIN_SIMILARITY).toBe('rag_min_similarity')
+      expect(SETTINGS_KEYS.RAG_CANDIDATES_PER_LEG).toBe('rag_candidates_per_leg')
+      expect(SETTINGS_KEYS.RAG_RRF_K).toBe('rag_rrf_k')
+      expect(SETTINGS_KEYS.RAG_SNIPPET_MAX_CHARS).toBe('rag_snippet_max_chars')
+      expect(SETTINGS_KEYS.RAG_CONTEXT_MAX_CHARS).toBe('rag_context_max_chars')
+      expect(SETTINGS_KEYS.RAG_HISTORY_TURNS).toBe('rag_history_turns')
+      expect(SETTINGS_KEYS.RAG_HISTORY_TURN_MAX_CHARS).toBe('rag_history_turn_max_chars')
+      expect(SETTINGS_KEYS.RAG_TEMPERATURE).toBe('rag_temperature')
+      expect(SETTINGS_KEYS.RAG_MAX_TOKENS).toBe('rag_max_tokens')
+    })
+
+    it('exports per-flow LLM param keys', () => {
+      expect(SETTINGS_KEYS.LLM_TEMPERATURE).toBe('llm_temperature')
+      expect(SETTINGS_KEYS.LLM_OCR_CORRECTION_TEMPERATURE).toBe(
+        'llm_ocr_correction_temperature'
+      )
+      expect(SETTINGS_KEYS.LLM_SUMMARY_MAX_TOKENS).toBe('llm_summary_max_tokens')
+      expect(SETTINGS_KEYS.LLM_NER_TOP_P).toBe('llm_ner_top_p')
+      expect(SETTINGS_KEYS.LLM_TRIPLETS_STOP_SEQUENCES).toBe('llm_triplets_stop_sequences')
     })
 
     it('has correct defaults', () => {
-      expect(DEFAULT_OPENROUTER_MODEL).toBe('google/gemma-3-4b-it')
+      expect(DEFAULT_OPENROUTER_MODEL).toBe('google/gemma-4-26b-a4b-it')
       expect(DEFAULT_LLM_MODE).toBe('local')
+      expect(DEFAULT_EMBEDDING_PROVIDER).toBe('local')
       expect(DEFAULT_STT_MODE).toBe('local')
       expect(DEFAULT_OCRH_MODE).toBe('local')
+    })
+
+    it('exports default prompts for every flow', () => {
+      expect(DEFAULT_PROMPTS.ocrCorrectionPrompt).toContain('{text}')
+      expect(DEFAULT_PROMPTS.summaryPrompt).toContain('{text}')
+      expect(DEFAULT_PROMPTS.nerPrompt).toContain('{text}')
+      expect(DEFAULT_PROMPTS.tripletsPrompt).toContain('{text}')
+    })
+
+    it('exports default model params and per-flow overrides', () => {
+      expect(DEFAULT_MODEL_PARAMS.temperature).toBe('0.3')
+      expect(DEFAULT_MODEL_PARAMS.presencePenalty).toBe('0')
+      expect(DEFAULT_MODEL_PARAMS_BY_FLOW.ocrCorrection.temperature).toBe('0.3')
+      expect(DEFAULT_MODEL_PARAMS_BY_FLOW.summary.temperature).toBe('0.3')
+      expect(DEFAULT_MODEL_PARAMS_BY_FLOW.ner.temperature).toBe('0.3')
+      expect(DEFAULT_MODEL_PARAMS_BY_FLOW.triplets.temperature).toBe('0.3')
+    })
+
+    it('exports default RAG params', () => {
+      expect(DEFAULT_RAG_PARAMS.topK).toBe('6')
+      expect(DEFAULT_RAG_PARAMS.rrfK).toBe('60')
+      expect(DEFAULT_RAG_PARAMS.temperature).toBe('0.2')
+      expect(DEFAULT_RAG_PARAMS.maxTokens).toBe('1500')
     })
   })
 })

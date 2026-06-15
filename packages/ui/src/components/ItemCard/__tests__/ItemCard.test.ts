@@ -31,6 +31,8 @@ describe('ItemCard', () => {
     const img = screen.getByRole('img')
     expect(img).toBeInTheDocument()
     expect(img).toHaveAttribute('src', 'asset://localhost/path/to/thumb.jpg')
+    expect(img).toHaveAttribute('loading', 'lazy')
+    expect(img).toHaveAttribute('decoding', 'async')
   })
 
   it('renders placeholder icon when no thumbnail provided', () => {

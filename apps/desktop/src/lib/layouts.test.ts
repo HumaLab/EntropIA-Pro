@@ -8,7 +8,11 @@ import {
   filterRegionsByPage,
   filterLayoutBlocksByType,
   filterLayoutBlocksByPage,
+  findLayoutBlockById,
+  findLayoutBlockByRegionId,
   getBlockCountByPage,
+  getLayoutInteractionStateFromBlockId,
+  getLayoutInteractionStateFromRegionId,
   getLayoutBlockFilterId,
   getIntersectionArea,
   getPagesFromLayout,
@@ -16,6 +20,7 @@ import {
   getOverlapRatio,
   matchLayoutRegionToBlock,
   normalizeLayoutBBox,
+  pruneLayoutInteractionSelectionState,
 } from './layouts'
 import type { LayoutBlockView } from './layouts'
 import type { LayoutBlock, LayoutRegion } from '@entropia/store'
@@ -29,6 +34,25 @@ vi.mock('./db', () => ({
     },
   }),
 }))
+
+function layoutBlockView(overrides: Partial<LayoutBlockView> = {}): LayoutBlockView {
+  return {
+    id: 'layout-block-1',
+    regionId: 'layout-block-1::overlay',
+    label: 'text',
+    order: 1,
+    content: 'content',
+    preview: 'content',
+    bbox: { x: 0, y: 0, width: 10, height: 10 },
+    overlayBbox: { x: 0, y: 0, width: 10, height: 10 },
+    overlaySource: 'block',
+    page: 1,
+    groupId: 1,
+    imageWidth: 100,
+    imageHeight: 100,
+    ...overrides,
+  }
+}
 
 describe('getLayoutByAsset', () => {
   it('delegates layout lookup to the store repo', async () => {
@@ -202,6 +226,57 @@ describe('filterLayoutBlocksByPage', () => {
     ]
 
     expect(filterLayoutBlocksByPage(blocks, 2)).toEqual([blocks[1]])
+  })
+})
+
+describe('layout interaction helpers', () => {
+  const blocks = [
+    layoutBlockView({ id: 'block-1', regionId: 'region-1' }),
+    layoutBlockView({ id: 'block-2', regionId: 'region-2' }),
+  ]
+
+  it('finds visible layout blocks by block id or region id', () => {
+    expect(findLayoutBlockById(blocks, 'block-1')).toBe(blocks[0])
+    expect(findLayoutBlockByRegionId(blocks, 'region-2')).toBe(blocks[1])
+    expect(findLayoutBlockById(blocks, null)).toBeNull()
+    expect(findLayoutBlockByRegionId(blocks, 'missing')).toBeNull()
+  })
+
+  it('builds interaction state from a block id', () => {
+    expect(getLayoutInteractionStateFromBlockId(blocks, 'block-1')).toEqual({
+      blockId: 'block-1',
+      regionId: 'region-1',
+      hasMatch: true,
+    })
+    expect(getLayoutInteractionStateFromBlockId(blocks, 'missing')).toEqual({
+      blockId: null,
+      regionId: null,
+      hasMatch: false,
+    })
+  })
+
+  it('builds interaction state from a region id', () => {
+    expect(getLayoutInteractionStateFromRegionId(blocks, 'region-2')).toEqual({
+      blockId: 'block-2',
+      regionId: 'region-2',
+      hasMatch: true,
+    })
+  })
+
+  it('prunes selected and hovered layout ids that are no longer visible', () => {
+    expect(
+      pruneLayoutInteractionSelectionState(blocks, {
+        selectedBlockId: 'block-1',
+        selectedRegionId: 'region-1',
+        hoveredBlockId: 'missing',
+        hoveredRegionId: 'missing-region',
+      })
+    ).toEqual({
+      selectedBlockId: 'block-1',
+      selectedRegionId: 'region-1',
+      hoveredBlockId: null,
+      hoveredRegionId: null,
+    })
   })
 })
 

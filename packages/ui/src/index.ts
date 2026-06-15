@@ -17,6 +17,21 @@ export type { InputProps, InputType } from './components/Input/index'
 export { Card } from './components/Card/index'
 export type { CardProps, CardPadding } from './components/Card/index'
 
+export { Panel } from './components/Panel/index'
+export type { PanelPadding, PanelProps, PanelVariant } from './components/Panel/index'
+
+export { TabButton, TabList } from './components/Tabs/index'
+export type { TabButtonProps, TabListProps } from './components/Tabs/index'
+
+export { IconButton } from './components/IconButton/index'
+export type { IconButtonProps, IconButtonSize, IconButtonVariant } from './components/IconButton/index'
+
+export { StatusBadge } from './components/StatusBadge/index'
+export type { StatusBadgeProps, StatusBadgeSize, StatusBadgeVariant } from './components/StatusBadge/index'
+
+export { ConfirmDialog } from './components/ConfirmDialog/index'
+export type { ConfirmDialogProps, ConfirmDialogVariant } from './components/ConfirmDialog/index'
+
 // Components — Fase 1
 export { CollectionCard } from './components/CollectionCard/index'
 export type { CollectionCardProps } from './components/CollectionCard/index'

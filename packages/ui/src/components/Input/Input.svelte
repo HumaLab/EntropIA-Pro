@@ -75,7 +75,7 @@
     color: var(--color-text-primary);
     background-color: color-mix(in srgb, var(--color-surface-sunken) 88%, transparent);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     outline: none;
     transition:
       border-color var(--transition-smooth),
@@ -93,7 +93,7 @@
   .input-field__input:focus-visible {
     border-color: var(--color-accent);
     box-shadow: var(--focus-ring);
-    background-color: var(--color-surface);
+    background-color: color-mix(in srgb, var(--color-surface) 92%, transparent);
   }
 
   .input-field__input:disabled {

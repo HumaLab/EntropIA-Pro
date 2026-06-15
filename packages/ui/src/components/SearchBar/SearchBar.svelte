@@ -78,7 +78,9 @@
 </script>
 
 <div class="search-bar">
-  <span class="search-bar__icon" data-testid="search-icon" aria-hidden="true">&#128269;</span>
+  <span class="search-bar__icon" data-testid="search-icon" aria-hidden="true">
+    <ActionIcon name="search" size={16} />
+  </span>
   <input
     bind:this={inputEl}
     class="search-bar__input"
@@ -113,7 +115,7 @@
     padding: 0 var(--space-3);
     background-color: color-mix(in srgb, var(--color-surface-sunken) 88%, transparent);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     transition:
       border-color var(--transition-smooth),
       box-shadow var(--transition-smooth),
@@ -127,8 +129,8 @@
   }
 
   .search-bar__icon {
+    display: inline-flex;
     flex-shrink: 0;
-    font-size: var(--font-size-sm);
     color: var(--color-text-secondary);
     opacity: 0.9;
   }
@@ -163,7 +165,7 @@
     height: 24px;
     padding: 0;
     border: none;
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-control);
     background-color: var(--color-accent-faint);
     color: var(--color-text-secondary);
     cursor: pointer;

@@ -26,53 +26,27 @@
     <div class="item-card__thumbnail">
       {#if isAudio}
         <div class="item-card__audio" data-testid="item-audio">
-          <svg
-            class="item-card__play-icon"
-            xmlns="http://www.w3.org/2000/svg"
-            width="40"
-            height="40"
-            viewBox="0 0 24 24"
-            fill="currentColor"
-            aria-hidden="true"
-          >
-            <circle
-              cx="12"
-              cy="12"
-              r="11"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              opacity="0.3"
-            />
-            <path d="M9.5 6.5l8 5.5-8 5.5V6.5z" />
-          </svg>
+          <span class="item-card__play-icon" aria-hidden="true">
+            <ActionIcon name="circle-play" size={40} />
+          </span>
         </div>
       {:else if thumbnailPath}
-        <img src={thumbnailPath} alt={title} class="item-card__img" />
+        <img
+          src={thumbnailPath}
+          alt={title}
+          class="item-card__img"
+          loading="lazy"
+          decoding="async"
+        />
       {:else if isPdf}
         <div class="item-card__pdf-icon" data-testid="item-pdf-icon">
-          <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width="48"
-            height="48"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="1.5"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-          >
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
-            <polyline points="14 2 14 8 20 8" />
-            <line x1="16" y1="13" x2="8" y2="13" />
-            <line x1="16" y1="17" x2="8" y2="17" />
-            <polyline points="10 9 9 9 8 9" />
-          </svg>
+          <ActionIcon name="file-text" size={48} />
         </div>
       {:else}
         <div class="item-card__placeholder" data-testid="item-placeholder">
-          <span class="item-card__placeholder-icon" aria-hidden="true">&#128196;</span>
+          <span class="item-card__placeholder-icon" aria-hidden="true">
+            <ActionIcon name="file-text" size={34} />
+          </span>
         </div>
       {/if}
     </div>
@@ -107,15 +81,12 @@
   .item-card {
     display: flex;
     flex-direction: column;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.018), rgba(255, 255, 255, 0.003) 58%),
-      var(--color-surface);
+    background: var(--color-surface);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-surface);
     transition:
       border-color var(--transition-smooth),
-      box-shadow var(--transition-smooth),
-      transform var(--transition-smooth);
+      box-shadow var(--transition-smooth);
     overflow: hidden;
     width: 100%;
     font-family: var(--font-sans);
@@ -126,8 +97,7 @@
   .item-card:hover,
   .item-card:focus-within {
     border-color: color-mix(in srgb, var(--color-accent) 26%, var(--color-border-strong));
-    box-shadow: var(--shadow-md);
-    transform: translateY(-1px);
+    box-shadow: var(--shadow-surface);
   }
 
   .item-card:focus-visible {
@@ -156,9 +126,7 @@
     width: 100%;
     height: 120px;
     overflow: hidden;
-    background:
-      radial-gradient(circle at 50% 0%, var(--color-accent-faint), transparent 38%),
-      var(--color-surface-sunken);
+    background: var(--color-surface-sunken);
     border-bottom: 1px solid var(--color-hairline);
     display: flex;
     align-items: center;
@@ -180,7 +148,7 @@
   }
 
   .item-card__placeholder-icon {
-    font-size: 32px;
+    display: inline-flex;
     opacity: 0.4;
   }
 
@@ -223,7 +191,7 @@
   }
 
   .item-card__title {
-    font-size: var(--font-size-md);
+    font-size: var(--font-size-sm);
     font-weight: var(--font-weight-medium);
     color: var(--color-text-primary);
   }
@@ -237,7 +205,7 @@
     color: var(--color-accent-hover);
     background-color: var(--color-accent-faint);
     border: 1px solid color-mix(in srgb, var(--color-accent) 18%, transparent);
-    border-radius: var(--radius-full);
+    border-radius: var(--radius-control);
   }
 
   .item-card__metadata {

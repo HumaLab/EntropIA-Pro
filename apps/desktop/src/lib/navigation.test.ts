@@ -67,7 +67,7 @@ describe('NavigationStore', () => {
     expect(nav.current).toEqual({ name: 'collections' })
   })
 
-  it('breadcrumb builds from history', () => {
+  it('breadcrumb builds from the current view parent chain', () => {
     expect(nav.breadcrumb).toEqual(['Colecciones'])
 
     nav.navigate({ name: 'collection', id: 'c1', collectionName: 'Photos' })
@@ -81,6 +81,56 @@ describe('NavigationStore', () => {
       itemTitle: 'Sunset.jpg',
     })
     expect(nav.breadcrumb).toEqual(['Colecciones', 'Photos', 'Sunset.jpg'])
+  })
+
+  it('breadcrumb includes selected asset after the item parent', () => {
+    nav.navigate({
+      name: 'item',
+      collectionId: 'c1',
+      collectionName: 'Resoluciones SOIP',
+      itemId: 'i1',
+      itemTitle: '114',
+      assetId: 'asset-2',
+      assetLabel: '114_page_2.png',
+    })
+
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Resoluciones SOIP', '114', '114_page_2.png'])
+  })
+
+  it('does not duplicate item and asset labels when they match', () => {
+    nav.navigate({
+      name: 'item',
+      collectionId: 'c1',
+      collectionName: 'Photos',
+      itemId: 'i1',
+      itemTitle: 'Sunset.jpg',
+      assetId: 'asset-1',
+      assetLabel: 'Sunset.jpg',
+    })
+
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Photos', 'Sunset.jpg'])
+  })
+
+  it('does not repeat breadcrumb levels when history contains repeated parent nodes', () => {
+    const collectionView: View = { name: 'collection', id: 'c1', collectionName: 'Photos' }
+    const itemView: View = {
+      name: 'item',
+      collectionId: 'c1',
+      collectionName: 'Photos',
+      itemId: 'i1',
+      itemTitle: 'Sunset.jpg',
+    }
+
+    nav.navigate(collectionView)
+    nav.navigate(itemView)
+    nav.navigate(collectionView)
+    nav.navigate(itemView)
+
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Photos', 'Sunset.jpg'])
+
+    nav.back()
+
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Photos'])
   })
 
   it('breadcrumb updates after back', () => {
@@ -111,6 +161,27 @@ describe('NavigationStore', () => {
   it('db browser breadcrumb shows Base de datos', () => {
     nav.navigate({ name: 'db-browser' })
     expect(nav.breadcrumb).toEqual(['Colecciones', 'Base de datos'])
+  })
+
+  it('navigates to rag chat view', () => {
+    nav.navigate({ name: 'rag-chat' })
+    expect(nav.current).toEqual({ name: 'rag-chat' })
+    expect(nav.canGoBack).toBe(true)
+  })
+
+  it('rag chat breadcrumb shows Chat', () => {
+    nav.navigate({ name: 'rag-chat' })
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Chat'])
+  })
+
+  it('openRootSection rebuilds canonical breadcrumb for rag chat', () => {
+    nav.navigate({ name: 'collection', id: 'c1', collectionName: 'Archivo' })
+
+    nav.openRootSection({ name: 'rag-chat' })
+
+    expect(nav.current).toEqual({ name: 'rag-chat' })
+    expect(nav.breadcrumb).toEqual(['Colecciones', 'Chat'])
+    expect(nav.canGoBack).toBe(true)
   })
 
   it('settings breadcrumb shows Configuracion', () => {

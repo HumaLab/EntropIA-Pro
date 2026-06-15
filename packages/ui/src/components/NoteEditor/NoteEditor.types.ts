@@ -25,19 +25,13 @@ export interface NoteEditorLabels {
   heading2: string
   heading3: string
   bulletList: string
-  bulletListShort: string
   orderedList: string
-  orderedListShort: string
   quote: string
-  quoteShort: string
   addLink: string
-  addLinkShort: string
   removeLink: string
-  removeLinkShort: string
   dictationStart: string
   dictationStop: string
   dictationProcessing: string
-  dictationIdle: string
   helperText: string
   dictationNoMicrophone: string
   dictationNoAudio: string

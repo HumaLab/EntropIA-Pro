@@ -15,11 +15,14 @@ export type View =
       collectionName: string
       itemId: string
       itemTitle: string
+      assetId?: string | null
+      assetLabel?: string | null
     }
   | { name: 'db-browser' }
+  | { name: 'rag-chat' }
   | { name: 'settings' }
 
-type RootSectionView = Extract<View, { name: 'settings' | 'db-browser' }>
+type RootSectionView = Extract<View, { name: 'settings' | 'db-browser' | 'rag-chat' }>
 
 type NavigationSnapshot = {
   history: View[]
@@ -50,18 +53,30 @@ export class NavigationStore {
 
   private snapshot(): NavigationSnapshot {
     const history = [...this._history]
+    const current = history.at(-1)!
     return {
       history,
-      current: history.at(-1)!,
+      current,
       canGoBack: history.length > 1,
-      breadcrumb: history.map((v) => {
-        if (v.name === 'collections') return t('nav.collections')
-        if (v.name === 'collection') return v.collectionName
-        if (v.name === 'db-browser') return t('nav.dbBrowser')
-        if (v.name === 'settings') return t('nav.settings')
-        return v.itemTitle
-      }),
+      breadcrumb: this.breadcrumbForView(current),
     }
+  }
+
+  private breadcrumbForView(view: View): string[] {
+    const root = t('nav.collections')
+
+    if (view.name === 'collections') return [root]
+    if (view.name === 'collection') return [root, view.collectionName]
+    if (view.name === 'item') {
+      const breadcrumb = [root, view.collectionName, view.itemTitle]
+      if (view.assetLabel && view.assetLabel !== view.itemTitle) {
+        breadcrumb.push(view.assetLabel)
+      }
+      return breadcrumb
+    }
+    if (view.name === 'db-browser') return [root, t('nav.dbBrowser')]
+    if (view.name === 'rag-chat') return [root, t('nav.ragChat')]
+    return [root, t('nav.settings')]
   }
 
   private emit(): void {

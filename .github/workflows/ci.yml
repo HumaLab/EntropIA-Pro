@@ -6,6 +6,13 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 env:
   PNPM_VERSION: 9.15.4
 
@@ -13,6 +20,7 @@ jobs:
   detect-rust-changes:
     name: Detect Rust/Tauri Quality Changes
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     outputs:
       has_rs_changes: ${{ steps.filter.outputs.has_rs_changes }}
     steps:
@@ -41,6 +49,7 @@ jobs:
     needs: [detect-rust-changes]
     if: needs.detect-rust-changes.outputs.has_rs_changes == 'true'
     runs-on: windows-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v6
 
@@ -54,6 +63,7 @@ jobs:
   rust-quality-report:
     name: Rust Quality Report (report-first)
     runs-on: windows-latest
+    timeout-minutes: 90
     needs: [detect-rust-changes]
     if: needs.detect-rust-changes.outputs.has_rs_changes == 'true'
     steps:
@@ -241,6 +251,7 @@ jobs:
   lint-typecheck:
     name: Lint & Typecheck
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
@@ -362,6 +373,7 @@ jobs:
   test:
     name: Test
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [lint-typecheck]
     steps:
       - uses: actions/checkout@v6
@@ -491,6 +503,7 @@ jobs:
   build:
     name: Build
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     needs: [lint-typecheck]
     steps:
       - uses: actions/checkout@v6

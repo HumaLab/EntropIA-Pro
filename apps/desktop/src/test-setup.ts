@@ -20,6 +20,7 @@ vi.mock('@tauri-apps/plugin-dialog', () => ({
 vi.mock('@tauri-apps/plugin-fs', () => ({
   copyFile: vi.fn(),
   mkdir: vi.fn(),
+  readFile: vi.fn(),
   writeFile: vi.fn(),
   remove: vi.fn(),
   stat: vi.fn().mockResolvedValue({ size: 0 }),
