@@ -376,13 +376,10 @@ fn resolve_runtime_python_choice(
     managed_runtime_python: Option<&Path>,
     managed_runtime_status: Option<&RuntimeStatus>,
 ) -> Option<PathBuf> {
-    if matches!(
-        managed_runtime_status.map(|status| &status.state),
-        Some(state) if *state != RuntimeState::Healthy
-    ) {
-        return None;
-    }
-
+    // Prefer the runtime pack's Python only when the pack is healthy. When the pack
+    // is unhealthy/damaged we must NOT use its Python, but the persisted managed
+    // venv (managed_path) and system candidates are independent artifacts — a damaged
+    // pack does not invalidate them, so they remain valid fallbacks below.
     if runtime_status_is_healthy(managed_runtime_status) {
         if let Some(path) = managed_runtime_python.filter(|path| path.is_file()) {
             return Some(path.to_path_buf());

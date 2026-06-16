@@ -893,7 +893,14 @@ pub async fn install_package(
     let python_str = venv_python.to_string_lossy().into_owned();
     let mut cmd = uv.command();
     sanitize_install_subprocess_env(&mut cmd);
-    cmd.args(["pip", "install", &spec, "--python", &python_str]);
+    cmd.arg("pip").arg("install");
+    // A spec may carry several space-separated packages: e.g. spaCy ships the
+    // engine plus the language model, and the es_core_news_sm 3.8 wheel no longer
+    // declares spaCy as a dependency, so both must be installed together.
+    for pkg in spec.split_whitespace() {
+        cmd.arg(pkg);
+    }
+    cmd.args(["--python", &python_str]);
     let uses_online_indexes = extra_index_url.is_some() || wheelhouse_dir.is_none();
 
     if let Some(index_url) = extra_index_url {
@@ -967,7 +974,9 @@ fn managed_install_spec(dep: &DependencySpec, wheelhouse_dir: Option<&Path>) -> 
             dep.pip_spec.map(str::to_owned)
         }
         DependencyId::Spacy if wheelhouse_dir.is_some() => {
-            Some("es-core-news-sm==3.7.0".to_string())
+            // The es model wheel does not pull spaCy, so install both from the
+            // wheelhouse (spaCy 3.8.x ships cp39–cp313 wheels).
+            Some("spacy>=3.8.0,<3.9.0 es-core-news-sm==3.8.0".to_string())
         }
         _ => dep.pip_spec.map(str::to_owned),
     }

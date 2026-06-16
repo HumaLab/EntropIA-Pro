@@ -171,8 +171,17 @@ pub fn persist_entities_for_item(
     item_id: &str,
     entities: &[Entity],
 ) -> Result<(), String> {
-    delete_automatic_entities(conn, item_id)?;
-    insert_entities_for_item(conn, item_id, entities)
+    // Wrap delete+insert in a single transaction so a mid-write failure can never
+    // leave entities deleted-but-not-reinserted (atomicity). The empty-result guard
+    // that prevents wiping good entities on a poorer re-run lives at the call site,
+    // where the text-present context is known.
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to start entity persist transaction: {e}"))?;
+    delete_automatic_entities(&tx, item_id)?;
+    insert_entities_for_item(&tx, item_id, entities)?;
+    tx.commit()
+        .map_err(|e| format!("Failed to commit entity persist transaction: {e}"))
 }
 
 pub fn persist_entities_for_asset(
@@ -181,8 +190,14 @@ pub fn persist_entities_for_asset(
     asset_id: &str,
     entities: &[Entity],
 ) -> Result<(), String> {
-    delete_automatic_entities_for_asset(conn, item_id, asset_id)?;
-    insert_entities_for_asset(conn, item_id, asset_id, entities)
+    // Atomic delete+insert — see persist_entities_for_item for rationale.
+    let tx = conn
+        .unchecked_transaction()
+        .map_err(|e| format!("Failed to start entity persist transaction: {e}"))?;
+    delete_automatic_entities_for_asset(&tx, item_id, asset_id)?;
+    insert_entities_for_asset(&tx, item_id, asset_id, entities)?;
+    tx.commit()
+        .map_err(|e| format!("Failed to commit entity persist transaction: {e}"))
 }
 
 fn insert_entities_for_item(
@@ -466,8 +481,12 @@ mod tests {
 
     #[test]
     fn openrouter_ner_rejects_bad_json_without_spacy_fallback() {
-        let error = parse_openrouter_entities("texto", &[], "not json", "google/gemma-3-4b-it")
-            .expect_err("bad JSON should not silently fall back");
+        // Delimited but malformed payload: reaches the serde parse step (rather than
+        // the no-delimiters guard) so the contract under test — a parse failure must
+        // surface, never silently fall back — is actually exercised.
+        let error =
+            parse_openrouter_entities("texto", &[], "{not valid json}", "google/gemma-3-4b-it")
+                .expect_err("bad JSON should not silently fall back");
 
         assert!(error.contains("OpenRouter NER"));
         assert!(error.contains("failed to parse JSON"));
@@ -511,5 +530,118 @@ mod tests {
         assert!(prompt.contains("MISC"));
         assert!(prompt.contains("JSON"));
         assert!(prompt.contains("no uses spaCy"));
+    }
+
+    // ── Asset entity persistence contract ─────────────────────────────────────
+
+    fn entities_test_conn() -> Connection {
+        let conn = Connection::open_in_memory().expect("in-memory db");
+        conn.execute_batch(
+            r#"
+            CREATE TABLE entities (
+              id TEXT PRIMARY KEY,
+              item_id TEXT NOT NULL,
+              asset_id TEXT,
+              entity_type TEXT NOT NULL,
+              value TEXT NOT NULL,
+              start_offset INTEGER NOT NULL,
+              end_offset INTEGER NOT NULL,
+              confidence REAL NOT NULL,
+              source TEXT,
+              model_name TEXT,
+              created_at INTEGER NOT NULL
+            );
+            "#,
+        )
+        .expect("entities schema");
+        conn
+    }
+
+    fn seed_entity(conn: &Connection, item_id: &str, asset_id: &str, value: &str, source: &str) {
+        conn.execute(
+            "INSERT INTO entities (id, item_id, asset_id, entity_type, value, start_offset, end_offset, confidence, source, model_name, created_at) \
+             VALUES (?1, ?2, ?3, 'person', ?4, 0, 1, 0.9, ?5, NULL, 0)",
+            params![
+                uuid::Uuid::new_v4().to_string(),
+                item_id,
+                asset_id,
+                value,
+                source
+            ],
+        )
+        .expect("seed entity");
+    }
+
+    fn asset_entity_values(conn: &Connection, item_id: &str, asset_id: &str) -> Vec<String> {
+        let mut stmt = conn
+            .prepare(
+                "SELECT value FROM entities WHERE item_id = ?1 AND asset_id = ?2 ORDER BY value",
+            )
+            .unwrap();
+        let rows = stmt
+            .query_map(params![item_id, asset_id], |r| r.get::<_, String>(0))
+            .unwrap();
+        rows.collect::<Result<Vec<_>, _>>().unwrap()
+    }
+
+    fn new_person(value: &str) -> Entity {
+        Entity {
+            entity_type: EntityType::Person,
+            value: value.to_string(),
+            start_offset: 0,
+            end_offset: 5,
+            confidence: 0.85,
+            source: EntitySource::RuleBased,
+            model_name: None,
+        }
+    }
+
+    #[test]
+    fn persist_entities_for_asset_replaces_automatic_and_keeps_manual() {
+        let conn = entities_test_conn();
+        seed_entity(&conn, "item-1", "asset-1", "Gemma Persona", "llm");
+        seed_entity(&conn, "item-1", "asset-1", "Manual Persona", "manual");
+
+        persist_entities_for_asset(&conn, "item-1", "asset-1", &[new_person("Nueva Persona")])
+            .expect("persist should succeed");
+
+        let values = asset_entity_values(&conn, "item-1", "asset-1");
+        assert!(
+            values.iter().any(|v| v == "Manual Persona"),
+            "manual entity must be preserved, got: {values:?}"
+        );
+        assert!(
+            values.iter().any(|v| v == "Nueva Persona"),
+            "new automatic entity must be inserted, got: {values:?}"
+        );
+        assert!(
+            !values.iter().any(|v| v == "Gemma Persona"),
+            "old automatic entity must be replaced, got: {values:?}"
+        );
+    }
+
+    #[test]
+    fn persist_entities_for_asset_with_empty_is_destructive_to_automatic() {
+        // persist is UNCONDITIONALLY destructive to automatic entities. This is
+        // exactly why the worker (nlp/mod.rs) must NOT call it with an empty result
+        // when the source text is present — the call-site data-loss guard prevents
+        // wiping a richer earlier Gemma result. This test pins that contract so the
+        // guard's necessity stays documented.
+        let conn = entities_test_conn();
+        seed_entity(&conn, "item-1", "asset-1", "Gemma Persona", "llm");
+        seed_entity(&conn, "item-1", "asset-1", "Manual Persona", "manual");
+
+        persist_entities_for_asset(&conn, "item-1", "asset-1", &[])
+            .expect("persist should succeed");
+
+        let values = asset_entity_values(&conn, "item-1", "asset-1");
+        assert!(
+            values.iter().any(|v| v == "Manual Persona"),
+            "manual entity must survive an empty persist, got: {values:?}"
+        );
+        assert!(
+            !values.iter().any(|v| v == "Gemma Persona"),
+            "automatic entity is cleared by an empty persist (guarded at the call site), got: {values:?}"
+        );
     }
 }

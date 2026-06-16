@@ -33,7 +33,16 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> int:
     args = parse_args()
-    text = sys.stdin.read()
+    # On Windows the default console encoding is cp1252, which decodes UTF-8 input
+    # into lone surrogates (e.g. '\udc9d') that break spaCy's tokenizer with
+    # "surrogates not allowed", and can fail to encode accented output. Read raw
+    # bytes and decode as UTF-8 explicitly, and force UTF-8 on stdout for the JSON
+    # payload. Keeps NER robust on any host regardless of locale.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:  # pragma: no cover - older interpreters
+        pass
+    text = sys.stdin.buffer.read().decode("utf-8", "replace")
     if not text.strip():
         print(BEGIN)
         print("[]")

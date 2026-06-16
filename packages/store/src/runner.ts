@@ -446,8 +446,11 @@ function splitStatements(sql: string): string[] {
  */
 export async function runMigrations(client: DbClient): Promise<void> {
   console.log('[runner] runMigrations start')
-  // Ensure tracking table exists (idempotent)
-  await client.execute(`
+  // Ensure tracking table exists (idempotent).
+  // DDL must go through the batch path: the Tauri db_execute IPC is hardened
+  // to DML-only (INSERT/UPDATE/DELETE), so schema statements are rejected there.
+  // db_execute_batch validates the batch and runs CREATE/ALTER/DROP.
+  await client.executeBatch(`
     CREATE TABLE IF NOT EXISTS _migrations (
       id    INTEGER PRIMARY KEY AUTOINCREMENT,
       name  TEXT    NOT NULL UNIQUE,
@@ -466,17 +469,18 @@ export async function runMigrations(client: DbClient): Promise<void> {
 
   for (const name of pending) {
     try {
-      await client.execute('BEGIN')
-
       if (name === '0020_layouts') {
         await applyLayoutsMigration(client)
       } else {
         const sql = MIGRATIONS[name]!
         const statements = splitStatements(sql)
 
+        // Schema statements (CREATE/ALTER/DROP) go through executeBatch because
+        // the db_execute IPC is restricted to DML-only. db_execute_batch is the
+        // sanctioned path for DDL and also accepts the DML inside these batches.
         for (const stmt of statements) {
           try {
-            await client.execute(stmt)
+            await client.executeBatch(stmt)
           } catch (stmtErr) {
             const msg = stmtErr instanceof Error ? stmtErr.message : String(stmtErr)
             if (/duplicate column name/i.test(msg)) {
@@ -488,20 +492,12 @@ export async function runMigrations(client: DbClient): Promise<void> {
         }
       }
 
+      // Tracking insert stays on the DML path (db_execute).
       await client.execute('INSERT INTO _migrations (name, applied_at) VALUES (?, ?)', [
         name,
         Math.floor(Date.now() / 1000),
       ])
-
-      await client.execute('COMMIT')
     } catch (error) {
-      // Best-effort rollback — if BEGIN didn't succeed, ROLLBACK may also fail
-      try {
-        await client.execute('ROLLBACK')
-      } catch {
-        // Swallow rollback errors — the original error is more important
-      }
-
       throw new Error(
         `Migration "${name}" failed: ${error instanceof Error ? error.message : String(error)}`
       )

@@ -544,7 +544,13 @@
   })
 
   // LLM state (Gemma 4)
+  let ocrCorrectedAssets = $state(new Set<string>()) // asset IDs already OCR-corrected — hide OCRC (Pro-local idempotency)
   const llmStore = new LlmStore({
+    onCorrectOcr: (id) => {
+      // Fires on live completion AND on persisted-results reload, so the OCRC
+      // button stays hidden across reopens once an asset has been corrected.
+      ocrCorrectedAssets = new Set(ocrCorrectedAssets).add(id)
+    },
     onComplete: (id, job, result) => {
       llmTick++
       // Track summary results in the dedicated map
@@ -566,6 +572,7 @@
           assets,
         })
         if (assetId) {
+          ocrCorrectedAssets = new Set(ocrCorrectedAssets).add(assetId)
           ocrEditedText.set(assetId, result)
           ocrStore.setTextContent(assetId, result)
           // Persisting the corrected text triggers the local reanalysis
@@ -2391,6 +2398,7 @@
             transcriptionEditedText={textPanelTranscriptionEditedText}
             llmState={textPanelLlmState}
             {llmAvailable}
+            isOcrCorrected={selectedAsset ? ocrCorrectedAssets.has(selectedAsset.id) : false}
             currentSummary={textPanelCurrentSummary}
             isSummarizing={textPanelIsSummarizing}
             {translate}

@@ -920,6 +920,28 @@ fn runtime_candidates(model_dir: &Path) -> Vec<PathBuf> {
             }
         }
         push_names(&app_data_root.join("resources").join("lib"));
+
+        // Dev-fallback venv (runtime-dev/system-python): the deps installer puts
+        // onnxruntime here (pulled by faster-whisper / paddleocr), so reuse it
+        // when the managed runtime-pack is not yet hydrated. ONNX Runtime keeps a
+        // stable C ABI across 1.x, so a newer dll loads fine under ort rc.10.
+        let dev_venv = app_data_root.join("runtime-dev").join("system-python");
+        if cfg!(windows) {
+            push_names(
+                &dev_venv
+                    .join("Lib")
+                    .join("site-packages")
+                    .join("onnxruntime")
+                    .join("capi"),
+            );
+        } else if let Ok(entries) = std::fs::read_dir(dev_venv.join("lib")) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    push_names(&path.join("site-packages").join("onnxruntime").join("capi"));
+                }
+            }
+        }
     }
 
     if let Ok(manifest_dir) = std::env::var("CARGO_MANIFEST_DIR") {
@@ -1645,6 +1667,35 @@ mod tests {
         std::fs::write(&expected, b"runtime").expect("runtime dll should be writable");
 
         let resolved = find_ort_dylib(&model_dir).expect("runtime dll should resolve");
+
+        assert_eq!(resolved, expected);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn find_ort_dylib_resolves_dev_fallback_venv_onnxruntime() {
+        // The deps installer drops onnxruntime into the dev-fallback venv
+        // (runtime-dev/system-python). find_ort_dylib must reuse it when the
+        // managed runtime-pack is not yet hydrated.
+        let temp = tempfile::tempdir().expect("temp dir should be created");
+        let app_data_root = temp.path().join("com.entropia.desktop");
+        let model_dir = app_data_root
+            .join("models")
+            .join("embeddings")
+            .join("bge-m3");
+        let capi_dir = app_data_root
+            .join("runtime-dev")
+            .join("system-python")
+            .join("Lib")
+            .join("site-packages")
+            .join("onnxruntime")
+            .join("capi");
+        std::fs::create_dir_all(&model_dir).expect("model dir should be created");
+        std::fs::create_dir_all(&capi_dir).expect("capi dir should be created");
+        let expected = capi_dir.join(runtime_file_names()[0]);
+        std::fs::write(&expected, b"runtime").expect("runtime dll should be writable");
+
+        let resolved = find_ort_dylib(&model_dir).expect("dev-fallback runtime dll should resolve");
 
         assert_eq!(resolved, expected);
     }

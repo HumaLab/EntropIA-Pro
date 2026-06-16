@@ -2729,10 +2729,12 @@ describe('ItemView processing labels by asset type', () => {
     await fireEvent.click(await screen.findByRole('tab', { name: 'Texto' }))
   }
 
-  it('keeps Lite OCR labels for image assets', async () => {
+  it('shows OCRL + OCRH for image assets (Pro local dual OCR)', async () => {
     await renderTextTabForAsset('image')
 
-    expect(screen.queryByRole('button', { name: 'OCRL' })).not.toBeInTheDocument()
+    // Pro is local: images get both the lightweight PaddleOCR (OCRL) and the
+    // layout-aware PaddleOCR-VL (OCRH). Lite (cloud) only had the single OCRH.
+    expect(screen.getByRole('button', { name: 'OCRL' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRH' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRC' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRR' })).toBeInTheDocument()
@@ -2771,7 +2773,7 @@ describe('ItemView processing labels by asset type', () => {
     expect(await screen.findByText('No se pudo corregir el texto con OCR.')).toBeInTheDocument()
   })
 
-  it('keeps the OCRC button available after OCR correction completes', async () => {
+  it('hides the OCRC button after OCR correction completes (Pro-local idempotency)', async () => {
     await renderTextTabForAsset('image')
     nlpEventHandlers.get('ocr:complete')?.({
       payload: { asset_id: 'asset-image-1', method: 'paddle_vl', text_content: 'Texto OCR' },
@@ -2785,8 +2787,12 @@ describe('ItemView processing labels by asset type', () => {
       payload: { id: 'asset-image-1', job: 'correct_ocr', result: 'Texto corregido' },
     })
 
-    expect(await screen.findByRole('button', { name: 'OCRC' })).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByRole('button', { name: 'OCRC' })).toBeEnabled())
+    // Pro hides the OCRC affordance once an asset has been corrected (the
+    // onCorrectOcr seeder fires on both live completion and persisted-results
+    // reload, so it stays hidden across reopens). Lite kept it always visible.
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'OCRC' })).not.toBeInTheDocument()
+    )
   })
 
   it('uses PDF-specific labels and hides OCR wording for pdf assets', async () => {

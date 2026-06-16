@@ -9,7 +9,16 @@ use crate::db::state::AppDbState;
 use serde::Serialize;
 use tauri::{AppHandle, Emitter, State};
 
-type SimilarAssetRow = (String, String, String, String, String, String, Vec<u8>);
+type SimilarAssetRow = (
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    String,
+    Vec<u8>,
+);
 
 #[derive(Debug, Clone, Serialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
@@ -405,6 +414,20 @@ mod tests {
                 item_id TEXT NOT NULL,
                 embedding BLOB NOT NULL
             );
+
+            CREATE TABLE extractions (
+                id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL,
+                text_content TEXT,
+                created_at INTEGER NOT NULL
+            );
+
+            CREATE TABLE transcriptions (
+                id TEXT PRIMARY KEY,
+                asset_id TEXT NOT NULL,
+                text_content TEXT NOT NULL,
+                created_at INTEGER NOT NULL
+            );
             "#,
         )
         .expect("test schema should be created");
@@ -586,6 +609,24 @@ mod tests {
     }
 
     #[test]
+    fn truncate_preview_caps_length_on_char_boundary() {
+        let short = "hola";
+        assert_eq!(super::truncate_preview(short, 500), "hola");
+
+        let long: String = "á".repeat(600);
+        let truncated = super::truncate_preview(&long, super::PREVIEW_MAX_CHARS);
+        assert_eq!(
+            truncated.chars().count(),
+            super::PREVIEW_MAX_CHARS,
+            "preview should be capped to PREVIEW_MAX_CHARS characters"
+        );
+        assert!(
+            truncated.is_char_boundary(truncated.len()),
+            "truncation must land on a char boundary"
+        );
+    }
+
+    #[test]
     fn rank_similar_asset_rows_keeps_asset_context() {
         let target_blob = embedding_blob([1.0_f32, 0.0_f32]);
         let same_item_blob = embedding_blob([0.85_f32, 0.15_f32]);
@@ -601,6 +642,7 @@ mod tests {
                     "col-1".to_string(),
                     "same.pdf".to_string(),
                     "pdf".to_string(),
+                    "Texto OCR de la hermana".to_string(),
                     same_item_blob,
                 ),
                 (
@@ -610,6 +652,7 @@ mod tests {
                     "col-2".to_string(),
                     "other.wav".to_string(),
                     "audio".to_string(),
+                    "Transcripción externa".to_string(),
                     other_collection_blob,
                 ),
             ],
@@ -621,7 +664,9 @@ mod tests {
         assert_eq!(results[0]["assetId"], "asset-other");
         assert_eq!(results[0]["assetPath"], "other.wav");
         assert_eq!(results[0]["assetType"], "audio");
+        assert_eq!(results[0]["textPreview"], "Transcripción externa");
         assert_eq!(results[1]["assetId"], "asset-same");
+        assert_eq!(results[1]["textPreview"], "Texto OCR de la hermana");
     }
 
     #[test]
@@ -688,6 +733,19 @@ mod tests {
         )
         .expect("other asset embedding should insert");
 
+        // Seed OCR text for the sibling asset and transcription text for the
+        // cross-collection asset so the preview covers both source tables.
+        conn.execute(
+            "INSERT INTO extractions(id, asset_id, text_content, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["ext-same", "asset-same", "Texto OCR de la página hermana", 1_i64],
+        )
+        .expect("same asset extraction should insert");
+        conn.execute(
+            "INSERT INTO transcriptions(id, asset_id, text_content, created_at) VALUES (?1, ?2, ?3, ?4)",
+            rusqlite::params!["tr-other", "asset-other", "Transcripción del audio externo", 1_i64],
+        )
+        .expect("other asset transcription should insert");
+
         let results = super::similar_assets_from_conn(&conn, "asset-target", 5)
             .expect("similar assets query should succeed");
         let results = results.as_array().expect("result should be a JSON array");
@@ -695,8 +753,16 @@ mod tests {
         assert_eq!(results.len(), 2, "should exclude the target asset itself");
         assert_eq!(results[0]["assetId"], "asset-other");
         assert_eq!(results[0]["collectionId"], "col-2");
+        assert_eq!(
+            results[0]["textPreview"], "Transcripción del audio externo",
+            "transcription text should surface as the preview"
+        );
         assert_eq!(results[1]["assetId"], "asset-same");
         assert_eq!(results[1]["collectionId"], "col-1");
+        assert_eq!(
+            results[1]["textPreview"], "Texto OCR de la página hermana",
+            "extraction text should surface as the preview"
+        );
     }
 }
 
@@ -767,10 +833,13 @@ fn similar_assets_from_conn(
 
     let mut stmt = conn
         .prepare(
-            "SELECT v.asset_id, v.item_id, i.title, i.collection_id, a.path, a.type, v.embedding
+            "SELECT v.asset_id, v.item_id, i.title, i.collection_id, a.path, a.type,
+                    COALESCE(e.text_content, t.text_content, '') AS text_preview, v.embedding
              FROM vec_assets v
              LEFT JOIN assets a ON a.id = v.asset_id
              LEFT JOIN items i ON i.id = v.item_id
+             LEFT JOIN extractions e ON e.asset_id = v.asset_id
+             LEFT JOIN transcriptions t ON t.asset_id = v.asset_id
              WHERE v.asset_id != ?1
              LIMIT ?2",
         )
@@ -784,7 +853,8 @@ fn similar_assets_from_conn(
             let collection_id: Option<String> = row.get(3)?;
             let asset_path: Option<String> = row.get(4)?;
             let asset_type: Option<String> = row.get(5)?;
-            let blob: Vec<u8> = row.get(6)?;
+            let text_preview: Option<String> = row.get(6)?;
+            let blob: Vec<u8> = row.get(7)?;
             Ok((
                 asset_id,
                 item_id,
@@ -792,6 +862,7 @@ fn similar_assets_from_conn(
                 collection_id.unwrap_or_default(),
                 asset_path.unwrap_or_default(),
                 asset_type.unwrap_or_default(),
+                text_preview.unwrap_or_default(),
                 blob,
             ))
         })
@@ -806,6 +877,20 @@ fn similar_assets_from_conn(
     )?))
 }
 
+/// Max number of characters surfaced in a similar-asset text preview. The
+/// frontend trims to 3 lines, so a short slice keeps the IPC payload small
+/// while still giving enough context to preview.
+const PREVIEW_MAX_CHARS: usize = 500;
+
+/// Truncate `text` to at most `max_chars` characters on a char boundary so the
+/// preview payload stays small without panicking on multibyte text.
+fn truncate_preview(text: &str, max_chars: usize) -> String {
+    match text.char_indices().nth(max_chars) {
+        Some((byte_idx, _)) => text[..byte_idx].to_string(),
+        None => text.to_string(),
+    }
+}
+
 fn rank_similar_asset_rows(
     target_blob: &[u8],
     rows: Vec<SimilarAssetRow>,
@@ -815,7 +900,16 @@ fn rank_similar_asset_rows(
         target_blob,
         rows.into_iter()
             .map(
-                |(asset_id, item_id, title, collection_id, asset_path, asset_type, blob)| {
+                |(
+                    asset_id,
+                    item_id,
+                    title,
+                    collection_id,
+                    asset_path,
+                    asset_type,
+                    text_preview,
+                    blob,
+                )| {
                     (
                         (
                             asset_id,
@@ -824,6 +918,7 @@ fn rank_similar_asset_rows(
                             collection_id,
                             asset_path,
                             asset_type,
+                            text_preview,
                         ),
                         blob,
                     )
@@ -831,7 +926,8 @@ fn rank_similar_asset_rows(
             )
             .collect(),
         limit,
-        |(asset_id, item_id, title, collection_id, asset_path, asset_type), similarity| {
+        |(asset_id, item_id, title, collection_id, asset_path, asset_type, text_preview),
+         similarity| {
             serde_json::json!({
                 "assetId": asset_id,
                 "itemId": item_id,
@@ -839,6 +935,7 @@ fn rank_similar_asset_rows(
                 "collectionId": collection_id,
                 "assetPath": asset_path,
                 "assetType": asset_type,
+                "textPreview": truncate_preview(&text_preview, PREVIEW_MAX_CHARS),
                 "similarity": similarity,
             })
         },

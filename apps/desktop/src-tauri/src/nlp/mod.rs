@@ -31,6 +31,8 @@ struct CachedEmbeddingEngine {
 #[derive(Clone, Serialize)]
 pub struct NlpProgressPayload {
     pub item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
     pub job: String,
     pub pct: u8,
 }
@@ -38,12 +40,18 @@ pub struct NlpProgressPayload {
 #[derive(Clone, Serialize)]
 pub struct NlpCompletePayload {
     pub item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
     pub job: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub entity_count: Option<usize>,
 }
 
 #[derive(Clone, Serialize)]
 pub struct NlpErrorPayload {
     pub item_id: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asset_id: Option<String>,
     pub job: String,
     pub error: String,
 }
@@ -267,39 +275,33 @@ impl NlpQueue {
             while let Some(job) = receiver.recv().await {
                 match job {
                     NlpJob::IndexFts { item_id } => {
-                        emit_progress(&app_handle, &item_id, "fts", 10);
+                        emit_progress(&app_handle, &item_id, None, "fts", 10);
                         let result = run_coalesced_fts_reindex(&conn, &item_id, &fts_pending);
                         match result {
                             Ok(_) => {
                                 eprintln!("[nlp/fts] Reindex complete: item_id={}", item_id);
-                                emit_progress(&app_handle, &item_id, "fts", 100);
-                                emit_complete(&app_handle, &item_id, "fts");
+                                emit_progress(&app_handle, &item_id, None, "fts", 100);
+                                emit_complete(&app_handle, &item_id, None, "fts", None);
                             }
-                            Err(e) => emit_error(&app_handle, &item_id, "fts", &e),
+                            Err(e) => emit_error(&app_handle, &item_id, None, "fts", &e),
                         }
                     }
                     NlpJob::ExtractEntities { item_id } => {
-                        emit_progress(&app_handle, &item_id, "ner", 10);
-                        let result = ner::prepare_ner_candidates_for_item(&conn, &item_id)
-                            .and_then(|input| {
-                                if input.text.trim().is_empty() {
-                                    Ok(None)
-                                } else {
-                                    Ok(Some(input))
-                                }
-                            });
-                        let result = match result {
-                            Ok(Some(input)) => {
+                        emit_progress(&app_handle, &item_id, None, "ner", 10);
+                        let prepared = ner::prepare_ner_candidates_for_item(&conn, &item_id);
+                        let (text_present, result) = match prepared {
+                            Ok(input) if input.text.trim().is_empty() => (false, Ok(Vec::new())),
+                            Ok(input) => (
+                                true,
                                 run_configured_ner_input(
                                     &app_handle,
                                     &db_path,
                                     ner_fallback_config(&conn),
                                     input,
                                 )
-                                .await
-                            }
-                            Ok(None) => Ok(Vec::new()),
-                            Err(error) => Err(format!("NER extraction failed: {error}")),
+                                .await,
+                            ),
+                            Err(error) => (false, Err(format!("NER extraction failed: {error}"))),
                         };
                         // Remove from dedup set so future enqueues for this item are allowed
                         if let Ok(mut pending) = ner_pending.lock() {
@@ -307,14 +309,31 @@ impl NlpQueue {
                         }
                         match result {
                             Ok(final_entities) => {
+                                // Data-loss guard: text present but NER found nothing → do NOT
+                                // persist (the delete-then-insert would wipe existing Gemma/manual
+                                // automatic entities). Preserve what's already stored.
+                                if text_present && final_entities.is_empty() {
+                                    eprintln!(
+                                        "[nlp/ner] NER returned 0 entities for non-empty text — preserving existing entities item_id={item_id}"
+                                    );
+                                    emit_progress(&app_handle, &item_id, None, "ner", 100);
+                                    emit_complete(&app_handle, &item_id, None, "ner", Some(0));
+                                    continue;
+                                }
                                 if let Err(e) = tokio::task::block_in_place(|| {
                                     ner::persist_entities_for_item(&conn, &item_id, &final_entities)
                                 }) {
-                                    emit_error(&app_handle, &item_id, "ner", &e);
+                                    emit_error(&app_handle, &item_id, None, "ner", &e);
                                     continue;
                                 }
-                                emit_progress(&app_handle, &item_id, "ner", 100);
-                                emit_complete(&app_handle, &item_id, "ner");
+                                emit_progress(&app_handle, &item_id, None, "ner", 100);
+                                emit_complete(
+                                    &app_handle,
+                                    &item_id,
+                                    None,
+                                    "ner",
+                                    Some(final_entities.len()),
+                                );
                                 // Auto-trigger geocoding for place entities
                                 if let Err(e) = crate::geo::enqueue_geocoding_for_item(
                                     &app_handle.state::<crate::geo::GeoQueue>(),
@@ -325,13 +344,13 @@ impl NlpQueue {
                                     );
                                 }
                             }
-                            Err(e) => emit_error(&app_handle, &item_id, "ner", &e),
+                            Err(e) => emit_error(&app_handle, &item_id, None, "ner", &e),
                         }
                     }
                     NlpJob::EnrichItem { item_id } => {
                         // Run FTS first, then continue with NER. Semantic triples are Gemma-only
                         // via the LLM pipeline.
-                        emit_progress(&app_handle, &item_id, "fts", 10);
+                        emit_progress(&app_handle, &item_id, None, "fts", 10);
 
                         let db_for_fts = db_path.clone();
                         let item_for_fts = item_id.clone();
@@ -347,13 +366,14 @@ impl NlpQueue {
 
                         match fts_handle.await {
                             Ok(Ok(())) => {
-                                emit_progress(&app_handle, &item_id, "fts", 100);
-                                emit_complete(&app_handle, &item_id, "fts");
+                                emit_progress(&app_handle, &item_id, None, "fts", 100);
+                                emit_complete(&app_handle, &item_id, None, "fts", None);
                             }
-                            Ok(Err(e)) => emit_error(&app_handle, &item_id, "fts", &e),
+                            Ok(Err(e)) => emit_error(&app_handle, &item_id, None, "fts", &e),
                             Err(e) => emit_error(
                                 &app_handle,
                                 &item_id,
+                                None,
                                 "fts",
                                 &format!("FTS task panicked: {e}"),
                             ),
@@ -372,28 +392,25 @@ impl NlpQueue {
                             if let Ok(mut pending) = ner_pending.lock() {
                                 pending.insert(item_id.clone());
                             }
-                            emit_progress(&app_handle, &item_id, "ner", 10);
-                            let r = ner::prepare_ner_candidates_for_item(&conn, &item_id).and_then(
-                                |input| {
-                                    if input.text.trim().is_empty() {
-                                        Ok(None)
-                                    } else {
-                                        Ok(Some(input))
-                                    }
-                                },
-                            );
-                            let r = match r {
-                                Ok(Some(input)) => {
+                            emit_progress(&app_handle, &item_id, None, "ner", 10);
+                            let prepared = ner::prepare_ner_candidates_for_item(&conn, &item_id);
+                            let (text_present, r) = match prepared {
+                                Ok(input) if input.text.trim().is_empty() => {
+                                    (false, Ok(Vec::new()))
+                                }
+                                Ok(input) => (
+                                    true,
                                     run_configured_ner_input(
                                         &app_handle,
                                         &db_path,
                                         ner_fallback_config(&conn),
                                         input,
                                     )
-                                    .await
+                                    .await,
+                                ),
+                                Err(error) => {
+                                    (false, Err(format!("NER extraction failed: {error}")))
                                 }
-                                Ok(None) => Ok(Vec::new()),
-                                Err(error) => Err(format!("NER extraction failed: {error}")),
                             };
                             // Remove from dedup set after NER completes
                             if let Ok(mut pending) = ner_pending.lock() {
@@ -401,6 +418,16 @@ impl NlpQueue {
                             }
                             match r {
                                 Ok(final_entities) => {
+                                    // Data-loss guard: text present but NER empty → preserve
+                                    // existing automatic entities instead of wiping them.
+                                    if text_present && final_entities.is_empty() {
+                                        eprintln!(
+                                            "[nlp/ner] NER returned 0 entities for non-empty text — preserving existing entities item_id={item_id}"
+                                        );
+                                        emit_progress(&app_handle, &item_id, None, "ner", 100);
+                                        emit_complete(&app_handle, &item_id, None, "ner", Some(0));
+                                        continue;
+                                    }
                                     if let Err(e) = tokio::task::block_in_place(|| {
                                         ner::persist_entities_for_item(
                                             &conn,
@@ -408,11 +435,17 @@ impl NlpQueue {
                                             &final_entities,
                                         )
                                     }) {
-                                        emit_error(&app_handle, &item_id, "ner", &e);
+                                        emit_error(&app_handle, &item_id, None, "ner", &e);
                                         continue;
                                     }
-                                    emit_progress(&app_handle, &item_id, "ner", 100);
-                                    emit_complete(&app_handle, &item_id, "ner");
+                                    emit_progress(&app_handle, &item_id, None, "ner", 100);
+                                    emit_complete(
+                                        &app_handle,
+                                        &item_id,
+                                        None,
+                                        "ner",
+                                        Some(final_entities.len()),
+                                    );
                                     if let Err(e) = crate::geo::enqueue_geocoding_for_item(
                                         &app_handle.state::<crate::geo::GeoQueue>(),
                                         &item_id,
@@ -420,7 +453,7 @@ impl NlpQueue {
                                         eprintln!("[geo] Failed to auto-enqueue geocoding after NER (enrich): {e}");
                                     }
                                 }
-                                Err(e) => emit_error(&app_handle, &item_id, "ner", &e),
+                                Err(e) => emit_error(&app_handle, &item_id, None, "ner", &e),
                             }
                         }
                     }
@@ -433,7 +466,7 @@ impl NlpQueue {
                         eprintln!(
                             "[nlp/embeddings] EMBED job queued item_id={item_id} asset_id={asset_id}"
                         );
-                        emit_progress(&app_handle, &item_id, "embed", 10);
+                        emit_progress(&app_handle, &item_id, Some(&asset_id), "embed", 10);
                         let engine = ensure_embed_engine_for_current_settings(
                             &conn,
                             &mut embed_engine,
@@ -470,23 +503,40 @@ impl NlpQueue {
                                     eprintln!(
                                         "[nlp/embeddings] EMBED job complete provider={provider} item_id={item_id} asset_id={asset_id}"
                                     );
-                                    emit_progress(&app_handle, &item_id, "embed", 100);
-                                    emit_complete(&app_handle, &item_id, "embed");
+                                    emit_progress(
+                                        &app_handle,
+                                        &item_id,
+                                        Some(&asset_id),
+                                        "embed",
+                                        100,
+                                    );
+                                    emit_complete(
+                                        &app_handle,
+                                        &item_id,
+                                        Some(&asset_id),
+                                        "embed",
+                                        None,
+                                    );
                                 }
                                 Ok(false) => emit_error(
                                     &app_handle,
                                     &item_id,
+                                    Some(&asset_id),
                                     "embed",
                                     "Asset embedding job completed but no vector was persisted",
                                 ),
-                                Err(e) => emit_error(&app_handle, &item_id, "embed", &e),
+                                Err(e) => {
+                                    emit_error(&app_handle, &item_id, Some(&asset_id), "embed", &e)
+                                }
                             },
-                            Err(e) => emit_error(&app_handle, &item_id, "embed", &e),
+                            Err(e) => {
+                                emit_error(&app_handle, &item_id, Some(&asset_id), "embed", &e)
+                            }
                         }
                     }
 
                     NlpJob::ExtractEntitiesForAsset { item_id, asset_id } => {
-                        emit_progress(&app_handle, &item_id, "ner", 10);
+                        emit_progress(&app_handle, &item_id, Some(&asset_id), "ner", 10);
                         let result =
                             ner::prepare_ner_candidates_for_asset(&conn, &item_id, &asset_id);
                         let result = match result {
@@ -508,12 +558,39 @@ impl NlpQueue {
                         match result {
                             Ok(batch) => {
                                 // NER uses spaCy first, then falls back to Gemma/OpenRouter by mode.
-                                let final_entities = if batch.text.trim().is_empty() {
-                                    Vec::new()
-                                } else {
+                                let text_present = !batch.text.trim().is_empty();
+                                let final_entities = if text_present {
                                     batch.entities
+                                } else {
+                                    Vec::new()
                                 };
 
+                                // Data-loss guard: text present but NER found nothing → do NOT
+                                // persist. The delete-then-insert would wipe the asset's existing
+                                // Gemma ('llm') entities. Preserve them; only clear when the text
+                                // itself is genuinely empty (intentional clear).
+                                if text_present && final_entities.is_empty() {
+                                    eprintln!(
+                                        "[nlp/ner] Asset NER returned 0 entities for non-empty text — preserving existing entities item_id={item_id} asset_id={asset_id}"
+                                    );
+                                    emit_progress(
+                                        &app_handle,
+                                        &item_id,
+                                        Some(&asset_id),
+                                        "ner",
+                                        100,
+                                    );
+                                    emit_complete(
+                                        &app_handle,
+                                        &item_id,
+                                        Some(&asset_id),
+                                        "ner",
+                                        Some(0),
+                                    );
+                                    continue;
+                                }
+
+                                let entity_count = final_entities.len();
                                 if let Err(e) = tokio::task::block_in_place(|| {
                                     ner::persist_entities_for_asset(
                                         &conn,
@@ -522,11 +599,17 @@ impl NlpQueue {
                                         &final_entities,
                                     )
                                 }) {
-                                    emit_error(&app_handle, &item_id, "ner", &e);
+                                    emit_error(&app_handle, &item_id, Some(&asset_id), "ner", &e);
                                     continue;
                                 }
-                                emit_progress(&app_handle, &item_id, "ner", 100);
-                                emit_complete(&app_handle, &item_id, "ner");
+                                emit_progress(&app_handle, &item_id, Some(&asset_id), "ner", 100);
+                                emit_complete(
+                                    &app_handle,
+                                    &item_id,
+                                    Some(&asset_id),
+                                    "ner",
+                                    Some(entity_count),
+                                );
                                 if let Err(e) = crate::geo::enqueue_geocoding_for_item(
                                     &app_handle.state::<crate::geo::GeoQueue>(),
                                     &item_id,
@@ -534,7 +617,7 @@ impl NlpQueue {
                                     eprintln!("[geo] Failed to auto-enqueue geocoding after asset NER: {e}");
                                 }
                             }
-                            Err(e) => emit_error(&app_handle, &item_id, "ner", &e),
+                            Err(e) => emit_error(&app_handle, &item_id, Some(&asset_id), "ner", &e),
                         }
                     }
                 }
@@ -659,7 +742,13 @@ where
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-fn emit_progress(app_handle: &AppHandle, item_id: &str, job: &str, pct: u8) {
+fn emit_progress(
+    app_handle: &AppHandle,
+    item_id: &str,
+    asset_id: Option<&str>,
+    job: &str,
+    pct: u8,
+) {
     if pct == 10 || pct == 100 {
         crate::app_logs::info(
             app_handle,
@@ -671,13 +760,20 @@ fn emit_progress(app_handle: &AppHandle, item_id: &str, job: &str, pct: u8) {
         "nlp:progress",
         NlpProgressPayload {
             item_id: item_id.to_string(),
+            asset_id: asset_id.map(str::to_string),
             job: job.to_string(),
             pct,
         },
     );
 }
 
-fn emit_complete(app_handle: &AppHandle, item_id: &str, job: &str) {
+fn emit_complete(
+    app_handle: &AppHandle,
+    item_id: &str,
+    asset_id: Option<&str>,
+    job: &str,
+    entity_count: Option<usize>,
+) {
     crate::app_logs::info(
         app_handle,
         "nlp",
@@ -687,12 +783,20 @@ fn emit_complete(app_handle: &AppHandle, item_id: &str, job: &str) {
         "nlp:complete",
         NlpCompletePayload {
             item_id: item_id.to_string(),
+            asset_id: asset_id.map(str::to_string),
             job: job.to_string(),
+            entity_count,
         },
     );
 }
 
-fn emit_error(app_handle: &AppHandle, item_id: &str, job: &str, error: &str) {
+fn emit_error(
+    app_handle: &AppHandle,
+    item_id: &str,
+    asset_id: Option<&str>,
+    job: &str,
+    error: &str,
+) {
     crate::app_logs::error(
         app_handle,
         "nlp",
@@ -702,6 +806,7 @@ fn emit_error(app_handle: &AppHandle, item_id: &str, job: &str, error: &str) {
         "nlp:error",
         NlpErrorPayload {
             item_id: item_id.to_string(),
+            asset_id: asset_id.map(str::to_string),
             job: job.to_string(),
             error: error.to_string(),
         },
@@ -735,8 +840,16 @@ async fn run_configured_ner_input(
         return Ok(Vec::new());
     }
 
+    // Prefer a non-empty spaCy result. An EMPTY spaCy pass (model resolved but
+    // found nothing for this text) must NOT short-circuit the LLM fallback — on a
+    // re-run that would silently produce zero entities and, combined with the
+    // persist step, wipe a richer earlier Gemma result. Fall through so Gemma can
+    // re-derive the entities; the call-site empty-guard is the final safety net.
     match run_spacy_ner(app_handle, db_path, &input).await {
-        Ok(entities) => return Ok(entities),
+        Ok(entities) if !entities.is_empty() => return Ok(entities),
+        Ok(_) => {
+            eprintln!("[nlp/ner] spaCy returned 0 entities; trying configured LLM fallback")
+        }
         Err(error) => {
             eprintln!("[nlp/ner] spaCy NER unavailable; using configured LLM fallback: {error}")
         }
@@ -945,6 +1058,72 @@ mod tests {
     use crate::runtime::status::{RuntimeCapability, RuntimeState, RuntimeStatus};
     use rusqlite::{params, Connection};
     use std::cell::RefCell;
+
+    // ── Event payload contract ────────────────────────────────────────────────
+    // These pin the JSON shape the frontend (lib/nlp.ts) routes on. Asset-scoped
+    // jobs MUST carry asset_id so per-asset chips advance; NER completion MUST
+    // carry entity_count. Regression guard for the asset_id/entity_count drift.
+
+    #[test]
+    fn complete_payload_carries_asset_id_and_entity_count_for_asset_jobs() {
+        let payload = NlpCompletePayload {
+            item_id: "item-1".to_string(),
+            asset_id: Some("asset-9".to_string()),
+            job: "ner".to_string(),
+            entity_count: Some(7),
+        };
+        let value = serde_json::to_value(&payload).expect("payload serializes");
+        assert_eq!(value["item_id"], "item-1");
+        assert_eq!(value["asset_id"], "asset-9");
+        assert_eq!(value["job"], "ner");
+        assert_eq!(value["entity_count"], 7);
+    }
+
+    #[test]
+    fn complete_payload_omits_asset_id_and_entity_count_for_item_jobs() {
+        let payload = NlpCompletePayload {
+            item_id: "item-1".to_string(),
+            asset_id: None,
+            job: "fts".to_string(),
+            entity_count: None,
+        };
+        let value = serde_json::to_value(&payload).expect("payload serializes");
+        let obj = value.as_object().expect("payload is a JSON object");
+        assert!(
+            !obj.contains_key("asset_id"),
+            "item-level complete must omit asset_id, got: {value}"
+        );
+        assert!(
+            !obj.contains_key("entity_count"),
+            "non-NER complete must omit entity_count, got: {value}"
+        );
+    }
+
+    #[test]
+    fn progress_payload_carries_asset_id_when_present() {
+        let payload = NlpProgressPayload {
+            item_id: "item-1".to_string(),
+            asset_id: Some("asset-9".to_string()),
+            job: "embed".to_string(),
+            pct: 100,
+        };
+        let value = serde_json::to_value(&payload).expect("payload serializes");
+        assert_eq!(value["asset_id"], "asset-9");
+        assert_eq!(value["pct"], 100);
+    }
+
+    #[test]
+    fn error_payload_carries_asset_id_when_present() {
+        let payload = NlpErrorPayload {
+            item_id: "item-1".to_string(),
+            asset_id: Some("asset-9".to_string()),
+            job: "ner".to_string(),
+            error: "boom".to_string(),
+        };
+        let value = serde_json::to_value(&payload).expect("payload serializes");
+        assert_eq!(value["asset_id"], "asset-9");
+        assert_eq!(value["error"], "boom");
+    }
 
     #[test]
     fn submit_coalesces_duplicate_fts_jobs_while_pending() {
@@ -1408,8 +1587,11 @@ mod tests {
     #[test]
     fn try_init_embed_engine_returns_some_when_openrouter_key_exists() {
         let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
+        // Pro defaults embeddings to local BGE-M3; the API engine is opt-in, so the
+        // api provider must be selected explicitly for this OpenRouter-key scenario.
         conn.execute_batch(
             "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'api');\
              INSERT INTO app_settings(key, value) VALUES ('openrouter_api_key', 'sk-test');",
         )
         .expect("settings table should be created");
@@ -1424,8 +1606,13 @@ mod tests {
     #[test]
     fn embed_engine_retries_after_key_is_configured() {
         let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
-        conn.execute_batch("CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);")
-            .expect("settings table should be created");
+        // Opt into the API embedding provider (Pro defaults to local BGE-M3). With the
+        // api provider selected but no key yet, init must fail until the key arrives.
+        conn.execute_batch(
+            "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'api');",
+        )
+        .expect("settings table should be created");
 
         let first = try_init_embed_engine(&conn);
         assert!(
@@ -1475,8 +1662,11 @@ mod tests {
     #[test]
     fn cached_embed_engine_reinitializes_when_settings_change() {
         let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
+        // Opt into the API provider (Pro defaults to local BGE-M3) to exercise the
+        // cache-invalidation path without needing local model files on disk.
         conn.execute_batch(
             "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'api');\
              INSERT INTO app_settings(key, value) VALUES ('openrouter_api_key', 'sk-test');",
         )
         .expect("settings table should be created");
@@ -1508,8 +1698,11 @@ mod tests {
         let temp = tempfile::tempdir().expect("temp dir should be created");
         let db_path = temp.path().join("entropia.sqlite");
         let conn = Connection::open(&db_path).expect("sqlite file should open");
+        // Start on the opt-in API provider (Pro defaults to local BGE-M3), then switch
+        // to an invalid local config and assert the stale API engine is not reused.
         conn.execute_batch(
             "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'api');\
              INSERT INTO app_settings(key, value) VALUES ('openrouter_api_key', 'sk-test');",
         )
         .expect("settings table should be created");

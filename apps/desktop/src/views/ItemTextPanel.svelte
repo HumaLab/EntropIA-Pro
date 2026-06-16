@@ -17,6 +17,7 @@
     transcriptionEditedText,
     llmState,
     llmAvailable,
+    isOcrCorrected,
     currentSummary,
     isSummarizing,
     translate,
@@ -37,6 +38,7 @@
     transcriptionEditedText: string
     llmState: ItemLlmState
     llmAvailable: boolean
+    isOcrCorrected: boolean
     currentSummary: string | null
     isSummarizing: boolean
     translate: (key: I18nKey, params?: I18nParams) => string
@@ -61,7 +63,7 @@
       return translate('item.pdfTextAction')
     }
 
-    return translate('item.ocrHighAction')
+    return translate('item.ocrFastAction')
   }
 
   function getCorrectionActionLabel(assetType: Asset['type']) {
@@ -150,16 +152,21 @@
           {ocrState.status}
         </StatusBadge>
         <div class="ocr-btn-group">
-          {#if isPdfAsset}
-            <button
-              class="ocr-btn ocr-btn--light"
-              disabled={busy}
-              onclick={() => onExtractText(selectedAsset, 'light')}
-              title={busy ? translate('item.pdfTextBusyTitle') : translate('item.pdfTextTitle')}
-            >
-              {getExtractionPrimaryActionLabel(selectedAsset.type)}
-            </button>
-          {:else}
+          <button
+            class="ocr-btn ocr-btn--light"
+            disabled={busy}
+            onclick={() => onExtractText(selectedAsset, 'light')}
+            title={busy
+              ? isPdfAsset
+                ? translate('item.pdfTextBusyTitle')
+                : translate('item.ocrFastBusyTitle')
+              : isPdfAsset
+                ? translate('item.pdfTextTitle')
+                : translate('item.ocrFastTitle')}
+          >
+            {getExtractionPrimaryActionLabel(selectedAsset.type)}
+          </button>
+          {#if !isPdfAsset}
             <button
               class="ocr-btn ocr-btn--high"
               disabled={busy}
@@ -169,7 +176,7 @@
               {translate('item.ocrHighAction')}
             </button>
           {/if}
-          {#if llmAvailable}
+          {#if llmAvailable && !isOcrCorrected}
             <button
               class="ocr-btn ocr-btn--correct"
               disabled={llmState.status === 'running' || ocrState.status !== 'done'}

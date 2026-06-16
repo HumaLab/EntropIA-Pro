@@ -81,7 +81,12 @@ static ALL_DEPS: &[DependencySpec] = &[
     DependencySpec {
         id: DependencyId::Spacy,
         display_name: "spaCy NER español",
-        pip_spec: Some("https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.7.0/es_core_news_sm-3.7.0-py3-none-any.whl"),
+        // The es_core_news_sm 3.8 model wheel no longer declares spaCy as a
+        // dependency, so install spaCy explicitly alongside it. spaCy 3.8.x ships
+        // cp39–cp313 wheels, so this installs and loads on Python 3.11/3.12/3.13
+        // without source builds (3.7.x had no Python 3.13 wheels). The two
+        // space-separated packages are installed together by install_package.
+        pip_spec: Some("spacy>=3.8.0,<3.9.0 https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.8.0/es_core_news_sm-3.8.0-py3-none-any.whl"),
         probe_code: "import spacy; spacy.load('es_core_news_sm'); print('ok')",
         critical: false,
         managed_prerequisites: NO_PREREQUISITES,
