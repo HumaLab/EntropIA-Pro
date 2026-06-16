@@ -5,6 +5,30 @@ import { assets } from '../schema'
 export type Asset = typeof assets.$inferSelect
 export type NewAsset = typeof assets.$inferInsert
 
+type AssetRow = {
+  id: string
+  item_id: string
+  path: string
+  type: string
+  sort_index: number
+  size: number | null
+  created_at: number
+}
+
+function orderAssetsForDisplay(rows: Asset[]): Asset[] {
+  const preservesPageOrder = rows.length > 1 && rows.some((asset) => asset.sortIndex !== 0)
+  return [...rows].sort((a, b) => {
+    if (preservesPageOrder) {
+      const bySortIndex = a.sortIndex - b.sortIndex
+      if (bySortIndex !== 0) return bySortIndex
+    }
+
+    const byPath = a.path.localeCompare(b.path, undefined, { sensitivity: 'base' })
+    if (byPath !== 0) return byPath
+    return a.id.localeCompare(b.id)
+  })
+}
+
 export class AssetRepo {
   constructor(
     private db: DrizzleClient,
@@ -51,7 +75,32 @@ export class AssetRepo {
   }
 
   async findByItem(itemId: string): Promise<Asset[]> {
-    return this.db.select().from(assets).where(eq(assets.itemId, itemId)).orderBy(asc(assets.sortIndex))
+    if (this.rawClient) {
+      const rows = await this.rawClient.select<AssetRow>(
+        `SELECT id, item_id, path, type, sort_index, size, created_at
+         FROM assets
+         WHERE item_id = ?
+         ORDER BY path COLLATE NOCASE ASC, id ASC`,
+        [itemId]
+      )
+
+      return orderAssetsForDisplay(rows.map((row) => ({
+        id: row.id,
+        itemId: row.item_id,
+        path: row.path,
+        type: row.type,
+        sortIndex: row.sort_index,
+        size: row.size,
+        createdAt: row.created_at,
+      })))
+    }
+
+    const rows = await this.db
+      .select()
+      .from(assets)
+      .where(eq(assets.itemId, itemId))
+      .orderBy(asc(assets.path), asc(assets.id))
+    return orderAssetsForDisplay(rows)
   }
 
   async findById(id: string): Promise<Asset | null> {
@@ -110,6 +159,9 @@ export class AssetRepo {
         DELETE FROM transcriptions WHERE asset_id = '${escapedId}';
         DELETE FROM llm_results WHERE target_id = '${escapedId}' AND (target_type = 'asset' OR target_type = 'unknown');
         DELETE FROM annotations WHERE asset_id = '${escapedId}';
+        DELETE FROM entities WHERE asset_id = '${escapedId}';
+        DELETE FROM triples WHERE asset_id = '${escapedId}';
+        DELETE FROM vec_assets WHERE asset_id = '${escapedId}';
         DELETE FROM assets WHERE id = '${escapedId}';
         COMMIT;
       `)

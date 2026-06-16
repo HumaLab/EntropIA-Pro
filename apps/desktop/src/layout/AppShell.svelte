@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { invoke } from '@tauri-apps/api/core'
+  import { openExternalUrlFromClick } from '$lib/external-links'
   import { locale, t } from '$lib/i18n'
   import { navigation } from '$lib/navigation'
   import {
@@ -21,6 +21,7 @@
     shouldShowRuntimeRepairAction,
     type RuntimeStatus,
   } from '$lib/runtime'
+  import { ActionIcon, IconButton } from '@entropia/ui'
   import DocumentExplorer from './DocumentExplorer.svelte'
   import TopBar from './TopBar.svelte'
   import EntropicConstellation from './EntropicConstellation.svelte'
@@ -32,6 +33,18 @@
   let { children }: { children: Snippet } = $props()
   const currentLocale = locale
   const activeLocale = $derived($currentLocale)
+  const sidebarLabels = $derived.by(() => {
+    $currentLocale
+    return {
+      aria: t('appshell.sidebarAria'),
+      collapse: t('appshell.sidebarCollapse'),
+      expand: t('appshell.sidebarExpand'),
+      newCollection: t('appshell.sidebarNewCollection'),
+      filter: t('appshell.sidebarFilterCollections'),
+      filterPlaceholder: t('appshell.sidebarFilterCollectionsPlaceholder'),
+      emptyExplorer: t('appshell.sidebarEmptyExplorer'),
+    }
+  })
   const showExplorer = $derived(
     $navigation.current.name === 'collection' || $navigation.current.name === 'item',
   )
@@ -41,7 +54,6 @@
   let searchExpanded = $state(false)
   let searchFilter = $state('')
   let searchInputEl: HTMLInputElement | undefined = $state()
-  let showCreateForm = $state(false)
 
   function toggleSidebar() {
     sidebarOpen = !sidebarOpen
@@ -76,14 +88,28 @@
     }
   }
 
+  function isEditableTarget(target: EventTarget | null): boolean {
+    if (!(target instanceof Element)) return false
+
+    const tagName = target.tagName.toLowerCase()
+    return (
+      tagName === 'input' ||
+      tagName === 'textarea' ||
+      tagName === 'select' ||
+      target.closest('[contenteditable="true"]') !== null
+    )
+  }
+
   function handleKeydown(e: KeyboardEvent) {
     if ((e.ctrlKey || e.metaKey) && e.key === 'b') {
+      // Editors use Ctrl+B for bold (e.g. the TipTap note editor); leave it to them.
+      if (e.defaultPrevented || isEditableTarget(e.target)) return
       e.preventDefault()
       sidebarOpen = !sidebarOpen
     }
   }
 
-  // ── Deps banner ──
+  // ── Deps banner (Pro-only local subsystem) ──
   let depsResults = $state<DepCheckResult[]>([])
   let runtimeStatus = $state<RuntimeStatus | null>(null)
   let uvStatus = $state<UvStatusResult | null>(null)
@@ -201,18 +227,16 @@
   }
 
   async function openHlabWebsite(event: MouseEvent) {
-    event.preventDefault()
     try {
-      await invoke('open_external_url', { url: HLAB_URL })
+      await openExternalUrlFromClick(event, HLAB_URL)
     } catch (error) {
       console.error('[Footer] No se pudo abrir el sitio de HLab', error)
     }
   }
 
   async function openGithubRepo(event: MouseEvent) {
-    event.preventDefault()
     try {
-      await invoke('open_external_url', { url: GITHUB_REPO_URL })
+      await openExternalUrlFromClick(event, GITHUB_REPO_URL)
     } catch (error) {
       console.error('[Footer] No se pudo abrir el repositorio de GitHub', error)
     }
@@ -227,38 +251,33 @@
 
   <div class="workspace">
     <!-- Sidebar: always visible, collapses to icon strip -->
-    <aside id="app-sidebar" class="sidebar" class:sidebar--collapsed={!sidebarOpen} aria-label="Panel lateral">
+    <aside class="sidebar" class:sidebar--collapsed={!sidebarOpen} aria-label={sidebarLabels.aria}>
       <!-- Sidebar toolbar -->
       <div class="sidebar__toolbar">
         <!-- Toggle sidebar -->
-        <button
+        <IconButton
           class="sidebar__tool"
+          size="sm"
+          variant="ghost"
+          label={sidebarOpen ? sidebarLabels.collapse : sidebarLabels.expand}
           onclick={toggleSidebar}
-          aria-label={sidebarOpen ? 'Colapsar panel lateral' : 'Expandir panel lateral'}
-          aria-expanded={sidebarOpen}
-          aria-controls="app-sidebar"
-          title={sidebarOpen ? 'Colapsar panel (Ctrl+B)' : 'Expandir panel (Ctrl+B)'}
+          title={sidebarOpen ? sidebarLabels.collapse : sidebarLabels.expand}
         >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-            <line x1="9" y1="3" x2="9" y2="21"/>
-          </svg>
-        </button>
+          <ActionIcon name={sidebarOpen ? 'panel-left-close' : 'panel-left'} size={16} />
+        </IconButton>
 
         {#if sidebarOpen}
           <!-- New collection -->
-          <button
+          <IconButton
             class="sidebar__tool"
+            size="sm"
+            variant="ghost"
+            label={sidebarLabels.newCollection}
             onclick={handleCreateCollection}
-            aria-label="Nueva colección"
-            title="Nueva colección"
+            title={sidebarLabels.newCollection}
           >
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-              <line x1="12" y1="11" x2="12" y2="17"/>
-              <line x1="9" y1="14" x2="15" y2="14"/>
-            </svg>
-          </button>
+            <ActionIcon name="folder-plus" size={16} />
+          </IconButton>
 
           <!-- Search / filter -->
           {#if searchExpanded}
@@ -266,25 +285,23 @@
               bind:this={searchInputEl}
               class="sidebar__search-input"
               type="text"
-              aria-label="Filtrar colecciones"
-              placeholder="Filtrar colecciones..."
+              placeholder={sidebarLabels.filterPlaceholder}
               bind:value={searchFilter}
               onblur={collapseSearch}
               onkeydown={(e) => { if (e.key === 'Escape') { searchFilter = ''; searchExpanded = false } }}
             />
           {:else}
             <div class="sidebar__toolbar-spacer"></div>
-            <button
+            <IconButton
               class="sidebar__tool"
+              size="sm"
+              variant="ghost"
+              label={sidebarLabels.filter}
               onclick={expandSearch}
-              aria-label="Filtrar colecciones"
-              aria-expanded={searchExpanded}
-              title="Filtrar colecciones"
+              title={sidebarLabels.filter}
             >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-                <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-              </svg>
-            </button>
+              <ActionIcon name="search" size={16} />
+            </IconButton>
           {/if}
         {/if}
       </div>
@@ -296,7 +313,7 @@
             <DocumentExplorer filterText={searchFilter} />
           {:else}
             <div class="sidebar__placeholder">
-              <p>Abrí una colección para ver el explorador</p>
+              <p>{sidebarLabels.emptyExplorer}</p>
             </div>
           {/if}
         </div>
@@ -401,20 +418,15 @@
     flex: 1;
     min-height: 0;
     overflow: hidden;
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.01), transparent 30%),
-      color-mix(in srgb, var(--color-bg) 34%, transparent);
+    background: color-mix(in srgb, var(--surface-app) 72%, transparent);
   }
 
   /* ── Sidebar (Zotero-style, always visible) ── */
   .sidebar {
     display: flex;
     flex-direction: column;
-    width: 240px;
-    flex-shrink: 0;
-    border-right: 1px solid var(--color-border-subtle);
-    background: var(--color-surface);
-    overflow: hidden;
+    flex: 0 0 auto;
+    background: var(--surface-panel);
     transition: width var(--transition-base);
   }
 
@@ -427,8 +439,8 @@
     align-items: center;
     gap: 1px;
     padding: 3px 4px;
-    border-bottom: 1px solid var(--color-border-subtle);
-    background: var(--color-surface-sunken);
+    border-bottom: 1px solid var(--border-subtle);
+    background: color-mix(in srgb, var(--surface-toolbar) 78%, transparent);
     flex-shrink: 0;
   }
 
@@ -441,24 +453,13 @@
     flex: 1;
   }
 
-  .sidebar__tool {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 28px;
-    height: 28px;
-    border: none;
-    border-radius: 3px;
-    background: transparent;
+  :global(.sidebar__tool) {
+    border-radius: var(--radius-sm);
     color: var(--color-text-muted);
-    cursor: pointer;
-    flex-shrink: 0;
-    transition: color var(--transition-base), background-color var(--transition-base);
   }
 
-  .sidebar__tool:hover {
-    color: var(--color-text-primary);
-    background: var(--color-accent-soft);
+  :global(.sidebar__tool:hover:not(:disabled)) {
+    background: var(--color-accent-faint);
   }
 
   .sidebar__search-input {
@@ -466,9 +467,9 @@
     min-width: 0;
     height: 26px;
     padding: 0 var(--space-2);
-    border: 1px solid var(--color-border);
-    border-radius: 3px;
-    background: var(--color-surface-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    background: var(--surface-input);
     color: var(--color-text-primary);
     font-size: var(--font-size-xs);
     outline: none;
@@ -477,6 +478,7 @@
 
   .sidebar__search-input:focus {
     border-color: var(--color-accent);
+    box-shadow: var(--focus-ring);
   }
 
   .sidebar__search-input::placeholder {
@@ -484,9 +486,9 @@
   }
 
   .sidebar__body {
+    display: flex;
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
   }
 
   .sidebar__placeholder {
@@ -504,12 +506,11 @@
     flex: 1;
     min-width: 0;
     overflow-y: auto;
-    padding: var(--space-5);
-    background:
-      linear-gradient(90deg, rgba(255, 255, 255, 0.012), transparent 18%),
-      color-mix(in srgb, var(--color-bg) 24%, transparent);
+    padding: 0 var(--space-5) var(--space-5);
+    background: color-mix(in srgb, var(--surface-app) 42%, transparent);
   }
 
+  /* ── Deps / runtime banner (Pro-only local subsystem) ── */
   .deps-banner {
     display: flex;
     align-items: flex-start;
@@ -550,7 +551,7 @@
     background: rgba(245, 158, 11, 0.12);
   }
 
-  /* ── Toast notification ── */
+  /* ── Toast notification (Pro-only local subsystem) ── */
   .toast {
     position: fixed;
     bottom: 36px;
@@ -637,10 +638,10 @@
     justify-content: space-between;
     height: 26px;
     padding: 0 var(--space-3);
-    border-top: 1px solid var(--color-border-subtle);
-    background: var(--color-surface-sunken);
+    border-top: 1px solid var(--border-subtle);
+    background: var(--surface-input);
     font-family: var(--font-mono);
-    font-size: 0.6rem;
+    font-size: var(--font-size-sm);
     color: var(--color-text-muted);
     flex-shrink: 0;
     letter-spacing: 0.02em;
@@ -675,6 +676,6 @@
   }
 
   .statusbar__link b {
-    font-weight: 600;
+    font-weight: var(--font-weight-semibold);
   }
 </style>

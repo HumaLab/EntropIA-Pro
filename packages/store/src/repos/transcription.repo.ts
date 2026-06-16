@@ -1,12 +1,12 @@
 import { eq, desc } from 'drizzle-orm'
 import type { DrizzleClient } from '../types'
-import { transcriptions } from '../schema'
+import { transcriptions, assets, items } from '../schema'
 
 export type Transcription = typeof transcriptions.$inferSelect
 export type NewTranscription = typeof transcriptions.$inferInsert
 
 /**
- * Typed segment from Whisper transcription.
+ * Typed segment from a local audio transcription.
  * Stored as JSON in the `segments` column.
  */
 export interface TranscriptionSegment {
@@ -70,6 +70,25 @@ export class TranscriptionRepo {
       .from(transcriptions)
       .where(eq(transcriptions.assetId, assetId))
       .orderBy(desc(transcriptions.createdAt))
+  }
+
+  /**
+   * All transcription texts for a collection in a single query
+   * (avoids per-item/per-asset round-trips when building a corpus).
+   */
+  async findTextByCollection(
+    collectionId: string
+  ): Promise<Array<{ assetId: string; textContent: string; createdAt: number }>> {
+    return this.db
+      .select({
+        assetId: transcriptions.assetId,
+        textContent: transcriptions.textContent,
+        createdAt: transcriptions.createdAt,
+      })
+      .from(transcriptions)
+      .innerJoin(assets, eq(assets.id, transcriptions.assetId))
+      .innerJoin(items, eq(items.id, assets.itemId))
+      .where(eq(items.collectionId, collectionId))
   }
 
   async delete(id: string): Promise<void> {

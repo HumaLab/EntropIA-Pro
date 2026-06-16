@@ -40,6 +40,16 @@ function createStore(collections: CollectionRow[], count = 0) {
   }
 }
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
+
 vi.mock('$lib/db', () => ({
   getStore: () => storeRef.current,
 }))
@@ -67,10 +77,12 @@ describe('CollectionsView consumer compatibility', () => {
   })
 
   it('passes CollectionCard props and preserves onclick navigation contract', async () => {
-    render(CollectionsView)
+    const { container } = render(CollectionsView)
 
     expect(await screen.findByText('Historia')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Colecciones' })).toBeInTheDocument()
+    expect(container.querySelector('.page-header')).not.toBeInTheDocument()
+    expect(container.querySelector('.page-toolbar')).not.toBeInTheDocument()
     expect(
       screen.getByText('Gestioná tus espacios de trabajo y organizá el archivo por tema.')
     ).toBeInTheDocument()
@@ -111,26 +123,9 @@ describe('CollectionsView consumer compatibility', () => {
 
     await fireEvent.click(await screen.findByRole('button', { name: 'Delete collection' }))
 
-    const dialog = screen.getByRole('alertdialog', { name: 'Eliminar colección' })
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog).toHaveAccessibleDescription(
-      '¿Estás seguro que querés eliminar la colección "Historia"? Se eliminarán todos sus items y datos asociados.'
-    )
-
     const confirmBtn = screen.getByRole('button', { name: 'Eliminar colección' })
     expect(confirmBtn.querySelector('svg')).toBeInTheDocument()
     expect(confirmBtn).not.toHaveTextContent('Eliminar')
-  })
-
-  it('closes the confirm delete dialog with Escape', async () => {
-    render(CollectionsView)
-
-    await fireEvent.click(await screen.findByRole('button', { name: 'Delete collection' }))
-    const dialog = screen.getByRole('alertdialog', { name: 'Eliminar colección' })
-
-    await fireEvent.keyDown(dialog, { key: 'Escape' })
-
-    expect(screen.queryByRole('alertdialog', { name: 'Eliminar colección' })).not.toBeInTheDocument()
   })
 
   it('updates critical collection copy when locale changes', async () => {
@@ -143,6 +138,58 @@ describe('CollectionsView consumer compatibility', () => {
     await waitFor(() => {
       expect(screen.getByRole('heading', { name: 'Collections' })).toBeInTheDocument()
       expect(screen.getByText('1 visible collection')).toBeInTheDocument()
+    })
+  })
+
+  it('ignores stale collection loads that resolve after a newer refresh', async () => {
+    const firstLoad = deferred<CollectionRow[]>()
+    const secondLoad = deferred<CollectionRow[]>()
+    const oldCollection: CollectionRow = {
+      id: 'col-old',
+      name: 'Historia vieja',
+      description: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    const newCollection: CollectionRow = {
+      id: 'col-new',
+      name: 'Historia nueva',
+      description: null,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    }
+    const findAll = vi
+      .fn()
+      .mockReturnValueOnce(firstLoad.promise)
+      .mockReturnValueOnce(secondLoad.promise)
+
+    storeRef.current = {
+      collections: {
+        findAll,
+        findAllNonEmpty: vi.fn(),
+        countItems: vi.fn().mockResolvedValue(0),
+        create: vi.fn().mockResolvedValue(newCollection),
+        delete: vi.fn(),
+      },
+    }
+
+    render(CollectionsView)
+
+    await fireEvent.click(screen.getByRole('button', { name: '+ Nueva colección' }))
+    await fireEvent.input(screen.getByPlaceholderText('Nombre de la colección'), {
+      target: { value: 'Historia nueva' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Crear colección' }))
+
+    secondLoad.resolve([newCollection])
+
+    expect(await screen.findByText('Historia nueva')).toBeInTheDocument()
+
+    firstLoad.resolve([oldCollection])
+
+    await waitFor(() => {
+      expect(screen.getByText('Historia nueva')).toBeInTheDocument()
+      expect(screen.queryByText('Historia vieja')).not.toBeInTheDocument()
     })
   })
 })

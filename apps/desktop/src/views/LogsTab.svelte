@@ -14,13 +14,14 @@
   let loading = $state(false)
   let feedback = $state<{ tone: 'success' | 'error'; text: string } | null>(null)
   let unlisten: (() => void) | null = null
+  const LOG_WINDOW_SIZE = 20
 
   let renderedLogs = $derived(entries.map(formatLogEntry).join('\n'))
 
   onMount(async () => {
     await refreshLogs()
     unlisten = await onLogEntry((entry) => {
-      entries = [...entries, entry].slice(-2000)
+      entries = [...entries, entry].slice(-LOG_WINDOW_SIZE)
     })
   })
 
@@ -32,7 +33,7 @@
     loading = true
     feedback = null
     try {
-      entries = await getLogs()
+      entries = (await getLogs()).slice(-LOG_WINDOW_SIZE)
     } catch (error) {
       feedback = { tone: 'error', text: `No se pudieron cargar los logs: ${String(error)}` }
     } finally {
@@ -102,7 +103,9 @@
   {/if}
 
   <div class="logs-tab__body" aria-live="polite">
-    {#if entries.length === 0}
+    {#if loading && entries.length === 0}
+      <p class="logs-tab__empty">Cargando logs…</p>
+    {:else if entries.length === 0}
       <p class="logs-tab__empty">Todavía no hay logs capturados en esta sesión.</p>
     {:else}
       {#each entries as entry (entry.id)}
@@ -129,7 +132,7 @@
     justify-content: space-between;
     gap: var(--space-4);
     align-items: flex-start;
-    padding: var(--space-5);
+    padding: var(--space-4);
     border: 1px solid color-mix(in srgb, var(--color-hairline) 78%, transparent);
     border-radius: var(--radius-lg);
     background: color-mix(in srgb, var(--color-surface-glass) 76%, transparent);

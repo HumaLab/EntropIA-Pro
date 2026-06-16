@@ -1,9 +1,10 @@
 <script lang="ts">
   import { onDestroy, onMount, tick } from 'svelte'
-  import { Button } from '@entropia/ui'
+  import { ActionIcon, Button } from '@entropia/ui'
   import {
     describeDbBrowserTable,
     listDbBrowserTables,
+    queryAllDbBrowserRowsInChunks,
     queryDbBrowserRows,
     type DbBrowserColumn,
     type DbBrowserSortDirection,
@@ -60,7 +61,7 @@
   const totalPages = $derived(Math.max(1, Math.ceil(total / pageSize) || 1))
   const fromRow = $derived(total === 0 ? 0 : (page - 1) * pageSize + 1)
   const toRow = $derived(total === 0 ? 0 : Math.min(total, page * pageSize))
-  const activeSortLabel = $derived(sortDirection === 'asc' ? `${sortColumn} ▲` : `${sortColumn} ▼`)
+  const activeSortIcon = $derived(sortDirection === 'asc' ? 'chevron-up' : 'chevron-down')
   onMount(() => {
     loadTables()
   })
@@ -328,10 +329,8 @@
     exportingTable = true
     error = null
     try {
-      const exportResponse = await queryDbBrowserRows({
+      const exportResponse = await queryAllDbBrowserRowsInChunks({
         table: selectedTable,
-        page: 1,
-        pageSize: Math.max(total, rows.length, 1),
         sortColumn,
         sortDirection,
         search: searchTerm || undefined,
@@ -470,7 +469,10 @@
           >
         {/if}
         {#if sortColumn}
-          <span>{activeSortLabel}</span>
+          <span class="db-browser-sort-summary">
+            <span>{sortColumn}</span>
+            <ActionIcon name={activeSortIcon} size={14} />
+          </span>
         {/if}
         <button
           class="db-browser-export-button"
@@ -480,22 +482,7 @@
           aria-label={translate('dbBrowser.exportTable')}
           title={translate('dbBrowser.exportTable')}
         >
-          <svg
-            width="16"
-            height="16"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            stroke-width="2"
-            stroke-linecap="round"
-            stroke-linejoin="round"
-            aria-hidden="true"
-            focusable="false"
-          >
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-            <path d="M7 10l5 5 5-5" />
-            <path d="M12 15V3" />
-          </svg>
+          <ActionIcon name="download" size={16} />
           <span>{$currentLocale && translate('dbBrowser.exportTable')}</span>
         </button>
         <div class="db-browser-page-size">
@@ -541,7 +528,7 @@
                       <span>{column.name}</span>
                       {#if sortColumn === column.name}
                         <span class="db-browser-table__sort-indicator">
-                          {sortDirection === 'asc' ? '▲' : '▼'}
+                          <ActionIcon name={activeSortIcon} size={14} />
                         </span>
                       {/if}
                     </button>
@@ -550,7 +537,7 @@
               </tr>
             </thead>
             <tbody>
-              {#each rows as row}
+              {#each rows as row, rowIndex (rowIndex)}
                 <tr>
                   {#each columns as column (column.name)}
                     {@const cell = resolveCellContent(row[column.name])}
@@ -573,23 +560,7 @@
                                 title={copyCellLabel}
                                 onclick={() => copyCellValue(cell.rawText)}
                               >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  aria-hidden="true"
-                                  focusable="false"
-                                >
-                                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                                  <path
-                                    d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
-                                  />
-                                </svg>
+                                <ActionIcon name="copy" size={14} />
                               </button>
                             </span>
                           {/if}
@@ -608,23 +579,7 @@
                                     event.currentTarget as HTMLElement
                                   )}
                               >
-                                <svg
-                                  width="14"
-                                  height="14"
-                                  viewBox="0 0 24 24"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="2"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  aria-hidden="true"
-                                  focusable="false"
-                                >
-                                  <path d="M15 3h6v6" />
-                                  <path d="M9 21H3v-6" />
-                                  <path d="M21 3l-7 7" />
-                                  <path d="M3 21l7-7" />
-                                </svg>
+                                <ActionIcon name="expand" size={14} />
                               </button>
                             </span>
                           {/if}
@@ -666,7 +621,6 @@
     {@const copyExpandedLabel = translate('dbBrowser.copyExpandedAria', {
       column: activeExpandedCell.columnName,
     })}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="modal-overlay" onclick={closeExpandedCell} role="presentation">
       <div
         class="modal db-browser-modal"
@@ -699,21 +653,7 @@
                 title={copyExpandedLabel}
                 onclick={() => copyCellValue(activeExpandedCell.text)}
               >
-                <svg
-                  width="14"
-                  height="14"
-                  viewBox="0 0 24 24"
-                  fill="none"
-                  stroke="currentColor"
-                  stroke-width="2"
-                  stroke-linecap="round"
-                  stroke-linejoin="round"
-                  aria-hidden="true"
-                  focusable="false"
-                >
-                  <rect x="9" y="9" width="13" height="13" rx="2" ry="2" />
-                  <path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
-                </svg>
+                <ActionIcon name="copy" size={14} />
               </button>
             </span>
             <Button variant="secondary" onclick={closeExpandedCell}>
@@ -734,13 +674,13 @@
   }
 
   .db-browser-view__header {
-    align-items: stretch;
+    align-items: flex-start;
   }
 
   .db-browser-toolbar {
     display: flex;
     flex: 1;
-    gap: var(--space-4);
+    gap: var(--space-3);
     justify-content: flex-end;
   }
 
@@ -763,7 +703,7 @@
   .db-browser-toolbar__field label {
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
-    letter-spacing: 0.06em;
+    letter-spacing: 0.075em;
     text-transform: uppercase;
     color: var(--color-text-secondary);
   }
@@ -772,10 +712,14 @@
     min-height: var(--control-height-md);
     padding: 0 var(--space-3);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     background: var(--color-surface-sunken);
     color: var(--color-text-primary);
     font-size: var(--font-size-sm);
+    transition:
+      border-color var(--transition-smooth),
+      box-shadow var(--transition-smooth),
+      background-color var(--transition-smooth);
   }
 
   .db-browser-toolbar__input:focus {
@@ -797,11 +741,9 @@
     gap: var(--space-4);
     padding: var(--space-4);
     border: 1px solid var(--color-border-subtle);
-    border-radius: var(--radius-lg);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.018), transparent 55%),
-      var(--color-surface-glass);
-    box-shadow: var(--shadow-sm);
+    border-radius: var(--radius-surface);
+    background: var(--color-surface-glass);
+    box-shadow: var(--shadow-surface);
   }
 
   .db-browser-card__meta {
@@ -811,6 +753,12 @@
     align-items: center;
     font-size: var(--font-size-xs);
     color: var(--color-text-secondary);
+  }
+
+  .db-browser-sort-summary {
+    display: inline-flex;
+    align-items: center;
+    gap: var(--space-1);
   }
 
   .db-browser-page-size {
@@ -827,7 +775,7 @@
     min-height: var(--control-height-sm);
     padding: 0 var(--space-3);
     border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     background: var(--color-surface-raised);
     color: var(--color-text-primary);
     font-size: var(--font-size-xs);
@@ -839,7 +787,7 @@
       background-color var(--transition-smooth);
   }
 
-  .db-browser-export-button svg {
+  .db-browser-export-button :global(svg) {
     flex-shrink: 0;
   }
 
@@ -851,15 +799,19 @@
     background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-raised));
   }
 
+  .db-browser-export-button:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
+
   .db-browser-export-button:disabled {
     cursor: not-allowed;
-    opacity: 0.55;
+    opacity: 0.48;
   }
 
   .db-browser-page-size label {
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
-    letter-spacing: 0.06em;
+    letter-spacing: 0.075em;
     text-transform: uppercase;
     color: var(--color-text-secondary);
   }
@@ -912,9 +864,15 @@
     cursor: pointer;
   }
 
+  .db-browser-table__sort:focus-visible {
+    outline: none;
+    border-radius: var(--radius-xs);
+    box-shadow: var(--focus-ring);
+  }
+
   .db-browser-table__sort-indicator {
+    display: inline-flex;
     color: var(--color-accent);
-    font-size: 10px;
   }
 
   .db-browser-table__cell {
@@ -961,7 +919,7 @@
     background: var(--color-surface-elevated);
     box-shadow: var(--shadow-md);
     color: var(--color-text-primary);
-    font-size: 11px;
+    font-size: var(--font-size-2xs);
     line-height: 1.35;
     text-align: center;
     white-space: normal;
@@ -994,7 +952,7 @@
       background-color var(--transition-smooth);
   }
 
-  .db-browser-table__cell-action svg {
+  .db-browser-table__cell-action :global(svg) {
     flex-shrink: 0;
   }
 
@@ -1006,12 +964,39 @@
     background: color-mix(in srgb, var(--color-accent) 10%, var(--color-surface-raised));
   }
 
+  .db-browser-table__cell-action:focus-visible {
+    box-shadow: var(--focus-ring);
+  }
+
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: var(--space-4);
+    background-color: var(--surface-overlay);
+    z-index: 1000;
+  }
+
+  .modal-title {
+    margin: 0;
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+    color: var(--color-text-primary);
+  }
+
   .db-browser-modal {
     width: min(900px, calc(100vw - 2rem));
     max-height: min(80vh, 720px);
     display: flex;
     flex-direction: column;
     gap: var(--space-4);
+    padding: var(--space-6);
+    background: var(--color-surface-glass);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-dialog);
+    box-shadow: var(--shadow-lg);
   }
 
   .db-browser-modal__header {

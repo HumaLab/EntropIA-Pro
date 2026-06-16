@@ -8,6 +8,7 @@ import DbBrowserView from './DbBrowserView.svelte'
 const {
   listTablesMock,
   describeTableMock,
+  queryAllRowsMock,
   queryRowsMock,
   clipboardWriteTextMock,
   exportCollectionToJsonMock,
@@ -18,6 +19,7 @@ const {
   return {
     listTablesMock: vi.fn(),
     describeTableMock: vi.fn(),
+    queryAllRowsMock: vi.fn(),
     queryRowsMock: vi.fn(),
     clipboardWriteTextMock: vi.fn<(_: string) => Promise<void>>(),
     exportCollectionToJsonMock: vi.fn(),
@@ -28,6 +30,7 @@ const {
 vi.mock('$lib/db-browser', () => ({
   listDbBrowserTables: listTablesMock,
   describeDbBrowserTable: describeTableMock,
+  queryAllDbBrowserRowsInChunks: queryAllRowsMock,
   queryDbBrowserRows: queryRowsMock,
 }))
 
@@ -66,6 +69,13 @@ describe('DbBrowserView', () => {
       table: 'documents',
       page: 1,
       pageSize: 25,
+      total: 1,
+      rows: [{ id: 'row-1', body: jsonCellValue }],
+    })
+    queryAllRowsMock.mockReset().mockResolvedValue({
+      table: 'documents',
+      page: 1,
+      pageSize: 1000,
       total: 1,
       rows: [{ id: 'row-1', body: jsonCellValue }],
     })
@@ -118,12 +128,15 @@ describe('DbBrowserView', () => {
   })
 
   it('renders a visible table export button and exports the full table query', async () => {
-    queryRowsMock.mockResolvedValue({
+    queryAllRowsMock.mockResolvedValue({
       table: 'documents',
       page: 1,
-      pageSize: 1,
-      total: 1,
-      rows: [{ id: 'row-1', body: jsonCellValue }],
+      pageSize: 1000,
+      total: 2,
+      rows: [
+        { id: 'row-1', body: jsonCellValue },
+        { id: 'row-2', body: 'plain text' },
+      ],
     })
 
     await renderDbBrowserView()
@@ -133,19 +146,21 @@ describe('DbBrowserView', () => {
     await waitFor(() => {
       expect(exportCollectionToJsonMock).toHaveBeenCalledTimes(1)
     })
-    expect(queryRowsMock).toHaveBeenLastCalledWith({
+    expect(queryAllRowsMock).toHaveBeenCalledWith({
       table: 'documents',
-      page: 1,
-      pageSize: 1,
       sortColumn: '',
       sortDirection: 'asc',
       search: undefined,
     })
+    expect(queryRowsMock).toHaveBeenCalledTimes(1)
     const [payload] = exportCollectionToJsonMock.mock.calls[0] ?? []
     expect(payload).toMatchObject({
       table: 'documents',
       scope: 'full_table',
-      rows: [{ id: 'row-1', body: jsonCellValue }],
+      rows: [
+        { id: 'row-1', body: jsonCellValue },
+        { id: 'row-2', body: 'plain text' },
+      ],
     })
   })
 })

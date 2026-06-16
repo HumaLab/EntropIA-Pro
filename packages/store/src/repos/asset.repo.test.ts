@@ -150,8 +150,8 @@ describe('AssetRepo', () => {
 
     it('returns assets for a specific item', async () => {
       const assets = [
-        { id: 'a1', itemId: 'item-1', path: '/a.pdf', type: 'pdf', size: 100, createdAt: 10 },
-        { id: 'a2', itemId: 'item-1', path: '/b.jpg', type: 'image', size: 200, createdAt: 20 },
+        { id: 'a1', itemId: 'item-1', path: '/a.pdf', type: 'pdf', sortIndex: 0, size: 100, createdAt: 10 },
+        { id: 'a2', itemId: 'item-1', path: '/b.jpg', type: 'image', sortIndex: 0, size: 200, createdAt: 20 },
       ]
 
       const selectResult = createChainMock(assets)
@@ -160,8 +160,38 @@ describe('AssetRepo', () => {
       const result = await repo.findByItem('item-1')
       expect(result).toEqual(assets)
       expect(result).toHaveLength(2)
+      expect(selectResult.chain['orderBy']).toHaveBeenCalledOnce()
       expect(result[0]!.type).toBe('pdf')
       expect(result[1]!.type).toBe('image')
+    })
+
+    it('keeps A-Z path ordering for multi-asset items without page sort indexes', async () => {
+      const unorderedAssets = [
+        { id: 'b', itemId: 'item-1', path: '/Zeta.jpg', type: 'image', sortIndex: 0, size: 100, createdAt: 10 },
+        { id: 'a', itemId: 'item-1', path: '/alpha.jpg', type: 'image', sortIndex: 0, size: 100, createdAt: 20 },
+      ]
+
+      const selectResult = createChainMock(unorderedAssets)
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const result = await repo.findByItem('item-1')
+
+      expect(result.map((asset) => asset.path)).toEqual(['/alpha.jpg', '/Zeta.jpg'])
+    })
+
+    it('preserves original PDF page order for multi-page assets with sort indexes', async () => {
+      const lexicographicTrapAssets = [
+        { id: 'page-10', itemId: 'item-1', path: '/scan_page_10.png', type: 'image', sortIndex: 9, size: 100, createdAt: 10 },
+        { id: 'page-2', itemId: 'item-1', path: '/scan_page_2.png', type: 'image', sortIndex: 1, size: 100, createdAt: 20 },
+        { id: 'page-1', itemId: 'item-1', path: '/scan_page_1.png', type: 'image', sortIndex: 0, size: 100, createdAt: 30 },
+      ]
+
+      const selectResult = createChainMock(lexicographicTrapAssets)
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const result = await repo.findByItem('item-1')
+
+      expect(result.map((asset) => asset.id)).toEqual(['page-1', 'page-2', 'page-10'])
     })
   })
 
@@ -253,11 +283,91 @@ describe('AssetRepo', () => {
       expect(batchSql).toContain('BEGIN;')
       expect(batchSql).toContain('DELETE FROM extractions')
       expect(batchSql).toContain('DELETE FROM layouts')
+      expect(batchSql).toContain('DELETE FROM transcriptions')
       expect(batchSql).toContain('DELETE FROM llm_results')
       expect(batchSql).toContain('DELETE FROM annotations')
+      expect(batchSql).toContain('DELETE FROM entities')
+      expect(batchSql).toContain('DELETE FROM triples')
+      expect(batchSql).toContain('DELETE FROM vec_assets')
       expect(batchSql).toContain('DELETE FROM assets')
       expect(batchSql).toContain('COMMIT;')
       expect(batchSql).toContain('asset-1')
+    })
+
+    it('removes only deleted asset scoped derived data', async () => {
+      const asset = {
+        id: 'asset-1',
+        itemId: 'item-1',
+        path: '/app-data/assets/coll-1/item-1/asset-1.pdf',
+        type: 'pdf',
+        size: 1024,
+        createdAt: 100,
+      }
+      const otherAsset = {
+        id: 'asset-2',
+        itemId: 'item-1',
+        path: '/app-data/assets/coll-1/item-1/asset-2.pdf',
+        type: 'pdf',
+        size: 2048,
+        createdAt: 101,
+      }
+      const itemLevelEntity = { id: 'entity-item', item_id: 'item-1', asset_id: null }
+      const itemLevelTriple = { id: 'triple-item', item_id: 'item-1', asset_id: null }
+      const tables = {
+        assets: [asset, otherAsset],
+        extractions: [{ id: 'extraction-1', asset_id: 'asset-1' }, { id: 'extraction-2', asset_id: 'asset-2' }],
+        layouts: [{ id: 'layout-1', asset_id: 'asset-1' }, { id: 'layout-2', asset_id: 'asset-2' }],
+        transcriptions: [{ id: 'transcription-1', asset_id: 'asset-1' }, { id: 'transcription-2', asset_id: 'asset-2' }],
+        llm_results: [
+          { id: 'llm-1', target_id: 'asset-1', target_type: 'asset' },
+          { id: 'llm-2', target_id: 'asset-2', target_type: 'asset' },
+          { id: 'llm-item', target_id: 'item-1', target_type: 'item' },
+        ],
+        annotations: [{ id: 'annotation-1', asset_id: 'asset-1' }, { id: 'annotation-2', asset_id: 'asset-2' }],
+        entities: [{ id: 'entity-1', asset_id: 'asset-1' }, { id: 'entity-2', asset_id: 'asset-2' }, itemLevelEntity],
+        triples: [{ id: 'triple-1', asset_id: 'asset-1' }, { id: 'triple-2', asset_id: 'asset-2' }, itemLevelTriple],
+        vec_assets: [{ asset_id: 'asset-1' }, { asset_id: 'asset-2' }],
+      }
+
+      const selectResult = createChainMock([asset])
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const rawClient = {
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 1 }),
+        executeBatch: vi.fn().mockImplementation(async (sql: string) => {
+          expect(sql).toContain('BEGIN')
+          expect(sql).toContain('COMMIT')
+          tables.extractions = tables.extractions.filter((row) => row.asset_id !== 'asset-1')
+          tables.layouts = tables.layouts.filter((row) => row.asset_id !== 'asset-1')
+          tables.transcriptions = tables.transcriptions.filter((row) => row.asset_id !== 'asset-1')
+          tables.llm_results = tables.llm_results.filter(
+            (row) => !(row.target_id === 'asset-1' && (row.target_type === 'asset' || row.target_type === 'unknown'))
+          )
+          tables.annotations = tables.annotations.filter((row) => row.asset_id !== 'asset-1')
+          tables.entities = tables.entities.filter((row) => row.asset_id !== 'asset-1')
+          tables.triples = tables.triples.filter((row) => row.asset_id !== 'asset-1')
+          tables.vec_assets = tables.vec_assets.filter((row) => row.asset_id !== 'asset-1')
+          tables.assets = tables.assets.filter((row) => row.id !== 'asset-1')
+        }),
+        select: vi.fn().mockResolvedValue([asset]),
+      } as unknown as DbClient
+      const repoWithRaw = new AssetRepo(db.db, rawClient)
+
+      const result = await repoWithRaw.deleteWithCascade('asset-1')
+
+      expect(result).toEqual(asset)
+      expect(tables.assets).toEqual([otherAsset])
+      expect(tables.extractions).toEqual([{ id: 'extraction-2', asset_id: 'asset-2' }])
+      expect(tables.layouts).toEqual([{ id: 'layout-2', asset_id: 'asset-2' }])
+      expect(tables.transcriptions).toEqual([{ id: 'transcription-2', asset_id: 'asset-2' }])
+      expect(tables.annotations).toEqual([{ id: 'annotation-2', asset_id: 'asset-2' }])
+      expect(tables.entities).toEqual([{ id: 'entity-2', asset_id: 'asset-2' }, itemLevelEntity])
+      expect(tables.triples).toEqual([{ id: 'triple-2', asset_id: 'asset-2' }, itemLevelTriple])
+      expect(tables.vec_assets).toEqual([{ asset_id: 'asset-2' }])
+      expect(tables.llm_results).toEqual([
+        { id: 'llm-2', target_id: 'asset-2', target_type: 'asset' },
+        { id: 'llm-item', target_id: 'item-1', target_type: 'item' },
+      ])
     })
 
     it('escapes asset ids inside the transactional batch', async () => {

@@ -1,10 +1,11 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
+  import { getCurrentWindow } from '@tauri-apps/api/window'
   import { navigation } from '$lib/navigation'
   import { getStore } from '$lib/db'
   import { locale, t } from '$lib/i18n'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
-  import { Button } from '@entropia/ui'
+  import { ActionIcon, Button, IconButton, StatusBadge } from '@entropia/ui'
   import type { Collection, Item } from '@entropia/store'
 
   let hasDepsWarning = $state(isCriticalMissing())
@@ -21,14 +22,19 @@
 
   let searchQuery = $state('')
   let searchResults = $state<SearchResult[]>([])
+  let searchError = $state('')
   let showResults = $state(false)
   let searching = $state(false)
   let previousItem = $state<Item | null>(null)
   let nextItem = $state<Item | null>(null)
   let theme = $state<AppTheme>('dark')
   let siblingRequestId = 0
+  let searchRequestId = 0
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let searchInputEl: HTMLInputElement | undefined = $state()
+  let searchContainerEl: HTMLDivElement | undefined = $state()
+  let activeResultIndex = $state(-1)
+  const searchListboxId = 'topbar-global-search-listbox'
   const currentLocale = locale
   const translate = (key: string, params?: Record<string, string | number>) =>
     t(key as never, params)
@@ -39,6 +45,39 @@
     light: 'Claro',
   }
   const themeToggleLabel = $derived(themeLabels[theme])
+  const hasResultOptions = $derived(!searching && !searchError && searchResults.length > 0)
+  const activeOptionId = $derived(
+    showResults && hasResultOptions && activeResultIndex >= 0
+      ? `${searchListboxId}-option-${activeResultIndex}`
+      : undefined,
+  )
+  const previousDocumentLabel = $derived($currentLocale ? t('topbar.previousDocument') : 'Documento anterior')
+  const nextDocumentLabel = $derived($currentLocale ? t('topbar.nextDocument') : 'Documento siguiente')
+  const dbBrowserTitle = $derived($currentLocale ? translate('topbar.dbBrowserTitle') : 'Base de datos')
+  const dbBrowserAria = $derived($currentLocale ? translate('topbar.dbBrowserAria') : 'Abrir navegador de base de datos')
+  const ragChatTitle = $derived($currentLocale ? translate('topbar.ragChatTitle') : 'Chat de investigación')
+  const ragChatAria = $derived($currentLocale ? translate('topbar.ragChatAria') : 'Abrir chat de investigación')
+  const settingsTitle = $derived(
+    hasDepsWarning
+      ? 'Dependencias de IA pendientes - click para configurar'
+      : ($currentLocale ? t('topbar.settingsTitle') : 'Configuración'),
+  )
+  const settingsAria = $derived(
+    hasDepsWarning
+      ? 'Dependencias de IA pendientes'
+      : ($currentLocale ? t('topbar.settingsAria') : 'Abrir configuración'),
+  )
+  function minimizeWindow() {
+    void getCurrentWindow().minimize()
+  }
+
+  function toggleMaximizeWindow() {
+    void getCurrentWindow().toggleMaximize()
+  }
+
+  function closeWindow() {
+    void getCurrentWindow().close()
+  }
 
   function readPersistedTheme(): AppTheme {
     try {
@@ -128,17 +167,25 @@
     void loadSiblingItems()
   })
 
-  async function performSearch(query: string) {
+  async function performSearch(query: string, requestId: number) {
+    const isCurrentRequest = () => requestId === searchRequestId
+
+    if (!isCurrentRequest()) return
+
     if (!query.trim()) {
       searchResults = []
+      searchError = ''
       showResults = false
       return
     }
 
     searching = true
+    searchError = ''
     try {
       const store = getStore()
       const matchedItems = await store.items.searchGlobal(query, 20)
+      if (!isCurrentRequest()) return
+
       const results: SearchResult[] = []
 
       // Cache collections to avoid repeated lookups
@@ -147,6 +194,7 @@
         let collection = collectionCache.get(item.collectionId)
         if (!collection) {
           const found = await store.collections.findById(item.collectionId)
+          if (!isCurrentRequest()) return
           if (!found) continue
           collection = found
           collectionCache.set(item.collectionId, collection)
@@ -155,12 +203,18 @@
       }
 
       searchResults = results
+      searchError = ''
+      activeResultIndex = -1
       showResults = true
     } catch (e) {
+      if (!isCurrentRequest()) return
       console.error('[Search] error:', e)
       searchResults = []
+      searchError = translate('topbar.searchError')
+      activeResultIndex = -1
+      showResults = true
     } finally {
-      searching = false
+      if (isCurrentRequest()) searching = false
     }
   }
 
@@ -168,24 +222,30 @@
     if (debounceTimer) clearTimeout(debounceTimer)
   }
 
-  function handleSearchValueChange(query: string, e: Event) {
+  function handleSearchValueChange(query: string, _e: Event) {
     searchQuery = query
     handleInput()
+    const requestId = ++searchRequestId
 
     if (!searchQuery.trim()) {
       searchResults = []
+      searchError = ''
+      activeResultIndex = -1
       showResults = false
       return
     }
 
     debounceTimer = setTimeout(() => {
-      performSearch(searchQuery)
+      performSearch(searchQuery, requestId)
     }, 300)
   }
 
   function handleClear() {
+    searchRequestId += 1
     searchQuery = ''
     searchResults = []
+    searchError = ''
+    activeResultIndex = -1
     showResults = false
     if (debounceTimer) clearTimeout(debounceTimer)
   }
@@ -210,17 +270,40 @@
     if (e.key === 'Escape') {
       handleClear()
       searchInputEl?.blur()
+      return
+    }
+
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!showResults || searchResults.length === 0) return
+      e.preventDefault()
+      const lastIndex = searchResults.length - 1
+      if (e.key === 'ArrowDown') {
+        activeResultIndex = activeResultIndex >= lastIndex ? 0 : activeResultIndex + 1
+      } else {
+        activeResultIndex = activeResultIndex <= 0 ? lastIndex : activeResultIndex - 1
+      }
+      return
+    }
+
+    // keyCode 229 cubre WKWebView, donde isComposing puede no reportarse durante IME.
+    if (e.key === 'Enter' && !e.isComposing && e.keyCode !== 229) {
+      if (!showResults) return
+      const activeResult = searchResults[activeResultIndex]
+      if (!activeResult) return
+      e.preventDefault()
+      handleResultClick(activeResult)
     }
   }
 
-  function handleBlur() {
-    setTimeout(() => {
-      showResults = false
-    }, 200)
+  function handleFocusOut(event: FocusEvent) {
+    const nextFocused = event.relatedTarget
+    if (nextFocused instanceof Node && searchContainerEl?.contains(nextFocused)) return
+    showResults = false
+    activeResultIndex = -1
   }
 
   function handleFocus() {
-    if (searchResults.length > 0) {
+    if (searchResults.length > 0 || searchError) {
       showResults = true
     }
   }
@@ -233,17 +316,19 @@
         <Button variant="ghost" size="sm" onclick={() => navigation.back()}
           >{$currentLocale && t('topbar.back')}</Button
         >
+      {:else}
+        <span class="topbar__app-title" data-tauri-drag-region>EntropIA Pro</span>
       {/if}
     </div>
-    <nav class="breadcrumb" aria-label={$currentLocale && t('topbar.breadcrumb')}>
-      {#each $navigation.breadcrumb as crumb, i}
+    <nav class="breadcrumb" aria-label={$currentLocale && t('topbar.breadcrumb')} data-tauri-drag-region>
+      {#each $navigation.breadcrumb as crumb, i (i)}
         {#if i > 0}<span class="sep">/</span>{/if}
         {#if i === $navigation.breadcrumb.length - 1}
-          <span class="crumb crumb--current" class:last={i === $navigation.breadcrumb.length - 1}>
-            <span class="crumb__label">{crumb}</span>
+          <span class="crumb crumb--current" class:last={i === $navigation.breadcrumb.length - 1} data-tauri-drag-region>
+            <span class="crumb__label" data-tauri-drag-region>{crumb}</span>
           </span>
         {:else}
-          <span class="crumb">{crumb}</span>
+          <span class="crumb" data-tauri-drag-region>{crumb}</span>
         {/if}
       {/each}
     </nav>
@@ -252,36 +337,43 @@
   <div class="topbar__center" class:topbar__center--inactive={$navigation.current.name !== 'item'}>
     {#if $navigation.current.name === 'item'}
       <span class="crumb-nav" aria-label={$currentLocale && t('topbar.breadcrumb')}>
-        <button
+        <IconButton
           class="crumb-nav__button"
-          type="button"
-          aria-label={$currentLocale && t('topbar.previousDocument')}
-          title={$currentLocale && t('topbar.previousDocument')}
+          size="sm"
+          variant="ghost"
+          label={previousDocumentLabel}
+          title={previousDocumentLabel}
           disabled={!previousItem}
           onclick={() => navigateToSibling(previousItem)}
         >
-          &lt;
-        </button>
+          <ActionIcon name="chevron-left" size={16} />
+        </IconButton>
         <span class="crumb-nav__separator" aria-hidden="true">|</span>
-        <button
+        <IconButton
           class="crumb-nav__button"
-          type="button"
-          aria-label={$currentLocale && t('topbar.nextDocument')}
-          title={$currentLocale && t('topbar.nextDocument')}
+          size="sm"
+          variant="ghost"
+          label={nextDocumentLabel}
+          title={nextDocumentLabel}
           disabled={!nextItem}
           onclick={() => navigateToSibling(nextItem)}
         >
-          &gt;
-        </button>
+          <ActionIcon name="chevron-right" size={16} />
+        </IconButton>
       </span>
     {/if}
   </div>
 
-  <div class="global-search">
+  <div class="global-search" bind:this={searchContainerEl} onfocusout={handleFocusOut}>
     <div class="global-search__input-wrap">
       <input
         class="global-search__input"
         type="search"
+        role="combobox"
+        aria-expanded={showResults}
+        aria-controls={searchListboxId}
+        aria-autocomplete="list"
+        aria-activedescendant={activeOptionId}
         bind:value={searchQuery}
         bind:this={searchInputEl}
         placeholder={$currentLocale && translate('topbar.searchPlaceholder')}
@@ -289,40 +381,51 @@
         oninput={(event: Event) =>
           handleSearchValueChange((event.currentTarget as HTMLInputElement).value, event)}
         onkeydown={handleKeydown}
-        onblur={handleBlur}
         onfocus={handleFocus}
       />
 
       {#if searchQuery}
-        <button
+        <IconButton
           class="global-search__clear"
-          type="button"
-          aria-label={$currentLocale && translate('topbar.searchClear')}
-          title={$currentLocale && translate('topbar.searchClear')}
+          size="sm"
+          variant="ghost"
+          label={$currentLocale ? translate('topbar.searchClear') : 'Limpiar búsqueda'}
+          title={$currentLocale ? translate('topbar.searchClear') : 'Limpiar búsqueda'}
           onclick={handleClear}
         >
-          <svg width="14" height="14" viewBox="0 0 20 20" fill="none" stroke="currentColor">
-            <path d="M5 5l10 10M15 5L5 15" stroke-width="1.8" stroke-linecap="round" />
-          </svg>
-        </button>
+          <ActionIcon name="close" size={14} />
+        </IconButton>
       {/if}
     </div>
 
     {#if showResults}
-      <div class="global-search__dropdown">
+      <div
+        class="global-search__dropdown"
+        id={searchListboxId}
+        role={hasResultOptions ? 'listbox' : 'status'}
+        aria-label={$currentLocale && translate('topbar.searchAria')}
+      >
         {#if searching}
           <div class="global-search__status">
             {$currentLocale && translate('topbar.searchSearching')}
+          </div>
+        {:else if searchError}
+          <div class="global-search__status" class:error={Boolean(searchError)}>
+            {searchError}
           </div>
         {:else if searchResults.length === 0}
           <div class="global-search__status">
             {$currentLocale && translate('topbar.searchNoResults', { query: searchQuery })}
           </div>
         {:else}
-          {#each searchResults as result (result.item.id)}
+          {#each searchResults as result, index (result.item.id)}
             <button
               class="global-search__result"
+              class:global-search__result--active={index === activeResultIndex}
               type="button"
+              role="option"
+              id={`${searchListboxId}-option-${index}`}
+              aria-selected={index === activeResultIndex}
               onclick={() => handleResultClick(result)}
             >
               <span class="global-search__result-title">{result.item.title}</span>
@@ -335,61 +438,97 @@
   </div>
 
   <div class="topbar__actions">
-    <button
+    {#if hasDepsWarning}
+      <StatusBadge
+        variant="warning"
+        size="sm"
+        class="topbar__deps-badge"
+        title="Dependencias de IA pendientes"
+      >IA</StatusBadge>
+    {/if}
+
+    <IconButton
       class="topbar__icon-btn"
-      type="button"
+      size="md"
+      variant="secondary"
+      label={dbBrowserAria}
       onclick={() => navigation.openRootSection({ name: 'db-browser' })}
-      title={$currentLocale && translate('topbar.dbBrowserTitle')}
-      aria-label={$currentLocale && translate('topbar.dbBrowserAria')}
+      title={dbBrowserTitle}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <ellipse cx="12" cy="5" rx="7" ry="3" stroke-width="1.8" />
-        <path d="M5 5v6c0 1.66 3.13 3 7 3s7-1.34 7-3V5" stroke-width="1.8" />
-        <path d="M5 11v6c0 1.66 3.13 3 7 3s7-1.34 7-3v-6" stroke-width="1.8" />
-      </svg>
-    </button>
+      <ActionIcon name="database" size={16} />
+    </IconButton>
 
-    <button
+    <IconButton
       class="topbar__icon-btn"
-      type="button"
-      onclick={toggleTheme}
-      title={$currentLocale && themeToggleLabel}
-      aria-label={$currentLocale && themeToggleLabel}
-      aria-pressed={theme === 'dim'}
+      size="md"
+      variant="secondary"
+      label={ragChatAria}
+      onclick={() => navigation.openRootSection({ name: 'rag-chat' })}
+      title={ragChatTitle}
     >
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor">
-        <circle cx="12" cy="12" r="8" stroke-width="1.7" />
-        <path
-          d="M12 4a8 8 0 0 1 0 16c2.2-1.7 3.2-4.2 3.2-8S14.2 5.7 12 4z"
-          fill="currentColor"
-          opacity="0.42"
-          stroke="none"
-        />
-      </svg>
-    </button>
+      <ActionIcon name="message-circle" size={16} />
+    </IconButton>
 
-    <button
-      class="topbar__icon-btn topbar__icon-btn--settings"
-      type="button"
-      onclick={() => navigation.openRootSection({ name: 'settings' })}
-      title={hasDepsWarning
-        ? 'Dependencias de IA pendientes — click para configurar'
-        : ($currentLocale && t('topbar.settingsTitle'))}
-      aria-label={hasDepsWarning
-        ? 'Dependencias de IA pendientes'
-        : ($currentLocale && t('topbar.settingsAria'))}
+    <IconButton
+      class="topbar__icon-btn"
+      size="md"
+      variant="secondary"
+      label={themeToggleLabel}
+      active={theme === 'dim'}
+      onclick={toggleTheme}
+      title={themeToggleLabel}
     >
-      <svg width="16" height="16" viewBox="0 0 20 20" fill="currentColor">
-        <path
-          fill-rule="evenodd"
-          d="M11.49 3.17c-.38-1.56-2.6-1.56-2.98 0a1.532 1.532 0 01-2.286.948c-1.372-.836-2.942.734-2.106 2.106.54.886.061 2.042-.947 2.287-1.561.379-1.561 2.6 0 2.978a1.532 1.532 0 01.947 2.287c-.836 1.372.734 2.942 2.106 2.106a1.532 1.532 0 012.287.947c.379 1.561 2.6 1.561 2.978 0a1.533 1.533 0 012.287-.947c1.372.836 2.942-.734 2.106-2.106a1.533 1.533 0 01.947-2.287c1.561-.379 1.561-2.6 0-2.978a1.532 1.532 0 01-.947-2.287c.836-1.372-.734-2.942-2.106-2.106a1.532 1.532 0 01-2.287-.947zM10 13a3 3 0 100-6 3 3 0 000 6z"
-          clip-rule="evenodd"
-        />
-      </svg>
+      <ActionIcon name="moon" size={16} />
+    </IconButton>
+
+    <IconButton
+      class="topbar__icon-btn topbar__icon-btn--settings"
+      size="md"
+      variant="secondary"
+      label={settingsAria}
+      onclick={() => navigation.openRootSection({ name: 'settings' })}
+      title={settingsTitle}
+    >
+      <ActionIcon name="settings" size={16} />
       {#if hasDepsWarning}
         <span class="topbar__badge" aria-label="Dependencias pendientes"></span>
       {/if}
-    </button>
+    </IconButton>
+
+    <span class="topbar__window-controls" aria-label="Controles de ventana">
+      <IconButton
+        class="topbar__window-btn"
+        size="sm"
+        variant="ghost"
+        label="Minimizar ventana"
+        title="Minimizar ventana"
+        onclick={minimizeWindow}
+      >
+        <span class="topbar__window-glyph topbar__window-glyph--minimize" aria-hidden="true"></span>
+      </IconButton>
+
+      <IconButton
+        class="topbar__window-btn"
+        size="sm"
+        variant="ghost"
+        label="Maximizar o restaurar ventana"
+        title="Maximizar o restaurar ventana"
+        onclick={toggleMaximizeWindow}
+      >
+        <span class="topbar__window-glyph topbar__window-glyph--maximize" aria-hidden="true"></span>
+      </IconButton>
+
+      <IconButton
+        class="topbar__window-btn topbar__window-btn--close"
+        size="sm"
+        variant="ghost"
+        label="Cerrar ventana"
+        title="Cerrar ventana"
+        onclick={closeWindow}
+      >
+        <ActionIcon name="close" size={14} />
+      </IconButton>
+    </span>
   </div>
 </header>
 
@@ -401,15 +540,15 @@
     align-items: center;
     gap: var(--space-3);
     padding: var(--space-2) var(--space-4);
-    border-bottom: 1px solid var(--color-border-subtle);
-    background: var(--color-surface);
+    border-bottom: 1px solid var(--border-subtle);
+    background: var(--surface-toolbar);
     min-width: 0;
   }
 
   .topbar__leading {
     grid-area: leading;
     display: grid;
-    grid-template-columns: 88px minmax(0, 1fr);
+    grid-template-columns: minmax(140px, auto) minmax(0, 1fr);
     align-items: center;
     gap: var(--space-3);
     min-width: 0;
@@ -419,6 +558,17 @@
     display: flex;
     align-items: center;
     min-width: 0;
+    flex-shrink: 0;
+  }
+
+  .topbar__app-title {
+    min-width: 0;
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-2xs);
+    font-weight: var(--font-weight-semibold);
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    white-space: nowrap;
   }
 
   .topbar__center {
@@ -474,42 +624,21 @@
     color: var(--color-text-muted);
   }
 
-  .crumb-nav__button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    min-width: 20px;
-    height: 20px;
-    padding: 0;
-    border: none;
+  :global(.crumb-nav__button) {
+    width: 24px;
+    height: 24px;
     border-radius: var(--radius-sm);
-    background: transparent;
     color: inherit;
-    font-size: 11px;
+    font-size: var(--font-size-2xs);
     line-height: 1;
-    cursor: pointer;
-    transition:
-      color var(--transition-base),
-      background-color var(--transition-base);
   }
 
-  .crumb-nav__button:hover:not(:disabled) {
-    color: var(--color-text-primary);
-    background: color-mix(in srgb, var(--color-text-primary) 8%, transparent);
-  }
-
-  .crumb-nav__button:disabled {
-    opacity: 0.38;
-    cursor: default;
-  }
-
-  .crumb-nav__button:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
+  :global(.crumb-nav__button:disabled) {
+    opacity: 0.48;
   }
 
   .crumb-nav__separator {
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     opacity: 0.55;
   }
 
@@ -521,41 +650,64 @@
     flex-shrink: 0;
   }
 
-  .topbar__icon-btn {
-    display: flex;
+  .topbar__window-controls {
+    display: inline-flex;
     align-items: center;
-    justify-content: center;
-    width: var(--control-height-sm);
-    height: var(--control-height-sm);
-    padding: 0;
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
-    background: var(--color-surface-raised);
-    color: var(--color-text-secondary);
-    cursor: pointer;
-    transition:
-      color var(--transition-base),
-      background-color var(--transition-base),
-      border-color var(--transition-base),
-      box-shadow var(--transition-base);
-  }
-  .topbar__icon-btn:hover {
-    color: var(--color-text-primary);
-    background: var(--color-surface-elevated);
-    border-color: var(--color-border-strong);
-  }
-  .topbar__icon-btn[aria-pressed='true'] {
-    color: var(--color-accent-hover);
-    background: var(--color-accent-faint);
-    border-color: var(--color-border-strong);
-  }
-  .topbar__icon-btn:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
+    gap: var(--space-1);
+    margin-left: var(--space-1);
+    padding-left: var(--space-2);
+    border-left: 1px solid var(--border-subtle);
   }
 
-  .topbar__icon-btn--settings {
+  :global(.topbar__window-btn) {
+    width: var(--control-height-sm);
+    height: var(--control-height-sm);
+    border-radius: var(--radius-sm);
+    color: var(--color-text-secondary);
+  }
+
+  :global(.topbar__window-btn--close:hover:not(:disabled)) {
+    border-color: color-mix(in srgb, var(--color-danger) 24%, transparent);
+    background: var(--color-danger-soft);
+    color: var(--color-danger);
+  }
+
+  .topbar__window-glyph {
+    display: block;
+    width: 12px;
+    height: 12px;
     position: relative;
+  }
+
+  .topbar__window-glyph--minimize::before {
+    content: '';
+    position: absolute;
+    left: 1px;
+    right: 1px;
+    bottom: 3px;
+    height: 1.5px;
+    border-radius: var(--radius-xs);
+    background: currentColor;
+  }
+
+  .topbar__window-glyph--maximize {
+    border: 1.5px solid currentColor;
+    border-radius: 2px;
+  }
+
+  :global(.topbar__icon-btn) {
+    width: var(--control-height-sm);
+    height: var(--control-height-sm);
+    border-radius: var(--radius-control);
+  }
+
+  :global(.topbar__icon-btn--settings) {
+    position: relative;
+  }
+
+  :global(.topbar__deps-badge) {
+    min-height: 24px;
+    font-size: var(--font-size-2xs);
   }
 
   .topbar__badge {
@@ -566,14 +718,9 @@
     height: 7px;
     border-radius: 50%;
     background: var(--color-warning);
-    border: 1.5px solid var(--color-surface);
+    border: 1.5px solid var(--surface-toolbar);
     pointer-events: none;
-    animation: badge-pulse 2s ease-in-out 3;
-  }
-
-  @keyframes badge-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--color-warning) 30%, transparent); }
+    animation: none;
   }
 
   .global-search {
@@ -592,46 +739,36 @@
     width: 100%;
     min-height: var(--control-height-md);
     padding: 0 calc(var(--space-4) + 18px) 0 var(--space-3);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
-    background: var(--color-surface-sunken);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-input);
+    background: var(--surface-input);
     color: var(--color-text-primary);
     font-size: var(--font-size-sm);
+    transition:
+      border-color var(--transition-smooth),
+      box-shadow var(--transition-smooth),
+      background-color var(--transition-smooth);
   }
 
   .global-search__input:focus {
     outline: none;
     border-color: var(--color-accent);
     box-shadow: var(--focus-ring);
-    background: var(--color-surface);
+    background: var(--surface-panel);
   }
 
-  .global-search__clear {
+  :global(.global-search__clear) {
     position: absolute;
     top: 50%;
     right: var(--space-2);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
     width: 24px;
     height: 24px;
-    padding: 0;
-    border: none;
     border-radius: var(--radius-sm);
-    background: transparent;
-    color: var(--color-text-secondary);
-    cursor: pointer;
     transform: translateY(-50%);
   }
 
-  .global-search__clear:hover {
-    color: var(--color-text-primary);
-    background: var(--color-surface-raised);
-  }
-
-  .global-search__clear:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
+  :global(.global-search__clear:hover:not(:disabled)) {
+    transform: translateY(-50%);
   }
 
   .global-search__result:focus-visible {
@@ -645,12 +782,10 @@
     left: 0;
     right: 0;
     margin-top: var(--space-1);
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.045), rgba(255, 255, 255, 0.012)),
-      var(--color-surface-elevated);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-md);
-    box-shadow: var(--shadow-lg, 0 8px 24px rgba(0, 0, 0, 0.15));
+    background: color-mix(in srgb, var(--color-surface-elevated) 96%, var(--color-bg));
+    border: 1px solid var(--border-panel);
+    border-radius: var(--radius-dialog);
+    box-shadow: var(--shadow-lg);
     max-height: 320px;
     overflow-y: auto;
     z-index: 200;
@@ -661,6 +796,10 @@
     text-align: center;
     color: var(--color-text-secondary);
     font-size: var(--font-size-xs);
+  }
+
+  .error {
+    color: var(--color-danger);
   }
 
   .global-search__result {
@@ -680,11 +819,15 @@
   }
 
   .global-search__result:hover {
-    background-color: var(--color-surface-raised);
+     background-color: var(--surface-toolbar);
+  }
+
+  .global-search__result--active {
+    background-color: var(--surface-toolbar);
   }
 
   .global-search__result + .global-search__result {
-    border-top: 1px solid var(--color-border-subtle);
+    border-top: 1px solid var(--border-subtle);
   }
 
   .global-search__result-title {

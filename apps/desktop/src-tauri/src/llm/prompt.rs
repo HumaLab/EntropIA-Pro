@@ -6,6 +6,13 @@ fn gemma_prompt(instruction: &str) -> String {
     format!("<start_of_turn>user\n{instruction}<end_of_turn>\n<start_of_turn>model\n")
 }
 
+/// Public Gemma wrapper for callers (e.g. the RAG pipeline) that build a raw
+/// instruction string themselves and need to wrap it for the local Gemma
+/// engine. Identical formatting to the task-specific `*_prompt` helpers.
+pub fn gemma_wrap(instruction: &str) -> String {
+    gemma_prompt(instruction)
+}
+
 // ---------------------------------------------------------------------------
 // Raw instruction text (model-agnostic)
 // ---------------------------------------------------------------------------
@@ -147,6 +154,35 @@ Contexto:
 {context}
 
 Pregunta: {question}"#
+    )
+}
+
+/// Prompt del chat RAG: instrucciones de citación `[n]`, fragmentos numerados,
+/// historial (opcional) y la pregunta. Devuelve texto crudo (sin wrapping de
+/// modelo); el motor local lo envuelve con `gemma_wrap` y OpenRouter lo usa tal
+/// cual.
+pub fn raw_rag_answer(question: &str, context: &str, history: &str) -> String {
+    let history_block = if history.trim().is_empty() {
+        String::new()
+    } else {
+        format!("Conversación previa (solo para interpretar la pregunta, NO es una fuente):\n{history}\n\n")
+    };
+
+    format!(
+        r#"Sos un asistente de investigación académica especializado en fuentes históricas y de archivo.
+
+Reglas obligatorias:
+1. Respondé EXCLUSIVAMENTE con información presente en los fragmentos numerados provistos.
+2. Citá cada afirmación con el número del fragmento que la respalda usando el formato [n]. Toda afirmación debe llevar al menos una cita.
+3. Si la respuesta no se puede determinar a partir de los fragmentos, decilo explícitamente y NO inventes contenido.
+4. Distinguí con claridad lo que dicen las fuentes de lo que es inferencia tuya; si inferís algo, indicalo.
+5. Sé preciso con nombres, fechas, lugares y cifras: usá los términos exactos de los fragmentos.
+6. Respondé en el mismo idioma de la pregunta (por defecto, español).
+
+Fragmentos:
+{context}
+
+{history_block}Pregunta: {question}"#
     )
 }
 

@@ -40,8 +40,12 @@ urlencoding = "2"
 sha2 = "0.10"
 base64 = "0.22"
 ed25519-dalek = "2"
-# Embeddings use OpenRouter BGE-M3 via Rust reqwest. Transcription still uses
-# Python subprocess (scripts/transcribe.py) for faster-whisper isolation.
+# Audio preview decoding (prepare_audio_preview command): decode arbitrary
+# source audio to a PCM16 WAV the webview <audio> element can play.
+symphonia = { version = "0.5", features = ["all"] }
+hound = "3"
+# Embeddings use a bundled local ONNX model via Rust ort. Transcription still
+# uses Python subprocess (scripts/transcribe.py) for faster-whisper isolation.
 
 [target.'cfg(target_os = "linux")'.dependencies]
 webkit2gtk = "2.0"

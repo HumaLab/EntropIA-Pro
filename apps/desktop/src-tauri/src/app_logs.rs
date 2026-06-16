@@ -9,6 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 const MAX_LOG_ENTRIES: usize = 2_000;
+const DEFAULT_LOG_ENTRIES_WINDOW: usize = 20;
 const LOG_FILE_NAME: &str = "entropia.log";
 const MAX_MESSAGE_CHARS: usize = 4_000;
 
@@ -62,12 +63,13 @@ impl AppLogsState {
         }
     }
 
-    fn entries(&self) -> Vec<AppLogEntry> {
+    fn recent_entries(&self, limit: usize) -> Vec<AppLogEntry> {
         let inner = self
             .inner
             .lock()
             .unwrap_or_else(|poison| poison.into_inner());
-        inner.entries.iter().cloned().collect()
+        let start = inner.entries.len().saturating_sub(limit);
+        inner.entries.iter().skip(start).cloned().collect()
     }
 
     fn clear(&self) -> Result<(), String> {
@@ -151,7 +153,7 @@ impl AppLogsState {
 
 #[tauri::command]
 pub fn logs_get(state: State<'_, AppLogsState>) -> Result<Vec<AppLogEntry>, String> {
-    Ok(state.entries())
+    Ok(state.recent_entries(DEFAULT_LOG_ENTRIES_WINDOW))
 }
 
 #[tauri::command]
@@ -225,44 +227,98 @@ fn sanitize_field(value: String, max_chars: usize) -> String {
     redact_sensitive(cleaned)
 }
 
-fn redact_sensitive(value: String) -> String {
-    let sensitive_markers = [
-        "api_key",
-        "apikey",
-        "authorization",
-        "bearer ",
-        "token",
-        "password",
-        "secret",
-        "openrouter",
-        "assemblyai",
-    ];
+/// Markers whose PRESENCE on a line means the line carries (or is about to carry)
+/// a credential (DESIGN §8). `"bearer "` keeps its trailing space so it never
+/// matches mid-word noise, but the per-part scan below normalizes it.
+const SENSITIVE_MARKERS: &[&str] = &[
+    "api_key",
+    "apikey",
+    "authorization",
+    "bearer",
+    "token",
+    "password",
+    "secret",
+];
 
+/// Minimum length for a whitespace-delimited part to be treated as a high-entropy
+/// credential on a sensitive line (DESIGN §8 — base64url device tokens are 43/44
+/// chars). Kept conservative so ordinary words never trip it; the threshold only
+/// applies on lines that already contain a sensitive marker.
+const HIGH_ENTROPY_MIN_CHARS: usize = 32;
+
+/// True when `part` is itself a sensitive marker (so the part AFTER it is a
+/// candidate secret — e.g. `bearer <token>`, `token=<token>`, `password: <pw>`).
+fn part_is_marker(part: &str) -> bool {
+    let lower = part.to_ascii_lowercase();
+    // Strip trailing separators so `token:` / `password=` still match.
+    let trimmed = lower.trim_end_matches([':', '=', '"', '\'', ',']);
+    SENSITIVE_MARKERS.iter().any(|marker| {
+        let marker = marker.trim_end();
+        trimmed == marker || lower.contains(marker)
+    })
+}
+
+/// True when `part` looks like a high-entropy credential: long enough and made of
+/// the token alphabet (base64url / hex), with at least one alphabetic char so we
+/// never redact long numeric ids or timestamps (DESIGN §8). Punctuation that can
+/// wrap a value (quotes, separators) is trimmed before measuring.
+fn part_is_high_entropy(part: &str) -> bool {
+    let core = part.trim_matches(|c: char| matches!(c, '"' | '\'' | ',' | ';' | '=' | ':'));
+    if core.chars().count() < HIGH_ENTROPY_MIN_CHARS {
+        return false;
+    }
+    let all_token_chars = core
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '+' | '/' | '.' | '='));
+    all_token_chars && core.chars().any(|c| c.is_ascii_alphabetic())
+}
+
+/// Redacts credential material from a log line (DESIGN §8). On a line containing
+/// any sensitive marker, every part that (a) is itself a marker, (b) immediately
+/// FOLLOWS a marker part, or (c) is a high-entropy ≥32-char token is replaced
+/// with `[redactado]`. Lines without a marker are returned untouched so ordinary
+/// diagnostics stay readable. Tokens, Bearer headers and passwords never survive.
+fn redact_sensitive(value: String) -> String {
     let lower = value.to_ascii_lowercase();
-    if sensitive_markers
+    if !SENSITIVE_MARKERS
         .iter()
         .any(|marker| lower.contains(marker))
     {
-        // Keep the log useful without risking leaked credentials.
-        return value
-            .split_whitespace()
-            .map(|part| {
-                let part_lower = part.to_ascii_lowercase();
-                if sensitive_markers
-                    .iter()
-                    .any(|marker| part_lower.contains(marker))
-                    || part.len() > 48 && part.chars().any(|ch| ch.is_ascii_alphabetic())
-                {
-                    "[redactado]".to_string()
-                } else {
-                    part.to_string()
-                }
-            })
-            .collect::<Vec<_>>()
-            .join(" ");
+        return value;
     }
 
-    value
+    let parts: Vec<&str> = value.split_whitespace().collect();
+    let mut redacted = Vec::with_capacity(parts.len());
+    let mut prev_was_marker = false;
+    for part in parts {
+        let is_marker = part_is_marker(part);
+        // The part right AFTER a marker word is the value being labelled
+        // (`bearer <token>`, `password <pw>`) — redact it regardless of length.
+        if is_marker || prev_was_marker || part_is_high_entropy(part) {
+            redacted.push("[redactado]".to_string());
+        } else {
+            redacted.push(part.to_string());
+        }
+        // A marker that already carries its own value inline (`token=abc…`) does
+        // not turn the NEXT unrelated word into a secret, so only bare marker
+        // words ("bearer", "token:", "password") arm the follow-on redaction.
+        prev_was_marker = is_marker && !part_carries_inline_value(part);
+    }
+    redacted.join(" ")
+}
+
+/// True when a marker part already includes its value inline (`token=abc`,
+/// `authorization:abc`) so the FOLLOWING part must NOT be auto-redacted.
+fn part_carries_inline_value(part: &str) -> bool {
+    if let Some(idx) = part.find([':', '=']) {
+        // Something non-empty after the separator → inline value present.
+        return part[idx + 1..]
+            .trim_matches(|c: char| matches!(c, '"' | '\'' | ' '))
+            .chars()
+            .next()
+            .is_some();
+    }
+    false
 }
 
 fn now_ms() -> u64 {
@@ -298,4 +354,104 @@ fn open_path(path: &Path) -> Result<(), String> {
         .spawn()
         .map_err(|error| format!("No se pudo abrir el directorio de logs: {error}"))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 43-char base64url token (no padding) — the shortest device-token shape
+    /// (PROTOCOL `/v1/auth/login` returns `base64url-32B`, 43 unpadded chars).
+    const TOKEN_43: &str = "abcDEF012ghiJKL345mnoPQR678stuVWX9_-yzABCDE";
+    /// 44-char base64url token with one `=` pad char.
+    const TOKEN_44: &str = "abcDEF012ghiJKL345mnoPQR678stuVWX9_-yzABCDE=";
+
+    fn assert_redacted_absent(input: &str, token: &str) {
+        let out = redact_sensitive(input.to_string());
+        assert!(
+            !out.contains(token),
+            "token leaked through redaction.\n  input:  {input}\n  output: {out}"
+        );
+        assert!(
+            out.contains("[redactado]"),
+            "expected a redaction marker: {out}"
+        );
+    }
+
+    #[test]
+    fn redacts_bearer_token_following_marker() {
+        assert_redacted_absent(
+            &format!("[sync] sending Authorization: Bearer {TOKEN_43}"),
+            TOKEN_43,
+        );
+        assert_redacted_absent(&format!("[sync] header bearer {TOKEN_44}"), TOKEN_44);
+    }
+
+    #[test]
+    fn redacts_high_entropy_token_on_marker_line_even_far_from_marker() {
+        // The marker arms the line; a 44-char token elsewhere on the line must
+        // still be caught by the entropy rule (it is not the immediate next part).
+        let line = format!("[sync] login ok for ana, token persisted value {TOKEN_44} done");
+        assert_redacted_absent(&line, TOKEN_44);
+    }
+
+    #[test]
+    fn redacts_inline_token_assignment() {
+        assert_redacted_absent(&format!("token={TOKEN_43}"), TOKEN_43);
+        assert_redacted_absent(&format!("password=\"{TOKEN_44}\""), TOKEN_44);
+    }
+
+    #[test]
+    fn redacts_password_value() {
+        assert_redacted_absent(
+            "login password hunter2supersecretvalue123456789",
+            "hunter2supersecretvalue123456789",
+        );
+    }
+
+    #[test]
+    fn leaves_clean_lines_untouched() {
+        let line = "[sync] cycle complete: applied 12 rows, 3 blobs downloaded";
+        assert_eq!(redact_sensitive(line.to_string()), line);
+    }
+
+    #[test]
+    fn does_not_redact_long_numeric_ids_on_clean_lines() {
+        // No marker on the line → never touched, even with a long number.
+        let line = "[sync] last_pull_seq advanced to 1760000000123456789";
+        assert_eq!(redact_sensitive(line.to_string()), line);
+    }
+
+    #[test]
+    fn marker_with_inline_value_does_not_redact_next_unrelated_word() {
+        // `token=abc` carries its value inline; the following plain word survives.
+        let out = redact_sensitive(format!("token={TOKEN_43} cycle ok"));
+        assert!(!out.contains(TOKEN_43), "inline token redacted: {out}");
+        assert!(out.contains("cycle"), "next unrelated word kept: {out}");
+        assert!(out.contains("ok"), "trailing word kept: {out}");
+    }
+
+    #[test]
+    fn sha256_correlation_prefix_survives() {
+        // DESIGN §8 allows logging sha256(token)[..8] for correlation — an 8-char
+        // hex prefix is below the entropy threshold and must stay readable.
+        let line = "[sync] device token sha256 prefix 1a2b3c4d for correlation";
+        let out = redact_sensitive(line.to_string());
+        // The 8-char prefix is short; it is the word AFTER "token" though, so the
+        // follow-on rule redacts "sha256". The correlation prefix itself (3 words
+        // later) is short and survives.
+        assert!(
+            out.contains("1a2b3c4d"),
+            "short correlation prefix kept: {out}"
+        );
+    }
+
+    #[test]
+    fn sanitize_field_applies_redaction() {
+        let out = sanitize_field(
+            format!("Authorization: Bearer {TOKEN_43}"),
+            MAX_MESSAGE_CHARS,
+        );
+        assert!(!out.contains(TOKEN_43), "sanitize_field must redact: {out}");
+    }
 }

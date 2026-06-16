@@ -1,5 +1,5 @@
 /**
- * OCR frontend client for EntropIA Pro desktop app.
+ * OCR frontend client for EntropIA desktop app.
  * Plain TypeScript (not .svelte.ts) for full testability in Vitest.
  *
  * Communicates with the Rust backend via Tauri invoke + event listeners.
@@ -64,14 +64,15 @@ interface ErrorPayload {
 const IDLE_STATE: AssetOcrState = { status: 'idle', progress: 0 }
 
 export interface OcrStoreOptions {
-  /** Called when an OCR job completes successfully with the assetId. */
-  onComplete?: (assetId: string) => void
+  /** Called when an OCR job completes successfully with the assetId and OCR method. */
+  onComplete?: (assetId: string, method: string) => void
 }
 
 export class OcrStore {
   private states = new Map<string, AssetOcrState>()
   private cleanupFns: Array<() => void> = []
-  private onComplete?: (assetId: string) => void
+  private listenGeneration = 0
+  private onComplete?: (assetId: string, method: string) => void
 
   constructor(options?: OcrStoreOptions) {
     this.onComplete = options?.onComplete
@@ -89,6 +90,8 @@ export class OcrStore {
   async startListening(
     listen: (event: string, callback: (e: { payload: unknown }) => void) => Promise<() => void>
   ): Promise<void> {
+    const generation = ++this.listenGeneration
+
     const unlistenProgress = await listen('ocr:progress', (e) => {
       const p = e.payload as ProgressPayload
       this._updateState(p.asset_id, { status: 'running', progress: p.pct, stage: p.stage })
@@ -104,8 +107,8 @@ export class OcrStore {
         method: p.method,
         textContent: p.text_content,
       })
-      // Notify caller (e.g., to trigger FTS indexing after OCR completes)
-      this.onComplete?.(p.asset_id)
+      // Notify caller so views can refresh visible OCR-dependent state.
+      this.onComplete?.(p.asset_id, p.method)
     })
 
     const unlistenError = await listen('ocr:error', (e) => {
@@ -113,11 +116,23 @@ export class OcrStore {
       this._updateState(p.asset_id, { status: 'error', error: p.error, stage: 'error' })
     })
 
-    this.cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+    const cleanupFns = [unlistenProgress, unlistenComplete, unlistenError]
+
+    // stopListening may run while the listen() promises above are still in
+    // flight; unlisten late registrations immediately instead of leaking them.
+    if (generation !== this.listenGeneration) {
+      for (const fn of cleanupFns) {
+        fn()
+      }
+      return
+    }
+
+    this.cleanupFns = cleanupFns
   }
 
   /** Calls all cleanup functions returned by listen(), removing event listeners. */
   stopListening(): void {
+    this.listenGeneration++
     for (const fn of this.cleanupFns) {
       fn()
     }
@@ -155,9 +170,10 @@ export type OcrMode = 'light' | 'high'
 
 /**
  * Calls the Rust `extract_text` command to kick off an OCR job.
- * Sets the asset state to 'pending' before the invocation resolves.
+ * Does not mutate store state; callers own pending-state handling
+ * (see runPendingAssetJob in item-view-media-jobs.ts).
  *
- * @param mode - 'light' for plain PaddleOCR (fast), 'high' for PaddleVL (layout-aware)
+ * @param mode - 'light' for native extraction, 'high' for GLM-OCR.
  */
 export async function extractText(
   assetId: string,

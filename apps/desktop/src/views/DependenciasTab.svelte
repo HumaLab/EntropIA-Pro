@@ -277,21 +277,23 @@
       errorUnlisten?.()
     }
 
-    await new Promise<void>(async (resolve, reject) => {
-      doneUnlisten = await listen('llm:download_complete', () => {
-        cleanup()
-        resolve()
-      })
-      errorUnlisten = await listen<{ error: string }>('llm:download_error', (event) => {
-        cleanup()
-        reject(new Error(event.payload.error))
-      })
-      try {
-        await llmDownloadModel()
-      } catch (e) {
-        cleanup()
-        reject(e)
-      }
+    await new Promise<void>((resolve, reject) => {
+      void (async () => {
+        try {
+          doneUnlisten = await listen('llm:download_complete', () => {
+            cleanup()
+            resolve()
+          })
+          errorUnlisten = await listen<{ error: string }>('llm:download_error', (event) => {
+            cleanup()
+            reject(new Error(event.payload.error))
+          })
+          await llmDownloadModel()
+        } catch (e) {
+          cleanup()
+          reject(e)
+        }
+      })()
     })
   }
 
@@ -303,21 +305,23 @@
       errorUnlisten?.()
     }
 
-    await new Promise<void>(async (resolve, reject) => {
-      doneUnlisten = await listen('embedding:download_complete', () => {
-        cleanup()
-        resolve()
-      })
-      errorUnlisten = await listen<{ error: string }>('embedding:download_error', (event) => {
-        cleanup()
-        reject(new Error(event.payload.error))
-      })
-      try {
-        await embeddingDownloadModel()
-      } catch (e) {
-        cleanup()
-        reject(e)
-      }
+    await new Promise<void>((resolve, reject) => {
+      void (async () => {
+        try {
+          doneUnlisten = await listen('embedding:download_complete', () => {
+            cleanup()
+            resolve()
+          })
+          errorUnlisten = await listen<{ error: string }>('embedding:download_error', (event) => {
+            cleanup()
+            reject(new Error(event.payload.error))
+          })
+          await embeddingDownloadModel()
+        } catch (e) {
+          cleanup()
+          reject(e)
+        }
+      })()
     })
   }
 
@@ -604,15 +608,15 @@
         {/if}
         {#if runtimeStatus?.details?.length}
           <ul>
-            {#each runtimeStatus?.details ?? [] as detail}
+            {#each runtimeStatus?.details ?? [] as detail, i (i)}
               <li>{detail}</li>
             {/each}
           </ul>
         {/if}
         {#if runtimeStatus?.guidance?.length}
           <ul class="deps-runtime-panel__guidance">
-            {#each runtimeStatus?.guidance ?? [] as item}
-              <li>{item}</li>
+            {#each runtimeStatus?.guidance ?? [] as guidanceItem, i (i)}
+              <li>{guidanceItem}</li>
             {/each}
           </ul>
         {/if}

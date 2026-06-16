@@ -269,6 +269,17 @@ pub fn is_quality_text(text: &str) -> bool {
     text.chars().filter(|c| c.is_alphanumeric()).count() >= MIN_ALPHANUM_CHARS
 }
 
+/// Build a conservative per-page profile for a PDF, synchronously.
+///
+/// Pro has no Pdfium render actor (unlike Lite); this binds the engine via the
+/// same `get_pdfium()` path as `pdf_page_count`/`render_pdf_page_to_image`, then
+/// delegates the per-page profiling to `pdf_probe::profile_pdf_with_engine`.
+/// Pdfium work is blocking — call from a blocking-safe context.
+pub(super) fn profile_pdf_sync(bytes: &[u8]) -> Result<super::pdf_probe::DocumentProfile, String> {
+    let pdfium = get_pdfium()?;
+    super::pdf_probe::profile_pdf_with_engine(&pdfium, bytes)
+}
+
 /// Get the number of pages in a PDF document.
 ///
 /// Used by the multi-page OCR pipeline to know how many pages to process.

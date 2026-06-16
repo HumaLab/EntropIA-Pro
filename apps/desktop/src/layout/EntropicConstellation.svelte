@@ -10,10 +10,10 @@
     depth: number
   }
 
-  const MIN_NODES = 420
-  const MAX_NODES = 1200
-  const NODE_DENSITY = 2200
-  const LINK_DISTANCE = 118
+  const MIN_NODES = 180
+  const MAX_NODES = 520
+  const NODE_DENSITY = 4200
+  const LINK_DISTANCE = 104
   const GRID_SIZE = LINK_DISTANCE
   const MAX_DEVICE_PIXEL_RATIO = 1.35
   const CANVAS_OVERSCAN = 140
@@ -33,6 +33,31 @@
 
   function randomBetween(min: number, max: number) {
     return min + Math.random() * (max - min)
+  }
+
+  function readThemeColor(localVariable: string, ...tokenFallbacks: string[]) {
+    const elementStyle = getComputedStyle(canvas)
+    const rootStyle = getComputedStyle(document.documentElement)
+
+    for (const variable of [localVariable, ...tokenFallbacks]) {
+      const style = variable === localVariable ? elementStyle : rootStyle
+      const color = style.getPropertyValue(variable).trim()
+      if (color && !color.includes('var(')) return color
+    }
+
+    return 'Canvas'
+  }
+
+  function colorWithAlpha(color: string, alpha: number) {
+    const hex = color.match(/^#([\da-f]{3}|[\da-f]{6})$/i)?.[1]
+    if (!hex) return color
+
+    const channels = hex.length === 3 ? [...hex].map((value) => value + value).join('') : hex
+    const red = Number.parseInt(channels.slice(0, 2), 16)
+    const green = Number.parseInt(channels.slice(2, 4), 16)
+    const blue = Number.parseInt(channels.slice(4, 6), 16)
+
+    return `rgba(${red}, ${green}, ${blue}, ${alpha})`
   }
 
   function generateNodes(nextWidth: number, nextHeight: number): EntropicNode[] {
@@ -62,8 +87,8 @@
         id: index,
         x,
         y,
-        size: randomBetween(0.35, 1.1) + depth * 0.42,
-        alpha: randomBetween(0.045, 0.18) + depth * 0.07,
+        size: randomBetween(0.25, 0.78) + depth * 0.22,
+        alpha: randomBetween(0.018, 0.075) + depth * 0.028,
         depth,
       }
     })
@@ -96,16 +121,19 @@
 
   function drawBackground(context: CanvasRenderingContext2D) {
     const gradient = context.createLinearGradient(0, 0, width, height)
-    gradient.addColorStop(0, '#080a10')
-    gradient.addColorStop(0.46, '#0c0f17')
-    gradient.addColorStop(1, '#10131b')
+    gradient.addColorStop(0, readThemeColor('--constellation-bg-start', '--surface-app', '--color-bg'))
+    gradient.addColorStop(0.46, readThemeColor('--constellation-bg-mid', '--color-bg-ambient', '--color-surface'))
+    gradient.addColorStop(1, readThemeColor('--constellation-bg-end', '--surface-panel', '--color-surface'))
     context.fillStyle = gradient
     context.fillRect(0, 0, width, height)
 
     const haze = context.createRadialGradient(width * 0.5, height * 0.52, 0, width * 0.5, height * 0.52, width * 0.72)
-    haze.addColorStop(0, 'rgba(75, 83, 106, 0.08)')
-    haze.addColorStop(0.48, 'rgba(38, 44, 62, 0.045)')
-    haze.addColorStop(1, 'rgba(8, 10, 16, 0)')
+    haze.addColorStop(0, colorWithAlpha(readThemeColor('--constellation-haze-core', '--color-accent'), 0.035))
+    haze.addColorStop(
+      0.48,
+      colorWithAlpha(readThemeColor('--constellation-haze-mid', '--surface-glass', '--color-surface-glass'), 0.022),
+    )
+    haze.addColorStop(1, colorWithAlpha(readThemeColor('--constellation-haze-edge', '--surface-app', '--color-bg'), 0))
     context.fillStyle = haze
     context.fillRect(0, 0, width, height)
   }
@@ -144,7 +172,7 @@
               const distance = Math.hypot(diffX, diffY)
               if (distance > LINK_DISTANCE) continue
 
-              const alpha = (1 - distance / LINK_DISTANCE) * 0.043 * (0.75 + (a.depth + b.depth) * 0.34)
+              const alpha = (1 - distance / LINK_DISTANCE) * 0.018 * (0.75 + (a.depth + b.depth) * 0.24)
               context.beginPath()
               context.moveTo(a.x, a.y)
               context.lineTo(b.x, b.y)
@@ -196,6 +224,13 @@
 
 <style>
   .constellation {
+    --constellation-bg-start: var(--surface-app, var(--color-bg));
+    --constellation-bg-mid: var(--color-bg-ambient, var(--surface-panel));
+    --constellation-bg-end: var(--surface-panel, var(--color-surface));
+    --constellation-haze-core: var(--color-accent);
+    --constellation-haze-mid: var(--surface-glass, var(--color-surface-glass));
+    --constellation-haze-edge: var(--surface-app, var(--color-bg));
+
     position: fixed;
     left: 0;
     top: 0;
@@ -203,13 +238,22 @@
     pointer-events: none;
     transform-origin: center;
     background:
-      radial-gradient(circle at 50% 50%, rgba(46, 52, 70, 0.28), transparent 58%),
-      linear-gradient(135deg, #080a10 0%, #0c0f17 48%, #10131b 100%);
+      radial-gradient(
+        circle at 50% 50%,
+        color-mix(in srgb, var(--constellation-haze-core) 12%, transparent),
+        transparent 58%
+      ),
+      linear-gradient(
+        135deg,
+        var(--constellation-bg-start) 0%,
+        var(--constellation-bg-mid) 48%,
+        var(--constellation-bg-end) 100%
+      );
     will-change: transform, opacity;
   }
 
   .constellation--motion {
-    animation: entropic-drift 96s linear infinite alternate;
+    animation: none;
   }
 
   @keyframes entropic-drift {

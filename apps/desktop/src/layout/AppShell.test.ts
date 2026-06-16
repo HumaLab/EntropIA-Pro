@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs'
 import { resolve } from 'node:path'
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import AppShellHost from './__fixtures__/AppShellHost.svelte'
 import { locale } from '$lib/i18n'
@@ -99,26 +99,21 @@ describe('AppShell', () => {
 
     expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument()
     expect(screen.getByTestId('app-shell-child')).toHaveTextContent('Contenido de prueba')
-    expect(screen.getByText('EntropIA Pro')).toBeInTheDocument()
+    // 'EntropIA Pro' renders in both the TopBar title and the footer status bar.
+    expect(within(screen.getByRole('contentinfo')).getByText('EntropIA Pro')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'GitHub' })).toBeInTheDocument()
     expect(screen.getByText('Desarrollado por')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Colapsar panel lateral' })).toHaveAttribute(
-      'aria-expanded',
-      'true',
-    )
+    expect(screen.getByRole('button', { name: 'Colapsar panel (Ctrl+B)' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Nueva colección' })).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: 'Filtrar colecciones' })).toHaveAttribute(
-      'aria-expanded',
-      'false',
-    )
+    expect(screen.getByRole('button', { name: 'Filtrar colecciones' })).toBeInTheDocument()
   })
 
   it('keeps the entropic constellation visible behind workspace surfaces', () => {
     const source = readFileSync(resolve(import.meta.dirname, 'AppShell.svelte'), 'utf-8')
 
     expect(source).toContain('<EntropicConstellation />')
-    expect(source).toContain('color-mix(in srgb, var(--color-bg) 34%, transparent)')
-    expect(source).toContain('color-mix(in srgb, var(--color-bg) 24%, transparent)')
+    expect(source).toContain('color-mix(in srgb, var(--surface-app) 72%, transparent)')
+    expect(source).toContain('color-mix(in srgb, var(--surface-app) 42%, transparent)')
   })
 
   it('opens external links through the desktop bridge', async () => {
@@ -135,13 +130,52 @@ describe('AppShell', () => {
     })
   })
 
-  it('reacts to locale changes in footer copy', async () => {
+  it('toggles the sidebar with Ctrl+B except when typing in editable targets', async () => {
+    render(AppShellHost)
+
+    const editable = document.createElement('div')
+    editable.setAttribute('contenteditable', 'true')
+    document.body.appendChild(editable)
+
+    try {
+      // Plain Ctrl+B collapses the sidebar.
+      await fireEvent.keyDown(document.body, { key: 'b', ctrlKey: true })
+      expect(screen.getByRole('button', { name: 'Expandir panel (Ctrl+B)' })).toBeInTheDocument()
+
+      // Ctrl+B from a contenteditable surface (e.g. the note editor) is ignored.
+      await fireEvent.keyDown(editable, { key: 'b', ctrlKey: true })
+      expect(screen.getByRole('button', { name: 'Expandir panel (Ctrl+B)' })).toBeInTheDocument()
+
+      // Plain Ctrl+B expands it again.
+      await fireEvent.keyDown(document.body, { key: 'b', ctrlKey: true })
+      expect(screen.getByRole('button', { name: 'Colapsar panel (Ctrl+B)' })).toBeInTheDocument()
+
+      // Ctrl+B from a text input is ignored too.
+      await fireEvent.click(screen.getByRole('button', { name: 'Filtrar colecciones' }))
+      const filterInput = screen.getByPlaceholderText('Filtrar colecciones...')
+      await fireEvent.keyDown(filterInput, { key: 'b', ctrlKey: true })
+      expect(screen.getByRole('button', { name: 'Colapsar panel (Ctrl+B)' })).toBeInTheDocument()
+    } finally {
+      editable.remove()
+    }
+  })
+
+  it('reacts to locale changes in footer and sidebar copy', async () => {
     render(AppShellHost)
 
     locale.set('en')
 
     expect(await screen.findByText('Archive, OCR, and assisted analysis.')).toBeInTheDocument()
     expect(screen.getByText('Developed by')).toBeInTheDocument()
+    expect(screen.getByRole('complementary', { name: 'Sidebar' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Collapse sidebar (Ctrl+B)' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'New collection' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Filter collections' })).toBeInTheDocument()
+    expect(screen.getByText('Open a collection to view the explorer')).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Filter collections' }))
+
+    expect(screen.getByPlaceholderText('Filter collections...')).toBeInTheDocument()
   })
 
   it('boots without awaiting a fresh dependency probe and updates from completion events', async () => {

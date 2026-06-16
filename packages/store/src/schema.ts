@@ -195,6 +195,41 @@ export const itemTopics = sqliteTable(
 )
 
 // ---------------------------------------------------------------------------
+// RAG Conversations — persisted research chat threads
+// ---------------------------------------------------------------------------
+export const ragConversations = sqliteTable('rag_conversations', {
+  id: text('id').primaryKey(),
+  title: text('title').notNull(),
+  createdAt: integer('created_at').notNull(),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+// ---------------------------------------------------------------------------
+// RAG Messages — ordered turns within a RAG conversation
+// ---------------------------------------------------------------------------
+export const ragMessages = sqliteTable(
+  'rag_messages',
+  {
+    id: text('id').primaryKey(),
+    conversationId: text('conversation_id')
+      .notNull()
+      .references(() => ragConversations.id, { onDelete: 'cascade' }),
+    sortIndex: integer('sort_index').notNull(),
+    role: text('role').notNull(), // 'user' | 'assistant'
+    content: text('content').notNull(),
+    sources: text('sources'), // JSON array of cited sources
+    model: text('model'),
+    createdAt: integer('created_at').notNull(),
+  },
+  (table) => ({
+    conversationIdx: index('idx_rag_messages_conversation').on(
+      table.conversationId,
+      table.sortIndex
+    ),
+  })
+)
+
+// ---------------------------------------------------------------------------
 // LLM Results — persisted outputs from Gemma/local LLM jobs
 // ---------------------------------------------------------------------------
 export const llmResults = sqliteTable(

@@ -9,6 +9,7 @@ pub mod paddle;
 pub mod layout_onnx;
 pub mod paddle_vl;
 mod pdf;
+pub mod pdf_probe;
 pub mod reading_order;
 
 // Dev-only visualization helpers for debugging layout detection.

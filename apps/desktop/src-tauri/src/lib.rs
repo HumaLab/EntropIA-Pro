@@ -1,4 +1,5 @@
 mod app_logs;
+mod audio_preview;
 mod db;
 pub mod deps;
 mod geo;
@@ -8,6 +9,7 @@ mod nlp;
 mod ocr;
 mod path_utils;
 mod python_discovery;
+mod rag;
 mod runtime;
 mod settings;
 mod transcription;
@@ -408,8 +410,11 @@ migrate_legacy_asset_paths(&db_path, &app_dir)
             ocr::commands::test_glm_ocr_connection,
             ocr::commands::update_extraction_text_cmd,
             ocr::commands::generate_pdf_thumbnail,
+            ocr::commands::generate_image_thumbnail,
             ocr::commands::delete_pdf_thumbnail,
+            ocr::commands::delete_image_thumbnail,
             ocr::commands::is_scanned_pdf,
+            ocr::commands::probe_pdf,
             ocr::commands::render_pdf_pages,
             nlp::commands::index_fts,
             nlp::commands::embed_asset,
@@ -428,6 +433,7 @@ migrate_legacy_asset_paths(&db_path, &app_dir)
             transcription::commands::transcribe_dictation,
             transcription::commands::test_assemblyai_connection,
             transcription::commands::update_transcription_text_cmd,
+            audio_preview::prepare_audio_preview,
             llm::commands::llm_correct_ocr,
             llm::commands::llm_extract_entities,
             llm::commands::llm_extract_triples,
@@ -446,9 +452,15 @@ migrate_legacy_asset_paths(&db_path, &app_dir)
             llm::commands::llm_download_model,
             geo::commands::geocode_entity,
             geo::commands::geocode_item_entities,
+            rag::commands::rag_ask,
+            rag::commands::rag_list_conversations,
+            rag::commands::rag_get_conversation,
+            rag::commands::rag_delete_conversation,
             image_edit::crop_image,
             image_edit::rotate_image,
+            image_edit::rotate_image_degrees,
             image_edit::erase_region,
+            image_edit::delete_asset_files,
             settings::settings_get,
             settings::settings_set,
             settings::settings_get_all,

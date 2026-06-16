@@ -154,6 +154,98 @@ pub async fn generate_pdf_thumbnail(
     Ok(result_path)
 }
 
+/// Generate or retrieve a cached bounded thumbnail for an image asset.
+///
+/// The path hash is part of the filename so edited assets that receive a new
+/// file path do not reuse stale thumbnails for the same asset ID.
+#[tauri::command]
+pub async fn generate_image_thumbnail(
+    asset_path: String,
+    asset_id: String,
+    app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    use image::ImageFormat;
+    use sha2::{Digest, Sha256};
+    use std::io::Cursor;
+    use tauri::Manager;
+
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+
+    let thumb_dir = app_dir.join("thumbnails");
+    std::fs::create_dir_all(&thumb_dir)
+        .map_err(|e| format!("Failed to create thumbnails directory: {e}"))?;
+
+    let path_hash = Sha256::digest(asset_path.as_bytes());
+    let thumb_name = format!("image-{asset_id}-{path_hash:x}.png");
+    let thumb_path = thumb_dir.join(thumb_name);
+
+    if thumb_path.exists() {
+        return Ok(normalize_windows_path_string(&thumb_path));
+    }
+
+    let result_path = tokio::task::spawn_blocking(move || {
+        let image = image::ImageReader::open(&asset_path)
+            .map_err(|e| format!("Failed to open image file: {e}"))?
+            .with_guessed_format()
+            .map_err(|e| format!("Failed to detect image format: {e}"))?
+            .decode()
+            .map_err(|e| format!("Failed to decode image file: {e}"))?;
+
+        let thumbnail = image.thumbnail(400, 400);
+        let mut png_data = Vec::new();
+        thumbnail
+            .write_to(&mut Cursor::new(&mut png_data), ImageFormat::Png)
+            .map_err(|e| format!("Failed to encode image thumbnail: {e}"))?;
+
+        std::fs::write(&thumb_path, png_data)
+            .map_err(|e| format!("Failed to write image thumbnail: {e}"))?;
+
+        Ok::<String, String>(normalize_windows_path_string(&thumb_path))
+    })
+    .await
+    .map_err(|e| format!("Image thumbnail generation task panicked: {e}"))??;
+
+    Ok(result_path)
+}
+
+/// Delete cached image thumbnails for an asset. Best-effort cleanup when assets
+/// are removed; stale path-version thumbnails are harmless if removal fails.
+#[tauri::command]
+pub async fn delete_image_thumbnail(
+    asset_id: String,
+    app_handle: tauri::AppHandle,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    let app_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("Failed to get app data dir: {e}"))?;
+
+    let thumb_dir = app_dir.join("thumbnails");
+    if !thumb_dir.exists() {
+        return Ok(());
+    }
+
+    let prefix = format!("image-{asset_id}-");
+    for entry in std::fs::read_dir(&thumb_dir)
+        .map_err(|e| format!("Failed to read thumbnails directory: {e}"))?
+    {
+        let entry = entry.map_err(|e| format!("Failed to read thumbnail entry: {e}"))?;
+        let filename = entry.file_name();
+        let filename = filename.to_string_lossy();
+        if filename.starts_with(&prefix) && filename.ends_with(".png") {
+            std::fs::remove_file(entry.path())
+                .map_err(|e| format!("Failed to delete image thumbnail: {e}"))?;
+        }
+    }
+
+    Ok(())
+}
+
 /// Delete a cached PDF thumbnail for an asset.
 ///
 /// Called when a PDF asset is deleted to clean up the thumbnail cache.
@@ -210,6 +302,31 @@ pub async fn is_scanned_pdf(
     .map_err(|e| format!("PDF check task panicked: {e}"))?;
 
     Ok(is_scanned)
+}
+
+/// Build a conservative per-page profile for a PDF.
+///
+/// Only confidently native documents should stay as PDF; mixed, uncertain,
+/// image-only, and image-with-OCR documents should be rendered as image pages.
+/// The frontend invokes this as `probe_pdf` with `{ assetPath }` and expects a
+/// `DocumentProfile` (see `apps/desktop/src/lib/file-import.ts`).
+#[tauri::command]
+pub async fn probe_pdf(
+    asset_path: String,
+    app_handle: tauri::AppHandle,
+) -> Result<super::pdf_probe::DocumentProfile, String> {
+    // Ensure Pdfium DLL path is initialized before any PDF operations.
+    super::pdf::init_pdfium_path(&app_handle);
+
+    let bytes = tokio::task::spawn_blocking(move || std::fs::read(&asset_path))
+        .await
+        .map_err(|e| format!("Failed to read PDF file: {e}"))?
+        .map_err(|e| format!("Failed to read PDF file: {e}"))?;
+
+    // Pdfium work is blocking; profile off the async runtime.
+    tokio::task::spawn_blocking(move || super::pdf_probe::profile_pdf_bytes(&bytes))
+        .await
+        .map_err(|e| format!("PDF profile task panicked: {e}"))?
 }
 
 /// Render all pages of a PDF as PNG images and save them to disk.

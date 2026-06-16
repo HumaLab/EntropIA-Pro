@@ -1,6 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte'
-  import { describeDbBrowserTable, listDbBrowserTables, queryDbBrowserRows } from '$lib/db-browser'
+  import {
+    describeDbBrowserTable,
+    listDbBrowserTables,
+    queryAllDbBrowserRowsInChunks,
+    queryDbBrowserRows,
+  } from '$lib/db-browser'
   import { exportCollectionToJson } from '$lib/export'
 
   let selectedTable = $state('')
@@ -22,10 +27,8 @@
   })
 
   async function exportTable() {
-    const response = await queryDbBrowserRows({
+    const response = await queryAllDbBrowserRowsInChunks({
       table: selectedTable,
-      page: 1,
-      pageSize: 1,
       sortColumn: '',
       sortDirection: 'asc',
       search: undefined,

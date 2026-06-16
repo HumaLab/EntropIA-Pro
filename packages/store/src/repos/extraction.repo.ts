@@ -1,6 +1,6 @@
 import { eq, desc } from 'drizzle-orm'
 import type { DrizzleClient } from '../types'
-import { extractions } from '../schema'
+import { extractions, assets, items } from '../schema'
 
 export type Extraction = typeof extractions.$inferSelect
 export type NewExtraction = typeof extractions.$inferInsert
@@ -54,6 +54,25 @@ export class ExtractionRepo {
       .from(extractions)
       .where(eq(extractions.assetId, assetId))
       .orderBy(desc(extractions.createdAt))
+  }
+
+  /**
+   * All extraction texts for a collection in a single query
+   * (avoids per-item/per-asset round-trips when building a corpus).
+   */
+  async findTextByCollection(
+    collectionId: string
+  ): Promise<Array<{ assetId: string; textContent: string; createdAt: number }>> {
+    return this.db
+      .select({
+        assetId: extractions.assetId,
+        textContent: extractions.textContent,
+        createdAt: extractions.createdAt,
+      })
+      .from(extractions)
+      .innerJoin(assets, eq(assets.id, extractions.assetId))
+      .innerJoin(items, eq(items.id, assets.itemId))
+      .where(eq(items.collectionId, collectionId))
   }
 
   async delete(id: string): Promise<void> {

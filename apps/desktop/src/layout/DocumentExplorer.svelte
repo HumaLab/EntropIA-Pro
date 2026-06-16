@@ -3,28 +3,39 @@
   import { getStore } from '$lib/db'
   import { locale, t, type I18nKey } from '$lib/i18n'
   import { navigation, type View } from '$lib/navigation'
+  import { ActionIcon, type ActionIconName } from '@entropia/ui'
   import {
+    DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT,
     DOCUMENT_EXPLORER_ASSET_SELECTED_EVENT,
-    DOCUMENT_EXPLORER_ASSET_SELECT_REQUEST_EVENT,
     type DocumentExplorerAssetDetail,
+    type DocumentExplorerCollectionChangedDetail,
   } from '$lib/document-explorer'
-  import type { Asset, Collection, Item } from '@entropia/store'
+  import type { Asset, Collection, Item, CollectionItemCardSummary } from '@entropia/store'
+
+  type ItemAssetSummary = Pick<
+    CollectionItemCardSummary,
+    'assetCount' | 'primaryAssetId' | 'primaryAssetPath' | 'primaryAssetType'
+  >
 
   let { filterText = '' }: { filterText?: string } = $props()
 
-  const STORAGE_KEY = 'entropia-document-explorer-open'
   const TREE_STORAGE_KEY = 'entropia-document-explorer-tree'
   const WIDTH_STORAGE_KEY = 'entropia-document-explorer-width'
   const DEFAULT_WIDTH = 244
   const MIN_WIDTH = 220
   const MAX_WIDTH = Math.round(DEFAULT_WIDTH * 1.1)
-  const COLLAPSED_WIDTH = 36
+  const MAX_RESTORED_OPEN_COLLECTIONS = 16
+  const MAX_RESTORED_OPEN_ITEMS = 16
+  const TREE_VISUAL_LEVEL = {
+    collection: 0,
+    item: 1,
+    asset: 2,
+  } as const
 
   const pendingItemLoads = new Map<string, Promise<void>>()
   const pendingAssetLoads = new Map<string, Promise<void>>()
 
   let collectionsRequest: Promise<void> | null = null
-  let isOpen = $state(true)
   let loading = $state(false)
   let loadError = $state<string | null>(null)
   let collections = $state<Collection[]>([])
@@ -35,6 +46,7 @@
   )
   let itemsByCollection = $state<Record<string, Item[]>>({})
   let assetsByItem = $state<Record<string, Asset[]>>({})
+  let assetSummariesByItem = $state<Record<string, ItemAssetSummary>>({})
   let itemCounts = $state<Record<string, number>>({})
   let loadingCollections = $state<string[]>([])
   let loadingItems = $state<string[]>([])
@@ -44,23 +56,6 @@
   let explorerWidth = $state(DEFAULT_WIDTH)
   const currentLocale = locale
   const translateExplorer = (key: string) => t(key as I18nKey)
-
-  function readPersistedOpenState() {
-    try {
-      const stored = localStorage.getItem(STORAGE_KEY)
-      if (stored === 'true') return true
-      if (stored === 'false') return false
-    } catch {}
-
-    return true
-  }
-
-  function persistOpenState(value: boolean) {
-    try {
-      localStorage.setItem(STORAGE_KEY, String(value))
-    } catch {}
-  }
-
 
   function clampExplorerWidth(value: number) {
     return Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, Math.round(value)))
@@ -141,6 +136,29 @@
     } catch {}
   }
 
+  function limitRestoredIds(ids: string[], limit: number, requiredId: string | null) {
+    const limitedIds = uniqueIds(ids).slice(-limit)
+    return requiredId ? uniqueIds([...limitedIds, requiredId]) : limitedIds
+  }
+
+  function limitRestoredTreeState(
+    persistedTree: { collections: string[]; items: string[] },
+    currentView: View
+  ) {
+    return {
+      collections: limitRestoredIds(
+        persistedTree.collections,
+        MAX_RESTORED_OPEN_COLLECTIONS,
+        getActiveCollectionId(currentView)
+      ),
+      items: limitRestoredIds(
+        persistedTree.items,
+        MAX_RESTORED_OPEN_ITEMS,
+        getActiveItemId(currentView)
+      ),
+    }
+  }
+
   function commitTreeState(nextCollections: string[], nextItems: string[]) {
     openCollections = uniqueIds(nextCollections)
     openItems = uniqueIds(nextItems)
@@ -155,11 +173,6 @@
     }
 
     return `${expanded ? 'Colapsar' : 'Expandir'} ${kind === 'collection' ? 'colección' : 'documento'} ${label}`
-  }
-
-  function toggleOpen() {
-    isOpen = !isOpen
-    persistOpenState(isOpen)
   }
 
   function getActiveCollectionId(view: View): string | null {
@@ -178,19 +191,72 @@
     return `${asset.type.toUpperCase()} ${index + 1}`
   }
 
-  function getAssetIcon(assetType: Asset['type']) {
-    if (assetType === 'audio') return 'audio'
-    if (assetType === 'pdf') return 'pdf'
-    if (assetType === 'image') return 'image'
-    return 'document'
+  function getAssetIcon(assetType: Asset['type']): ActionIconName {
+    if (assetType === 'audio') return 'file-audio'
+    if (assetType === 'pdf') return 'file-text'
+    if (assetType === 'image') return 'file-image'
+    return 'file'
+  }
+
+  function getItemAssetSummary(itemId: string) {
+    const assets = assetsByItem[itemId]
+    if (assets) {
+      const [primaryAsset] = assets
+      return {
+        assetCount: assets.length,
+        primaryAssetId: primaryAsset?.id ?? null,
+        primaryAssetPath: primaryAsset?.path ?? null,
+        primaryAssetType: primaryAsset?.type ?? null,
+      }
+    }
+
+    return assetSummariesByItem[itemId] ?? null
+  }
+
+  function getSingleAssetForItem(item: Item): Asset | null {
+    const summary = getItemAssetSummary(item.id)
+    if (summary?.assetCount !== 1) return null
+    if (!summary.primaryAssetId || !summary.primaryAssetPath || !summary.primaryAssetType) return null
+
+    return {
+      id: summary.primaryAssetId,
+      itemId: item.id,
+      path: summary.primaryAssetPath,
+      type: summary.primaryAssetType,
+      size: 0,
+      sortIndex: 0,
+      createdAt: item.createdAt,
+    }
+  }
+
+  function canExpandItem(item: Item) {
+    const summary = getItemAssetSummary(item.id)
+    return summary ? summary.assetCount > 1 : true
+  }
+
+  function cacheItemAssetSummaries(summaries: CollectionItemCardSummary[]) {
+    assetSummariesByItem = {
+      ...assetSummariesByItem,
+      ...Object.fromEntries(
+        summaries.map((summary) => [
+          summary.id,
+          {
+            assetCount: summary.assetCount,
+            primaryAssetId: summary.primaryAssetId,
+            primaryAssetPath: summary.primaryAssetPath,
+            primaryAssetType: summary.primaryAssetType,
+          },
+        ])
+      ),
+    }
   }
 
   function isCollectionExpanded(collectionId: string) {
-    return collectionId === activeCollectionId || openCollections.includes(collectionId)
+    return openCollections.includes(collectionId)
   }
 
   function isItemExpanded(itemId: string) {
-    return itemId === activeItemId || openItems.includes(itemId)
+    return openItems.includes(itemId)
   }
 
   function isCollectionLoading(collectionId: string) {
@@ -248,10 +314,11 @@
       loadError = null
 
       try {
-        const items = await getStore().items.findByCollection(collectionId)
+        const summaries = await getStore().items.findCardSummariesByCollection(collectionId)
+        cacheItemAssetSummaries(summaries)
         itemsByCollection = {
           ...itemsByCollection,
-          [collectionId]: items,
+          [collectionId]: summaries,
         }
       } catch (error) {
         loadError = error instanceof Error ? error.message : translateExplorer('explorer.loadError')
@@ -263,6 +330,58 @@
 
     pendingItemLoads.set(collectionId, request)
     await request
+  }
+
+  async function refreshCollection(collectionId: string, itemId?: string) {
+    const pending = pendingItemLoads.get(collectionId)
+    if (pending) await pending
+
+    loadingCollections = uniqueIds([...loadingCollections, collectionId])
+    loadError = null
+
+    try {
+      const store = getStore()
+      const [summaries, count] = await Promise.all([
+        store.items.findCardSummariesByCollection(collectionId),
+        store.collections.countItems(collectionId),
+      ])
+      const items = summaries
+      const itemIds = new Set(items.map((item) => item.id))
+      const previousItemIds = itemsByCollection[collectionId]?.map((item) => item.id) ?? []
+      const nextAssetsByItem = { ...assetsByItem }
+      const nextAssetSummariesByItem = { ...assetSummariesByItem }
+
+      for (const previousItemId of previousItemIds) {
+        if (previousItemId === itemId || !itemIds.has(previousItemId)) {
+          delete nextAssetsByItem[previousItemId]
+          delete nextAssetSummariesByItem[previousItemId]
+        }
+      }
+
+      for (const summary of summaries) {
+        nextAssetSummariesByItem[summary.id] = {
+          assetCount: summary.assetCount,
+          primaryAssetId: summary.primaryAssetId,
+          primaryAssetPath: summary.primaryAssetPath,
+          primaryAssetType: summary.primaryAssetType,
+        }
+      }
+
+      itemsByCollection = {
+        ...itemsByCollection,
+        [collectionId]: items,
+      }
+      itemCounts = {
+        ...itemCounts,
+        [collectionId]: count,
+      }
+      assetsByItem = nextAssetsByItem
+      assetSummariesByItem = nextAssetSummariesByItem
+    } catch (error) {
+      loadError = error instanceof Error ? error.message : translateExplorer('explorer.loadError')
+    } finally {
+      loadingCollections = loadingCollections.filter((entry) => entry !== collectionId)
+    }
   }
 
   async function ensureItemAssetsLoaded(itemId: string) {
@@ -297,7 +416,7 @@
 
   async function toggleCollectionExpanded(collection: Collection) {
     const expanded = isCollectionExpanded(collection.id)
-    if (expanded && collection.id !== activeCollectionId) {
+    if (expanded) {
       const collectionItemIds = (itemsByCollection[collection.id] ?? []).map((item) => item.id)
       commitTreeState(
         openCollections.filter((entry) => entry !== collection.id),
@@ -312,9 +431,9 @@
 
   async function toggleItemExpanded(item: Item) {
     const expanded = isItemExpanded(item.id)
-    if (expanded && item.id !== activeItemId) {
+    if (expanded) {
       commitTreeState(
-        [...openCollections, item.collectionId],
+        openCollections,
         openItems.filter((entry) => entry !== item.id)
       )
       return
@@ -359,7 +478,7 @@
     })
   }
 
-  function handleItemClick(item: Item) {
+  function handleItemClick(item: Item, asset?: { id: string; label: string }) {
     const current = $navigation.current
     const collection = collections.find((entry) => entry.id === item.collectionId)
     const collectionName = collection?.name ?? ''
@@ -369,9 +488,14 @@
       collectionName,
       itemId: item.id,
       itemTitle: item.title,
+      ...(asset ? { assetId: asset.id, assetLabel: asset.label } : {}),
     }
 
-    if (current.name === 'item' && current.itemId === item.id) return
+    if (current.name === 'item' && current.itemId === item.id) {
+      if (current.assetId === nextView.assetId && current.assetLabel === nextView.assetLabel) return
+      navigation.replace(nextView)
+      return
+    }
     if (current.name === 'item' && current.collectionId === item.collectionId) {
       navigation.replace(nextView)
       return
@@ -396,16 +520,22 @@
     navigation.navigate(nextView)
   }
 
-  function handleAssetClick(asset: Asset) {
+  function handleAssetClick(asset: Asset, index = 0) {
+    const item = Object.values(itemsByCollection)
+      .flat()
+      .find((entry) => entry.id === asset.itemId)
+    const assetLabel = getAssetLabel(asset, index)
+
+    if (item) {
+      handleItemClick(item, { id: asset.id, label: assetLabel })
+    }
+
     activeAssetId = asset.id
-    window.dispatchEvent(
-      new CustomEvent<DocumentExplorerAssetDetail>(DOCUMENT_EXPLORER_ASSET_SELECT_REQUEST_EVENT, {
-        detail: {
-          itemId: asset.itemId,
-          assetId: asset.id,
-        },
-      })
-    )
+  }
+
+  function handleSingleAssetItemClick(item: Item, asset: Asset) {
+    handleItemClick(item, { id: asset.id, label: getAssetLabel(asset, 0) })
+    activeAssetId = asset.id
   }
 
   const activeCollectionId = $derived(getActiveCollectionId($navigation.current))
@@ -420,6 +550,8 @@
 
     if (!nextActiveItemId) {
       activeAssetId = null
+    } else if (currentView.name === 'item' && currentView.assetId) {
+      activeAssetId = currentView.assetId
     }
 
     if (nextActiveCollectionId) {
@@ -446,9 +578,8 @@
   })
 
   onMount(() => {
-    isOpen = readPersistedOpenState()
     explorerWidth = readPersistedWidth()
-    const persistedTree = readPersistedTreeState()
+    const persistedTree = limitRestoredTreeState(readPersistedTreeState(), $navigation.current)
     openCollections = persistedTree.collections
     openItems = persistedTree.items
 
@@ -459,42 +590,30 @@
       }
     }
 
+    const handleCollectionChanged = (event: Event) => {
+      const detail = (event as CustomEvent<DocumentExplorerCollectionChangedDetail>).detail
+      if (!detail?.collectionId) return
+      void refreshCollection(detail.collectionId, detail.itemId)
+    }
+
     window.addEventListener(DOCUMENT_EXPLORER_ASSET_SELECTED_EVENT, handleAssetSelected)
+    window.addEventListener(DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT, handleCollectionChanged)
 
     return () => {
       window.removeEventListener(DOCUMENT_EXPLORER_ASSET_SELECTED_EVENT, handleAssetSelected)
+      window.removeEventListener(
+        DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT,
+        handleCollectionChanged
+      )
     }
   })
 </script>
 
 <aside
   class="explorer"
-  class:is-open={isOpen}
-  class:is-collapsed={!isOpen}
-  style:width={`${isOpen ? explorerWidth : COLLAPSED_WIDTH}px`}
+  style:width={`${explorerWidth}px`}
   aria-label={$currentLocale && translateExplorer('explorer.aria')}
 >
-  <button
-    type="button"
-    class="explorer__rail-toggle"
-    aria-label={$currentLocale && translateExplorer(isOpen ? 'explorer.collapse' : 'explorer.expand')}
-    title={$currentLocale && translateExplorer(isOpen ? 'explorer.collapse' : 'explorer.expand')}
-    onclick={toggleOpen}
-  >
-    <svg
-      viewBox="0 0 16 16"
-      fill="none"
-      stroke="currentColor"
-      stroke-width="1.8"
-      stroke-linecap="round"
-      stroke-linejoin="round"
-      aria-hidden="true"
-    >
-      <path d={isOpen ? 'M10 3.5 5.5 8l4.5 4.5' : 'M6 3.5 10.5 8 6 12.5'} />
-    </svg>
-  </button>
-
-  {#if isOpen}
   <div id="document-explorer-panel" class="explorer__panel">
       <div id="document-explorer-content" class="explorer__scroll">
         {#if loadError}
@@ -534,7 +653,10 @@
                   aria-current={collection.id === activeCollectionId ? 'true' : undefined}
                   aria-label={collection.name}
                 >
-                  <div class="explorer__row" style:--level="1">
+                  <div
+                    class="explorer__row explorer__row--collection"
+                    style:--tree-level={TREE_VISUAL_LEVEL.collection}
+                  >
                     <button
                       type="button"
                       class="explorer__chevron"
@@ -542,19 +664,12 @@
                       aria-expanded={collectionExpanded}
                       onclick={() => toggleCollectionExpanded(collection)}
                     >
-                      <svg
+                      <span
                         class:explorer__chevron-icon--open={collectionExpanded}
                         class="explorer__chevron-icon"
-                        viewBox="0 0 16 16"
-                        fill="none"
-                        stroke="currentColor"
-                        stroke-width="1.8"
-                        stroke-linecap="round"
-                        stroke-linejoin="round"
-                        aria-hidden="true"
                       >
-                        <path d="m6 3.5 4.5 4.5L6 12.5" />
-                      </svg>
+                        <ActionIcon name="chevron-right" size={12} />
+                      </span>
                     </button>
 
                     <button
@@ -567,19 +682,7 @@
                         class="explorer__node-icon explorer__node-icon--collection"
                         aria-hidden="true"
                       >
-                        <svg
-                          viewBox="0 0 16 16"
-                          fill="none"
-                          stroke="currentColor"
-                          stroke-width="1.5"
-                          stroke-linecap="round"
-                          stroke-linejoin="round"
-                        >
-                          <path
-                            d="M2.5 5.5h3l1.2-1.5h2.8c1.6 0 2.5.9 2.5 2.5v4.2c0 1.6-.9 2.5-2.5 2.5H4.7c-1.6 0-2.5-.9-2.5-2.5V5.5Z"
-                          />
-                          <path d="M2.5 6.2h10.5" opacity="0.65" />
-                        </svg>
+                        <ActionIcon name="folder" size={14} />
                       </span>
                       <span class="explorer__node-main">{collection.name}</span>
                       <span class="explorer__node-meta">{itemCounts[collection.id] ?? 0}</span>
@@ -589,48 +692,88 @@
                   {#if collectionExpanded}
                     <div class="explorer__group" role="group">
                       {#if isCollectionLoading(collection.id)}
-                        <p class="explorer__message explorer__message--nested">
+                        <p
+                          class="explorer__message explorer__message--nested"
+                          style:--tree-level={TREE_VISUAL_LEVEL.item}
+                        >
                           {$currentLocale && translateExplorer('explorer.loading')}
                         </p>
                       {:else if collectionItems.length === 0}
-                        <p class="explorer__message explorer__message--nested">
+                        <p
+                          class="explorer__message explorer__message--nested"
+                          style:--tree-level={TREE_VISUAL_LEVEL.item}
+                        >
                           {$currentLocale && translateExplorer('explorer.emptyDocuments')}
                         </p>
                       {:else}
                         {#each collectionItems as item (item.id)}
                           {@const itemExpanded = isItemExpanded(item.id)}
                           {@const itemAssets = assetsByItem[item.id] ?? []}
+                          {@const singleAsset = getSingleAssetForItem(item)}
+                          {@const itemExpandable = canExpandItem(item)}
+                          {#if singleAsset}
+                            <div
+                              class="explorer__treeitem"
+                              class:is-active={item.id === activeItemId || singleAsset.id === activeAssetId}
+                              role="treeitem"
+                              aria-level="2"
+                              aria-selected={item.id === activeItemId || singleAsset.id === activeAssetId}
+                              aria-current={item.id === activeItemId || singleAsset.id === activeAssetId
+                                ? 'true'
+                                : undefined}
+                              aria-label={item.title}
+                            >
+                              <div
+                                class="explorer__row explorer__row--item"
+                                style:--tree-level={TREE_VISUAL_LEVEL.item}
+                              >
+                                <span class="explorer__chevron-spacer" aria-hidden="true"></span>
+                                <button
+                                  type="button"
+                                  class="explorer__node explorer__node--item explorer__node--flush"
+                                  class:is-active={item.id === activeItemId || singleAsset.id === activeAssetId}
+                                  aria-label={item.title}
+                                  onclick={() => handleSingleAssetItemClick(item, singleAsset)}
+                                >
+                                  <span
+                                    class="explorer__node-icon explorer__node-icon--item"
+                                    aria-hidden="true"
+                                  >
+                                    <ActionIcon name={getAssetIcon(singleAsset.type)} size={14} />
+                                  </span>
+                                  <span class="explorer__node-main">{item.title}</span>
+                                  <span class="explorer__asset-type">{singleAsset.type}</span>
+                                </button>
+                              </div>
+                            </div>
+                          {:else if itemExpandable}
                           <div
                             class="explorer__treeitem"
                             class:is-active={item.id === activeItemId}
                             role="treeitem"
                             aria-level="2"
                             aria-expanded={itemExpanded}
-                            aria-selected={item.id === activeItemId}
-                            aria-current={item.id === activeItemId ? 'true' : undefined}
-                            aria-label={item.title}
-                          >
-                            <div class="explorer__row" style:--level="2">
-                              <button
-                                type="button"
-                                class="explorer__chevron"
+                             aria-selected={item.id === activeItemId}
+                             aria-current={item.id === activeItemId ? 'true' : undefined}
+                             aria-label={item.title}
+                           >
+                            <div
+                              class="explorer__row explorer__row--item"
+                              style:--tree-level={TREE_VISUAL_LEVEL.item}
+                            >
+                               <button
+                                 type="button"
+                                 class="explorer__chevron"
                                 aria-label={getToggleLabel('item', itemExpanded, item.title)}
                                 aria-expanded={itemExpanded}
                                 onclick={() => toggleItemExpanded(item)}
                               >
-                                <svg
+                                <span
                                   class:explorer__chevron-icon--open={itemExpanded}
                                   class="explorer__chevron-icon"
-                                  viewBox="0 0 16 16"
-                                  fill="none"
-                                  stroke="currentColor"
-                                  stroke-width="1.8"
-                                  stroke-linecap="round"
-                                  stroke-linejoin="round"
-                                  aria-hidden="true"
                                 >
-                                  <path d="m6 3.5 4.5 4.5L6 12.5" />
-                                </svg>
+                                  <ActionIcon name="chevron-right" size={12} />
+                                </span>
                               </button>
 
                               <button
@@ -643,20 +786,7 @@
                                   class="explorer__node-icon explorer__node-icon--item"
                                   aria-hidden="true"
                                 >
-                                  <svg
-                                    viewBox="0 0 16 16"
-                                    fill="none"
-                                    stroke="currentColor"
-                                    stroke-width="1.5"
-                                    stroke-linecap="round"
-                                    stroke-linejoin="round"
-                                  >
-                                    <path
-                                      d="M5 2.75h3.8l2.2 2.2v7.3c0 .83-.67 1.5-1.5 1.5h-4.5c-.83 0-1.5-.67-1.5-1.5v-8c0-.83.67-1.5 1.5-1.5Z"
-                                    />
-                                    <path d="M8.75 2.9V5.2h2.3" opacity="0.7" />
-                                    <path d="M5.5 7.2h4.8M5.5 9.4h4.8" opacity="0.7" />
-                                  </svg>
+                                  <ActionIcon name="file-text" size={14} />
                                 </span>
                                 <span class="explorer__node-main">{item.title}</span>
                               </button>
@@ -665,11 +795,17 @@
                             {#if itemExpanded}
                               <div class="explorer__group" role="group">
                                 {#if isItemLoading(item.id)}
-                                  <p class="explorer__message explorer__message--nested">
+                                  <p
+                                    class="explorer__message explorer__message--nested"
+                                    style:--tree-level={TREE_VISUAL_LEVEL.asset}
+                                  >
                                     {$currentLocale && translateExplorer('explorer.loading')}
                                   </p>
                                 {:else if itemAssets.length === 0}
-                                  <p class="explorer__message explorer__message--nested">
+                                  <p
+                                    class="explorer__message explorer__message--nested"
+                                    style:--tree-level={TREE_VISUAL_LEVEL.asset}
+                                  >
                                     {$currentLocale && translateExplorer('explorer.emptyAssets')}
                                   </p>
                                 {:else}
@@ -679,74 +815,26 @@
                                       class="explorer__treeitem"
                                       role="treeitem"
                                       aria-level="3"
-                                      aria-selected={asset.id === activeAssetId}
-                                      aria-current={asset.id === activeAssetId ? 'true' : undefined}
-                                      aria-label={getAssetLabel(asset, index)}
-                                    >
-                                      <div class="explorer__row" style:--level="3">
-                                        <span
-                                          class="explorer__chevron explorer__chevron--placeholder"
-                                          aria-hidden="true"
-                                        ></span>
+                                       aria-selected={asset.id === activeAssetId}
+                                       aria-current={asset.id === activeAssetId ? 'true' : undefined}
+                                       aria-label={getAssetLabel(asset, index)}
+                                     >
+                                      <div
+                                        class="explorer__row explorer__row--asset"
+                                        style:--tree-level={TREE_VISUAL_LEVEL.asset}
+                                      >
+                                        <span class="explorer__chevron-spacer" aria-hidden="true"></span>
                                         <button
                                           type="button"
                                           class="explorer__node explorer__node--asset"
                                           class:is-active={asset.id === activeAssetId}
-                                          onclick={() => handleAssetClick(asset)}
+                                          onclick={() => handleAssetClick(asset, index)}
                                         >
                                           <span
                                             class="explorer__node-icon explorer__node-icon--asset"
                                             aria-hidden="true"
                                           >
-                                            <svg
-                                              viewBox="0 0 16 16"
-                                              fill="none"
-                                              stroke="currentColor"
-                                              stroke-width="1.5"
-                                              stroke-linecap="round"
-                                              stroke-linejoin="round"
-                                            >
-                                              {#if assetIcon === 'audio'}
-                                                <path
-                                                  d="M3.75 9.75h2.1l2.65 2V4.25l-2.65 2h-2.1Z"
-                                                />
-                                                <path
-                                                  d="M10.5 6.2a2.7 2.7 0 0 1 0 3.6"
-                                                  opacity="0.82"
-                                                />
-                                                <path
-                                                  d="M11.9 4.75a4.7 4.7 0 0 1 0 6.5"
-                                                  opacity="0.58"
-                                                />
-                                              {:else if assetIcon === 'pdf'}
-                                                <path
-                                                  d="M4.75 2.75h4.2l2.3 2.3v7.2c0 .83-.67 1.5-1.5 1.5h-5c-.83 0-1.5-.67-1.5-1.5v-8c0-.83.67-1.5 1.5-1.5Z"
-                                                />
-                                                <path d="M8.85 2.95v2.2h2.2" opacity="0.7" />
-                                                <path d="M5.1 10.9h5.8" opacity="0.7" />
-                                                <path
-                                                  d="M5.2 8.8h1.1c.6 0 .95-.32.95-.84 0-.52-.35-.84-.95-.84H5.2Zm2.9 1.96V7.12h1c.9 0 1.48.68 1.48 1.82s-.58 1.82-1.48 1.82Zm3.22 0V7.12h2"
-                                                />
-                                              {:else if assetIcon === 'image'}
-                                                <rect
-                                                  x="3"
-                                                  y="3.25"
-                                                  width="10"
-                                                  height="9.5"
-                                                  rx="1.5"
-                                                />
-                                                <circle cx="6.1" cy="6.2" r="1" />
-                                                <path
-                                                  d="m4.2 11 2.35-2.35a1 1 0 0 1 1.4 0l1.2 1.2 1.05-.95a1 1 0 0 1 1.35.04L13 10.45"
-                                                />
-                                              {:else}
-                                                <path
-                                                  d="M5 2.75h3.8l2.2 2.2v7.3c0 .83-.67 1.5-1.5 1.5h-4.5c-.83 0-1.5-.67-1.5-1.5v-8c0-.83.67-1.5 1.5-1.5Z"
-                                                />
-                                                <path d="M8.75 2.9V5.2h2.3" opacity="0.7" />
-                                                <path d="M5.5 8h4.8M5.5 10.2h4.8" opacity="0.7" />
-                                              {/if}
-                                            </svg>
+                                            <ActionIcon name={assetIcon} size={14} />
                                           </span>
                                           <span class="explorer__node-main"
                                             >{getAssetLabel(asset, index)}</span
@@ -760,6 +848,38 @@
                               </div>
                             {/if}
                           </div>
+                          {:else}
+                            <div
+                              class="explorer__treeitem"
+                              class:is-active={item.id === activeItemId}
+                              role="treeitem"
+                              aria-level="2"
+                              aria-selected={item.id === activeItemId}
+                              aria-current={item.id === activeItemId ? 'true' : undefined}
+                              aria-label={item.title}
+                            >
+                              <div
+                                class="explorer__row explorer__row--item"
+                                style:--tree-level={TREE_VISUAL_LEVEL.item}
+                              >
+                                <span class="explorer__chevron-spacer" aria-hidden="true"></span>
+                                <button
+                                  type="button"
+                                  class="explorer__node explorer__node--item explorer__node--flush"
+                                  class:is-active={item.id === activeItemId}
+                                  onclick={() => handleItemClick(item)}
+                                >
+                                  <span
+                                    class="explorer__node-icon explorer__node-icon--item"
+                                    aria-hidden="true"
+                                  >
+                                    <ActionIcon name="file-text" size={14} />
+                                  </span>
+                                  <span class="explorer__node-main">{item.title}</span>
+                                </button>
+                              </div>
+                            </div>
+                          {/if}
                         {/each}
                       {/if}
                     </div>
@@ -780,7 +900,6 @@
         onpointerdown={startResize}
       ></div>
   </div>
-  {/if}
 </aside>
 
 <style>
@@ -793,50 +912,7 @@
     border-right: 1px solid var(--color-border-subtle);
     background: var(--color-surface);
     overflow: hidden;
-    font-size: 12px;
-  }
-
-  .explorer.is-collapsed {
-    width: 36px;
-    min-width: 36px;
-    max-width: 36px;
-  }
-
-  .explorer__rail-toggle {
-    position: absolute;
-    top: 6px;
-    right: 5px;
-    z-index: 6;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: 24px;
-    height: 24px;
-    border: 1px solid var(--color-border-subtle);
-    border-radius: 7px;
-    background: color-mix(in srgb, var(--color-surface) 92%, transparent);
-    color: var(--color-text-muted);
-    cursor: pointer;
-    transition:
-      color var(--transition-base),
-      background-color var(--transition-base),
-      border-color var(--transition-base);
-  }
-
-  .explorer__rail-toggle:hover {
-    border-color: color-mix(in srgb, var(--color-accent) 44%, transparent);
-    background: color-mix(in srgb, var(--color-accent) 10%, transparent);
-    color: var(--color-text);
-  }
-
-  .explorer__rail-toggle:focus-visible {
-    outline: 2px solid color-mix(in srgb, var(--color-accent) 70%, transparent);
-    outline-offset: 2px;
-  }
-
-  .explorer__rail-toggle svg {
-    width: 14px;
-    height: 14px;
+    font-size: var(--font-size-xs);
   }
 
   .explorer__panel {
@@ -864,7 +940,7 @@
     right: 3px;
     bottom: 8px;
     width: 1px;
-    border-radius: 999px;
+    border-radius: var(--radius-xs);
     background: transparent;
     transition: background-color var(--transition-base);
   }
@@ -900,7 +976,7 @@
 
   .explorer__scroll::-webkit-scrollbar-thumb {
     border: 2px solid transparent;
-    border-radius: 999px;
+    border-radius: var(--radius-xs);
     background: color-mix(in srgb, var(--color-text-muted) 52%, transparent);
     background-clip: padding-box;
   }
@@ -908,14 +984,17 @@
   .explorer__section-label {
     margin-bottom: 5px;
     padding-left: 5px;
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     font-weight: var(--font-weight-medium);
     color: var(--color-text-muted);
     text-transform: uppercase;
-    letter-spacing: 0.06em;
+    letter-spacing: 0.075em;
   }
 
   .explorer__tree {
+    --tree-indent-step: 24px;
+    --tree-guide-offset: 8px;
+    --tree-control-width: 17px;
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -930,12 +1009,13 @@
 
   .explorer__row {
     position: relative;
-    display: flex;
+    display: grid;
+    grid-template-columns: var(--tree-control-width) minmax(0, 1fr);
     align-items: center;
     gap: 3px;
     min-width: 0;
     min-height: 23px;
-    padding-left: calc((var(--level) - 1) * 11px);
+    padding-left: calc(var(--tree-level, 0) * var(--tree-indent-step));
   }
 
   .explorer__row::before,
@@ -946,29 +1026,19 @@
   }
 
   .explorer__row::before {
-    left: calc((var(--level) - 1) * 11px + 8px);
+    left: calc((var(--tree-level, 0) * var(--tree-indent-step)) + var(--tree-guide-offset));
     top: -3px;
     bottom: -3px;
     width: 1px;
-    background: linear-gradient(
-      180deg,
-      transparent 0%,
-      color-mix(in srgb, var(--color-border-subtle) 48%, transparent) 16%,
-      color-mix(in srgb, var(--color-border-subtle) 72%, transparent) 52%,
-      transparent 100%
-    );
+    background: color-mix(in srgb, var(--color-border-subtle) 58%, transparent);
   }
 
   .explorer__row::after {
-    left: calc((var(--level) - 1) * 11px + 8px);
+    left: calc((var(--tree-level, 0) * var(--tree-indent-step)) + var(--tree-guide-offset));
     top: 50%;
     width: 8px;
     height: 1px;
-    background: linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-border-subtle) 82%, transparent),
-      transparent
-    );
+    background: color-mix(in srgb, var(--color-border-subtle) 72%, transparent);
     transform: translateY(-0.5px);
   }
 
@@ -989,15 +1059,20 @@
     gap: 1px;
   }
 
+  .explorer__chevron-spacer {
+    width: var(--tree-control-width);
+    height: 20px;
+    pointer-events: none;
+  }
+
   .explorer__chevron {
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    width: 17px;
+    width: var(--tree-control-width);
     height: 20px;
-    flex: 0 0 17px;
     border: 1px solid transparent;
-    border-radius: 5px;
+    border-radius: var(--radius-control);
     background: transparent;
     color: var(--color-text-muted);
     cursor: pointer;
@@ -1023,15 +1098,6 @@
       0 0 0 3px color-mix(in srgb, var(--color-accent) 12%, transparent);
   }
 
-  .explorer__chevron--placeholder {
-    cursor: default;
-  }
-
-  .explorer__chevron--placeholder:hover {
-    background: transparent;
-    color: var(--color-text-muted);
-  }
-
   .explorer__chevron-icon {
     width: 12px;
     height: 12px;
@@ -1052,7 +1118,7 @@
     min-width: 0;
     padding: 3px 6px 3px 7px;
     border: 1px solid transparent;
-    border-radius: 5px;
+    border-radius: var(--radius-control);
     background: transparent;
     color: var(--color-text-secondary);
     text-align: left;
@@ -1071,7 +1137,7 @@
     top: 4px;
     bottom: 4px;
     width: 1px;
-    border-radius: 999px;
+    border-radius: var(--radius-xs);
     background: color-mix(in srgb, var(--color-accent) 70%, white 12%);
     opacity: 0;
     transform: scaleY(0.7);
@@ -1105,21 +1171,11 @@
   }
 
   .explorer__treeitem.is-active > .explorer__row::before {
-    background: linear-gradient(
-      180deg,
-      transparent 0%,
-      color-mix(in srgb, var(--color-accent) 24%, transparent) 18%,
-      color-mix(in srgb, var(--color-accent) 46%, transparent) 52%,
-      transparent 100%
-    );
+    background: color-mix(in srgb, var(--color-accent) 32%, transparent);
   }
 
   .explorer__treeitem.is-active > .explorer__row::after {
-    background: linear-gradient(
-      90deg,
-      color-mix(in srgb, var(--color-accent) 52%, transparent),
-      transparent
-    );
+    background: color-mix(in srgb, var(--color-accent) 38%, transparent);
   }
 
   .explorer__treeitem.is-active > .explorer__row > .explorer__chevron {
@@ -1137,7 +1193,7 @@
     color: color-mix(in srgb, var(--color-text-secondary) 88%, white 12%);
   }
 
-  .explorer__node-icon svg {
+  .explorer__node-icon :global(svg) {
     width: 14px;
     height: 14px;
     overflow: visible;
@@ -1161,17 +1217,17 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-    font-size: 12px;
-    line-height: 1.25;
+    font-size: var(--font-size-xs);
+    line-height: var(--line-height-tight);
   }
 
   .explorer__node-meta,
   .explorer__asset-type {
     flex: 0 0 auto;
-    font-size: 10px;
+    font-size: var(--font-size-2xs);
     color: color-mix(in srgb, var(--color-text-muted) 82%, transparent);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.075em;
   }
 
   .explorer__node.is-active .explorer__node-meta,
@@ -1185,12 +1241,12 @@
 
   .explorer__message {
     margin: 0;
-    font-size: 11px;
+    font-size: var(--font-size-xs);
     color: var(--color-text-muted);
   }
 
   .explorer__message--nested {
-    padding: 4px 0 5px 28px;
+    padding: 4px 0 5px calc((var(--tree-level, 0) * var(--tree-indent-step)) + 20px);
   }
 
   .explorer__message--error {
@@ -1198,7 +1254,7 @@
   }
 
   @media (max-width: 900px) {
-    .explorer.is-open {
+    .explorer {
       width: min(70vw, 280px);
       max-width: min(70vw, 280px);
     }

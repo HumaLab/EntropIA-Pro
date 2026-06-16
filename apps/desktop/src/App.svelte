@@ -10,6 +10,7 @@
   import CollectionView from './views/CollectionView.svelte'
   import ItemView from './views/ItemView.svelte'
   import DbBrowserView from './views/DbBrowserView.svelte'
+  import RagChatView from './views/RagChatView.svelte'
   import SettingsView from './views/SettingsView.svelte'
 
   let ready = $state(false)
@@ -17,28 +18,51 @@
   const currentView = $derived($navigation.current as View)
   const currentViewName = $derived(($navigation.current as { name: string }).name)
 
-  onMount(() => {
-    console.log('[App] onMount starting')
-    const cleanupKeyboard = setupKeyboardShortcuts()
-
+  function initializeApp() {
+    ready = false
+    error = null
     Promise.all([initLocale(), initDb()])
       .then(() => {
-        console.log('[App] initDb complete')
         ready = true
       })
       .catch((e) => {
-        console.log('[App] initDb ERROR:', e)
+        console.error('[App] init ERROR:', e)
         error = e instanceof Error ? e.message : t('app.initError')
       })
+  }
+
+  onMount(() => {
+    const cleanupKeyboard = setupKeyboardShortcuts()
+
+    initializeApp()
 
     return cleanupKeyboard
   })
 </script>
 
 {#if !ready && !error}
-  <div class="loading"><p>{t('app.initializing')}</p></div>
+  <main class="startup" aria-labelledby="startup-title">
+    <section class="startup-card" role="status" aria-live="polite">
+      <div class="startup-mark" aria-hidden="true">E</div>
+      <div class="startup-copy">
+        <p class="startup-eyebrow">EntropIA Pro</p>
+        <h1 id="startup-title">{t('app.startupTitle')}</h1>
+        <p>{t('app.initializing')}</p>
+      </div>
+    </section>
+  </main>
 {:else if error}
-  <div class="error"><p>{error}</p></div>
+  <main class="startup" aria-labelledby="startup-error-title">
+    <section class="startup-card startup-card--error" role="alert" aria-live="assertive">
+      <div class="startup-mark startup-mark--error" aria-hidden="true">!</div>
+      <div class="startup-copy">
+        <p class="startup-eyebrow">EntropIA Pro</p>
+        <h1 id="startup-error-title">{t('app.initError')}</h1>
+        <p>{error}</p>
+      </div>
+      <button type="button" class="startup-action" onclick={initializeApp}>{t('app.retryInit')}</button>
+    </section>
+  </main>
 {:else}
   <AppShell>
     {#if currentViewName === 'collections'}
@@ -52,6 +76,8 @@
       />
     {:else if currentViewName === 'db-browser'}
       <DbBrowserView />
+    {:else if currentViewName === 'rag-chat'}
+      <RagChatView />
     {:else if currentViewName === 'settings'}
       <SettingsView />
     {/if}
@@ -59,14 +85,106 @@
 {/if}
 
 <style>
-  .loading,
-  .error {
+  .startup {
     display: flex;
     align-items: center;
     justify-content: center;
-    height: 100%;
+    min-height: 100%;
+    padding: var(--space-5);
+    background:
+      radial-gradient(circle at 50% 18%, color-mix(in srgb, var(--color-accent) 12%, transparent), transparent 34%),
+      var(--surface-app, var(--color-bg));
   }
-  .error p {
+
+  .startup-card {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr);
+    align-items: center;
+    gap: var(--space-4);
+    width: min(100%, 440px);
+    padding: var(--space-5);
+    border: 1px solid var(--color-hairline);
+    border-radius: var(--radius-surface);
+    background: color-mix(in srgb, var(--color-surface-glass) 88%, transparent);
+    box-shadow: var(--shadow-surface);
+  }
+
+  .startup-card--error {
+    border-color: color-mix(in srgb, var(--color-danger) 32%, var(--color-hairline));
+  }
+
+  .startup-mark {
+    display: grid;
+    place-items: center;
+    width: 44px;
+    height: 44px;
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--color-accent) 18%, transparent);
+    color: var(--color-accent);
+    font-family: var(--font-display);
+    font-size: var(--font-size-lg);
+    font-weight: var(--font-weight-bold);
+  }
+
+  .startup-mark--error {
+    background: var(--color-danger-soft);
     color: var(--color-danger);
+  }
+
+  .startup-copy {
+    display: grid;
+    gap: var(--space-1);
+  }
+
+  .startup-eyebrow {
+    color: var(--color-text-muted);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+  }
+
+  .startup-copy p:last-child {
+    color: var(--color-text-secondary);
+  }
+
+  .startup-action {
+    grid-column: 2;
+    justify-self: start;
+    min-height: var(--control-height-md);
+    padding: 0 var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 22%, var(--color-hairline));
+    border-radius: var(--radius-control);
+    background: color-mix(in srgb, var(--color-accent) 14%, var(--color-surface-glass));
+    color: var(--color-text-primary);
+    cursor: pointer;
+    transition:
+      background-color var(--transition-smooth),
+      border-color var(--transition-smooth);
+  }
+
+  .startup-action:hover {
+    border-color: color-mix(in srgb, var(--color-accent) 40%, var(--color-hairline));
+    background: color-mix(in srgb, var(--color-accent) 20%, var(--color-surface-glass));
+  }
+
+  .startup-action:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
+  }
+
+  @media (max-width: 520px) {
+    .startup {
+      padding: var(--space-4);
+    }
+
+    .startup-card {
+      grid-template-columns: 1fr;
+      justify-items: start;
+    }
+
+    .startup-action {
+      grid-column: 1;
+    }
   }
 </style>

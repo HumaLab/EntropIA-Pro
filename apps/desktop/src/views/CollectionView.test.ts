@@ -1,12 +1,16 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest'
 import CollectionView from './CollectionView.svelte'
 import { locale } from '$lib/i18n'
+import { DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT } from '$lib/document-explorer'
 
-const { storeRef, navigationRef } = vi.hoisted(() => ({
+const { storeRef, navigationRef, fileImportRef, dragDropRef } = vi.hoisted(() => ({
   storeRef: {
     current: {
       items: {
+        // CollectionView feature-detects this method: undefined exercises the
+        // findByCollection/searchByText fallback path most tests rely on.
+        findCardSummariesByCollection: undefined as Mock | undefined,
         findByCollection: vi.fn(),
         searchByText: vi.fn(),
         create: vi.fn(),
@@ -20,11 +24,31 @@ const { storeRef, navigationRef } = vi.hoisted(() => ({
         findById: vi.fn(),
         deleteWithCascade: vi.fn(),
       },
+      extractions: {
+        findTextByCollection: vi.fn(),
+      },
+      transcriptions: {
+        findTextByCollection: vi.fn(),
+      },
     },
   },
   navigationRef: {
     current: { name: 'collection', collectionName: 'Colección' } as const,
     navigate: vi.fn(),
+  },
+  fileImportRef: {
+    pickFiles: vi.fn(),
+    classifyFiles: vi.fn(),
+    importSingleFile: vi.fn(),
+    isScannedPdf: vi.fn(),
+    renderPdfPages: vi.fn(),
+    generateImageThumbnail: vi.fn(),
+  },
+  dragDropRef: {
+    onDragDropEvent: vi.fn(),
+    handler: undefined as
+      | ((event: { payload: { type: string; paths?: string[] } }) => void)
+      | undefined,
   },
 }))
 
@@ -49,6 +73,7 @@ type AssetRow = {
 function createStore(items: ItemRow[], assets: AssetRow[] = []) {
   return {
     items: {
+      findCardSummariesByCollection: undefined,
       findByCollection: vi.fn().mockResolvedValue(items),
       searchByText: vi.fn().mockResolvedValue(items),
       create: vi.fn(),
@@ -62,7 +87,23 @@ function createStore(items: ItemRow[], assets: AssetRow[] = []) {
       findById: vi.fn().mockResolvedValue(assets[0] ?? null),
       deleteWithCascade: vi.fn().mockResolvedValue(undefined),
     },
+    extractions: {
+      findTextByCollection: vi.fn().mockResolvedValue([]),
+    },
+    transcriptions: {
+      findTextByCollection: vi.fn().mockResolvedValue([]),
+    },
   }
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
 }
 
 vi.mock('$lib/db', () => ({
@@ -74,12 +115,19 @@ vi.mock('$lib/navigation', () => ({
 }))
 
 vi.mock('$lib/file-import', () => ({
+  pickFiles: fileImportRef.pickFiles,
+  classifyFiles: fileImportRef.classifyFiles,
+  importSingleFile: fileImportRef.importSingleFile,
+  isScannedPdf: fileImportRef.isScannedPdf,
+  renderPdfPages: fileImportRef.renderPdfPages,
   pickAndImportFiles: vi.fn().mockResolvedValue([]),
   importFilesFromPaths: vi
     .fn()
     .mockResolvedValue({ imported: [], rejected: [], skippedDuplicatePaths: 0 }),
   getAssetUrl: vi.fn().mockImplementation((p: string) => `asset://localhost${p}`),
+  generateImageThumbnail: fileImportRef.generateImageThumbnail,
   deleteAssetFile: vi.fn().mockResolvedValue(undefined),
+  deleteImageThumbnail: vi.fn().mockResolvedValue(undefined),
   generatePdfThumbnail: vi.fn().mockResolvedValue('asset://localhost/thumbnails/asset-1.png'),
   deletePdfThumbnail: vi.fn().mockResolvedValue(undefined),
 }))
@@ -90,9 +138,28 @@ vi.mock('$lib/export', () => ({
 
 vi.mock('@tauri-apps/api/webview', () => ({
   getCurrentWebview: vi.fn(() => ({
-    onDragDropEvent: vi.fn().mockResolvedValue(vi.fn()),
+    onDragDropEvent: dragDropRef.onDragDropEvent,
   })),
 }))
+
+beforeEach(() => {
+  fileImportRef.pickFiles.mockReset()
+  fileImportRef.classifyFiles.mockReset()
+  fileImportRef.importSingleFile.mockReset()
+  fileImportRef.isScannedPdf.mockReset()
+  fileImportRef.renderPdfPages.mockReset()
+  fileImportRef.generateImageThumbnail.mockReset()
+  fileImportRef.pickFiles.mockResolvedValue([])
+  fileImportRef.classifyFiles.mockReturnValue({ classified: [], rejected: [] })
+  fileImportRef.isScannedPdf.mockResolvedValue(false)
+  fileImportRef.generateImageThumbnail.mockResolvedValue('asset://localhost/thumbs/image-asset-1.png')
+  dragDropRef.handler = undefined
+  dragDropRef.onDragDropEvent.mockReset()
+  dragDropRef.onDragDropEvent.mockImplementation((handler) => {
+    dragDropRef.handler = handler
+    return Promise.resolve(vi.fn())
+  })
+})
 
 describe('CollectionView consumer compatibility', () => {
   beforeEach(() => {
@@ -166,6 +233,148 @@ describe('CollectionView consumer compatibility', () => {
     ).toBeInTheDocument()
   })
 
+  it('uses card summaries without per-item asset lookups and renders cached image thumbnails', async () => {
+    const { generateImageThumbnail } = await import('$lib/file-import')
+    const originalAssetUrl = 'asset://localhost/app-data/assets/col-1/item-1/original.jpg'
+    const thumbnailUrl = 'asset://localhost/app-data/thumbnails/image-asset-1.png'
+    fileImportRef.generateImageThumbnail.mockResolvedValueOnce(thumbnailUrl)
+    storeRef.current = {
+      items: {
+        findCardSummariesByCollection: vi.fn().mockResolvedValue([
+          {
+            id: 'item-1',
+            title: 'Imagen grande',
+            createdAt: 1,
+            updatedAt: 2,
+            collectionId: 'col-1',
+            metadata: null,
+            assetCount: 1,
+            primaryAssetId: 'asset-1',
+            primaryAssetPath: '/app-data/assets/col-1/item-1/original.jpg',
+            primaryAssetType: 'image',
+          },
+        ]),
+        findByCollection: vi.fn(),
+        searchByText: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      assets: {
+        create: vi.fn(),
+        findByItem: vi.fn(),
+        findById: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      extractions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+      transcriptions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    expect(await screen.findByText('Imagen grande')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(generateImageThumbnail).toHaveBeenCalledWith(
+        '/app-data/assets/col-1/item-1/original.jpg',
+        'asset-1'
+      )
+      expect(storeRef.current.items.findCardSummariesByCollection).toHaveBeenCalledWith('col-1', '')
+      expect(storeRef.current.items.findByCollection).not.toHaveBeenCalled()
+      expect(storeRef.current.assets.findByItem).not.toHaveBeenCalled()
+    })
+
+    const image = await screen.findByRole('img', { name: 'Imagen grande' })
+    expect(image).toHaveAttribute('src', thumbnailUrl)
+    expect(image).not.toHaveAttribute('src', originalAssetUrl)
+  })
+
+  it('generates image thumbnails with limited concurrency and renders each chunk', async () => {
+    const summaries = Array.from({ length: 6 }, (_, index) => {
+      const itemNumber = index + 1
+      return {
+        id: `item-${itemNumber}`,
+        title: `Imagen ${itemNumber}`,
+        createdAt: itemNumber,
+        updatedAt: itemNumber,
+        collectionId: 'col-1',
+        metadata: null,
+        assetCount: 1,
+        primaryAssetId: `asset-${itemNumber}`,
+        primaryAssetPath: `/app-data/assets/col-1/item-${itemNumber}/original.jpg`,
+        primaryAssetType: 'image',
+      }
+    })
+    const thumbnailLoads: Array<{ assetId: string; resolve: (value: string) => void }> = []
+    let activeThumbnailLoads = 0
+    let maxActiveThumbnailLoads = 0
+    fileImportRef.generateImageThumbnail.mockImplementation((_path: string, assetId: string) => {
+      activeThumbnailLoads++
+      maxActiveThumbnailLoads = Math.max(maxActiveThumbnailLoads, activeThumbnailLoads)
+      const load = deferred<string>()
+      thumbnailLoads.push({
+        assetId,
+        resolve: (value) => {
+          activeThumbnailLoads--
+          load.resolve(value)
+        },
+      })
+      return load.promise
+    })
+    storeRef.current = {
+      items: {
+        findCardSummariesByCollection: vi.fn().mockResolvedValue(summaries),
+        findByCollection: vi.fn(),
+        searchByText: vi.fn(),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      assets: {
+        create: vi.fn(),
+        findByItem: vi.fn(),
+        findById: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      extractions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+      transcriptions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    expect(await screen.findByText('Imagen 1')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(fileImportRef.generateImageThumbnail).toHaveBeenCalledTimes(4)
+    })
+    expect(maxActiveThumbnailLoads).toBe(4)
+
+    for (const load of thumbnailLoads.slice(0, 4)) {
+      load.resolve(`asset://localhost/app-data/thumbnails/${load.assetId}.png`)
+    }
+
+    await waitFor(() => {
+      expect(fileImportRef.generateImageThumbnail).toHaveBeenCalledTimes(6)
+    })
+
+    for (const load of thumbnailLoads.slice(4)) {
+      load.resolve(`asset://localhost/app-data/thumbnails/${load.assetId}.png`)
+    }
+
+    const image = await screen.findByRole('img', { name: 'Imagen 6' })
+    expect(image).toHaveAttribute('src', 'asset://localhost/app-data/thumbnails/asset-6.png')
+  })
+
   it('updates translated collection copy when locale changes', async () => {
     render(CollectionView, { collectionId: 'col-1' })
 
@@ -181,6 +390,409 @@ describe('CollectionView consumer compatibility', () => {
       expect(
         screen.getByText('Import, browse, and keep this collection assets organized.')
       ).toBeInTheDocument()
+    })
+  })
+
+  it('ignores stale item loads that resolve after a newer search', async () => {
+    const firstLoad = deferred<ItemRow[]>()
+    const searchLoad = deferred<ItemRow[]>()
+    const oldItem: ItemRow = {
+      id: 'item-old',
+      title: 'Acta vieja',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      collectionId: 'col-1',
+      metadata: null,
+    }
+    const newItem: ItemRow = {
+      id: 'item-new',
+      title: 'Acta nueva',
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      collectionId: 'col-1',
+      metadata: null,
+    }
+
+    storeRef.current = {
+      items: {
+        findCardSummariesByCollection: undefined,
+        findByCollection: vi.fn().mockReturnValueOnce(firstLoad.promise),
+        searchByText: vi.fn().mockReturnValueOnce(searchLoad.promise),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      assets: {
+        create: vi.fn(),
+        findByItem: vi.fn().mockResolvedValue([]),
+        findById: vi.fn().mockResolvedValue(null),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      extractions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+      transcriptions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'acta' } })
+    await vi.advanceTimersByTimeAsync(300)
+
+    searchLoad.resolve([newItem])
+
+    expect(await screen.findByText('Acta nueva')).toBeInTheDocument()
+
+    firstLoad.resolve([oldItem])
+
+    await waitFor(() => {
+      expect(screen.getByText('Acta nueva')).toBeInTheDocument()
+      expect(screen.queryByText('Acta vieja')).not.toBeInTheDocument()
+    })
+  })
+
+  it('reloads and resets collection state when collectionId changes', async () => {
+    storeRef.current = {
+      items: {
+        findCardSummariesByCollection: undefined,
+        findByCollection: vi.fn().mockImplementation(async (collectionId: string) =>
+          collectionId === 'col-2'
+            ? [
+                {
+                  id: 'item-2',
+                  title: 'Contrato nuevo',
+                  createdAt: Date.now(),
+                  updatedAt: Date.now(),
+                  collectionId: 'col-2',
+                  metadata: null,
+                },
+              ]
+            : [
+                {
+                  id: 'item-1',
+                  title: 'Acta vieja',
+                  createdAt: Date.now(),
+                  updatedAt: Date.now(),
+                  collectionId: 'col-1',
+                  metadata: null,
+                },
+              ]
+        ),
+        searchByText: vi.fn().mockResolvedValue([
+          {
+            id: 'item-1',
+            title: 'Acta vieja',
+            createdAt: Date.now(),
+            updatedAt: Date.now(),
+            collectionId: 'col-1',
+            metadata: null,
+          },
+        ]),
+        create: vi.fn(),
+        update: vi.fn(),
+        delete: vi.fn(),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      assets: {
+        create: vi.fn(),
+        findByItem: vi.fn().mockResolvedValue([]),
+        findById: vi.fn().mockResolvedValue(null),
+        deleteWithCascade: vi.fn().mockResolvedValue(undefined),
+      },
+      extractions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+      transcriptions: {
+        findTextByCollection: vi.fn().mockResolvedValue([]),
+      },
+    }
+
+    const { rerender } = render(CollectionView, { collectionId: 'col-1' })
+
+    expect(await screen.findByText('Acta vieja')).toBeInTheDocument()
+
+    await fireEvent.input(screen.getByRole('searchbox'), { target: { value: 'acta' } })
+    await vi.advanceTimersByTimeAsync(300)
+
+    await waitFor(() => {
+      expect(storeRef.current.items.searchByText).toHaveBeenCalledWith('col-1', 'acta')
+    })
+
+    await rerender({ collectionId: 'col-2' })
+
+    expect(await screen.findByText('Contrato nuevo')).toBeInTheDocument()
+
+    await waitFor(() => {
+      expect(storeRef.current.items.findByCollection).toHaveBeenCalledWith('col-2')
+    })
+    expect(storeRef.current.items.searchByText).not.toHaveBeenCalledWith('col-2', 'acta')
+    expect(screen.queryByText('Acta vieja')).not.toBeInTheDocument()
+  })
+})
+
+describe('CollectionView import flow', () => {
+  beforeEach(() => {
+    locale.set('es')
+    vi.useFakeTimers()
+    navigationRef.navigate.mockReset()
+    navigationRef.current = { name: 'collection', collectionName: 'Colección' }
+    storeRef.current = createStore([])
+    storeRef.current.items.create = vi.fn().mockResolvedValue({ id: 'item-new' })
+    storeRef.current.items.update = vi.fn().mockResolvedValue(undefined)
+    storeRef.current.items.delete = vi.fn().mockResolvedValue(undefined)
+    storeRef.current.assets.create = vi.fn().mockResolvedValue({ id: 'asset-new' })
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
+  function mockImageImport(sourcePath = 'C:\\tmp\\photo.png') {
+    fileImportRef.classifyFiles.mockReturnValue({
+      classified: [{ sourcePath, name: 'photo.png', type: 'image' }],
+      rejected: [],
+    })
+    fileImportRef.importSingleFile.mockResolvedValue({
+      originalName: 'photo.png',
+      originalPath: sourcePath,
+      destPath: 'C:\\app-data\\assets\\col-1\\item-new\\photo.png',
+      type: 'image',
+      size: 123,
+      originalMetadata: {
+        originalName: 'photo.png',
+        originalPath: sourcePath,
+        importedAt: '2026-06-02T00:00:00.000Z',
+        sizeBytes: 123,
+      },
+    })
+  }
+
+  it('imports picker-selected paths through the shared item/asset workflow', async () => {
+    const sourcePath = 'C:\\tmp\\photo.png'
+    const explorerRefreshes: CustomEvent[] = []
+    const handleExplorerRefresh = (event: Event) => {
+      explorerRefreshes.push(event as CustomEvent)
+    }
+    window.addEventListener(DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT, handleExplorerRefresh)
+    fileImportRef.pickFiles.mockResolvedValue([sourcePath])
+    mockImageImport(sourcePath)
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Importar documento/ }))
+
+    await waitFor(() => {
+      expect(fileImportRef.classifyFiles).toHaveBeenCalledWith([sourcePath])
+      expect(storeRef.current.items.create).toHaveBeenCalledWith({
+        title: 'photo',
+        collectionId: 'col-1',
+        metadata: null,
+      })
+      expect(fileImportRef.importSingleFile).toHaveBeenCalledWith(sourcePath, 'col-1', 'item-new')
+      expect(storeRef.current.assets.create).toHaveBeenCalledWith({
+        itemId: 'item-new',
+        path: 'C:\\app-data\\assets\\col-1\\item-new\\photo.png',
+        type: 'image',
+        size: 123,
+        sortIndex: 0,
+      })
+      expect(navigationRef.navigate).toHaveBeenCalledWith({
+        name: 'item',
+        collectionId: 'col-1',
+        collectionName: 'Colección',
+        itemId: 'item-new',
+        itemTitle: 'photo',
+      })
+      expect(explorerRefreshes.at(-1)?.detail).toEqual({ collectionId: 'col-1' })
+    })
+
+    window.removeEventListener(DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT, handleExplorerRefresh)
+
+    expect(screen.getByRole('region', { name: 'Resumen de importación' })).toBeInTheDocument()
+    expect(screen.getByText('Abrimos el último documento importado: photo.')).toBeInTheDocument()
+    expect(screen.getByText('Importados')).toBeInTheDocument()
+    expect(screen.getByText('Omitidos')).toBeInTheDocument()
+    expect(screen.getByText('Errores')).toBeInTheDocument()
+  })
+
+  it('shows import progress while the picker is pending', async () => {
+    const pendingPicker = deferred<string[]>()
+    fileImportRef.pickFiles.mockReturnValueOnce(pendingPicker.promise)
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Importar documento/ }))
+
+    expect(screen.getByRole('region', { name: 'Resumen de importación' })).toBeInTheDocument()
+    expect(screen.getByText('Importando archivos')).toBeInTheDocument()
+    expect(screen.getByText('Estamos copiando archivos y creando documentos.')).toBeInTheDocument()
+
+    pendingPicker.resolve([])
+    await waitFor(() => {
+      expect(screen.queryByText('Importando archivos')).not.toBeInTheDocument()
+    })
+  })
+
+  it('summarizes skipped unsupported files without creating items', async () => {
+    const sourcePath = 'C:\\tmp\\notes.exe'
+    fileImportRef.pickFiles.mockResolvedValue([sourcePath])
+    fileImportRef.classifyFiles.mockReturnValue({ classified: [], rejected: ['notes.exe'] })
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Importar documento/ }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('region', { name: 'Resumen de importación' })).toBeInTheDocument()
+      expect(screen.getByText('Omitidos: notes.exe')).toBeInTheDocument()
+      expect(storeRef.current.items.create).not.toHaveBeenCalled()
+    })
+  })
+
+  it('stays in the collection and shows dismissible per-file errors when an import partially fails', async () => {
+    const okPath = 'C:\\tmp\\photo.png'
+    const brokenPath = 'C:\\tmp\\broken.png'
+    fileImportRef.pickFiles.mockResolvedValue([okPath, brokenPath])
+    fileImportRef.classifyFiles.mockReturnValue({
+      classified: [
+        { sourcePath: okPath, name: 'photo.png', type: 'image' },
+        { sourcePath: brokenPath, name: 'broken.png', type: 'image' },
+      ],
+      rejected: [],
+    })
+    storeRef.current.items.create = vi
+      .fn()
+      .mockResolvedValueOnce({ id: 'item-ok' })
+      .mockResolvedValueOnce({ id: 'item-broken' })
+    fileImportRef.importSingleFile.mockImplementation(async (sourcePath: string) => {
+      if (sourcePath === brokenPath) throw new Error('disk full')
+      return {
+        originalName: 'photo.png',
+        originalPath: sourcePath,
+        destPath: 'C:\\app-data\\assets\\col-1\\item-ok\\photo.png',
+        type: 'image',
+        size: 123,
+        originalMetadata: {
+          originalName: 'photo.png',
+          originalPath: sourcePath,
+          importedAt: '2026-06-02T00:00:00.000Z',
+          sizeBytes: 123,
+        },
+      }
+    })
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Importar documento/ }))
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(/importing broken\.png.*disk full/)
+      ).toBeInTheDocument()
+    })
+
+    // Both files were attempted; the failed item was cleaned up.
+    expect(fileImportRef.importSingleFile).toHaveBeenCalledTimes(2)
+    expect(storeRef.current.items.delete).toHaveBeenCalledWith('item-broken')
+
+    // Partial failure → no auto-navigation, summary stays visible.
+    expect(navigationRef.navigate).not.toHaveBeenCalled()
+    expect(
+      screen.getByText('Algunos archivos no se pudieron importar. Revisá el detalle antes de continuar.')
+    ).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Cerrar resumen' }))
+
+    await waitFor(() => {
+      expect(screen.queryByRole('region', { name: 'Resumen de importación' })).not.toBeInTheDocument()
+    })
+  })
+
+  it('keeps importing remaining files and lists every per-file error', async () => {
+    fileImportRef.pickFiles.mockResolvedValue(['C:\\tmp\\a.png', 'C:\\tmp\\b.png', 'C:\\tmp\\c.png'])
+    fileImportRef.classifyFiles.mockReturnValue({
+      classified: [
+        { sourcePath: 'C:\\tmp\\a.png', name: 'a.png', type: 'image' },
+        { sourcePath: 'C:\\tmp\\b.png', name: 'b.png', type: 'image' },
+        { sourcePath: 'C:\\tmp\\c.png', name: 'c.png', type: 'image' },
+      ],
+      rejected: [],
+    })
+    let createCount = 0
+    storeRef.current.items.create = vi.fn().mockImplementation(async () => ({
+      id: `item-${++createCount}`,
+    }))
+    fileImportRef.importSingleFile.mockImplementation(async (sourcePath: string) => {
+      if (sourcePath.endsWith('a.png')) throw new Error('copy failed a')
+      if (sourcePath.endsWith('b.png')) throw new Error('copy failed b')
+      return {
+        originalName: 'c.png',
+        originalPath: sourcePath,
+        destPath: 'C:\\app-data\\assets\\col-1\\item-3\\c.png',
+        type: 'image',
+        size: 1,
+        originalMetadata: {
+          originalName: 'c.png',
+          originalPath: sourcePath,
+          importedAt: '2026-06-02T00:00:00.000Z',
+          sizeBytes: 1,
+        },
+      }
+    })
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Importar documento/ }))
+
+    await waitFor(() => {
+      expect(screen.getByText(/importing a\.png.*copy failed a/)).toBeInTheDocument()
+      expect(screen.getByText(/importing b\.png.*copy failed b/)).toBeInTheDocument()
+    })
+
+    // The third file still imported despite the earlier failures.
+    expect(storeRef.current.assets.create).toHaveBeenCalledWith(
+      expect.objectContaining({ itemId: 'item-3' })
+    )
+    expect(navigationRef.navigate).not.toHaveBeenCalled()
+  })
+
+  it('imports dropped paths through the same item/asset workflow', async () => {
+    const sourcePath = 'C:\\tmp\\photo.png'
+    mockImageImport(sourcePath)
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await waitFor(() => {
+      expect(dragDropRef.handler).toBeDefined()
+    })
+
+    dragDropRef.handler?.({ payload: { type: 'drop', paths: [sourcePath] } })
+
+    await waitFor(() => {
+      expect(fileImportRef.classifyFiles).toHaveBeenCalledWith([sourcePath])
+      expect(storeRef.current.items.create).toHaveBeenCalledWith({
+        title: 'photo',
+        collectionId: 'col-1',
+        metadata: null,
+      })
+      expect(fileImportRef.importSingleFile).toHaveBeenCalledWith(sourcePath, 'col-1', 'item-new')
+      expect(storeRef.current.assets.create).toHaveBeenCalledWith({
+        itemId: 'item-new',
+        path: 'C:\\app-data\\assets\\col-1\\item-new\\photo.png',
+        type: 'image',
+        size: 123,
+        sortIndex: 0,
+      })
+      expect(navigationRef.navigate).toHaveBeenCalledWith({
+        name: 'item',
+        collectionId: 'col-1',
+        collectionName: 'Colección',
+        itemId: 'item-new',
+        itemTitle: 'photo',
+      })
     })
   })
 })
@@ -238,11 +850,8 @@ describe('CollectionView asset deletion', () => {
     const deleteBtn = screen.getByRole('button', { name: 'Delete Acta' })
     await fireEvent.click(deleteBtn)
 
-    // Modal should appear with destructive dialog semantics
-    const dialog = screen.getByRole('alertdialog')
-    expect(dialog).toBeInTheDocument()
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog).toHaveAccessibleDescription(/uuid_acta\.pdf/)
+    // Modal should appear
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(screen.getByText(/¿Seguro que querés eliminar/)).toBeInTheDocument()
     expect(screen.getByText(/uuid_acta\.pdf/)).toBeInTheDocument()
   })
@@ -253,18 +862,23 @@ describe('CollectionView asset deletion', () => {
     const deleteBtn = screen.getByRole('button', { name: 'Delete Acta' })
     await fireEvent.click(deleteBtn)
 
-    expect(screen.getByRole('alertdialog')).toBeInTheDocument()
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
 
     const cancelBtn = screen.getByRole('button', { name: 'Cancelar' })
     await fireEvent.click(cancelBtn)
 
     await waitFor(() => {
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
   })
 
   it('deletes entire item when last asset is removed — card disappears from grid', async () => {
     const { deleteAssetFile } = await import('$lib/file-import')
+    const explorerRefreshes: CustomEvent[] = []
+    const handleExplorerRefresh = (event: Event) => {
+      explorerRefreshes.push(event as CustomEvent)
+    }
+    window.addEventListener(DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT, handleExplorerRefresh)
 
     await renderAndWaitForItems()
 
@@ -282,7 +896,10 @@ describe('CollectionView asset deletion', () => {
       expect(deleteAssetFile).toHaveBeenCalledWith(sampleAsset.path)
       // Last asset → entire item is deleted, not just the asset
       expect(storeRef.current.items.deleteWithCascade).toHaveBeenCalledWith('item-1')
+      expect(explorerRefreshes.at(-1)?.detail).toEqual({ collectionId: 'col-1', itemId: 'item-1' })
     })
+
+    window.removeEventListener(DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT, handleExplorerRefresh)
 
     // Card should be removed from the grid (no ghost card)
     await waitFor(() => {
@@ -291,11 +908,11 @@ describe('CollectionView asset deletion', () => {
 
     // Modal should close after successful deletion
     await waitFor(() => {
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     })
   })
 
-  it('still removes card even when DB cleanup fails — resilient deletion', async () => {
+  it('keeps the dialog and warning visible when DB cleanup fails', async () => {
     const { deleteAssetFile } = await import('$lib/file-import')
     // Simulate DB failure
     storeRef.current.items.deleteWithCascade = vi.fn().mockRejectedValueOnce(new Error('DB locked'))
@@ -317,36 +934,16 @@ describe('CollectionView asset deletion', () => {
       // DB failed but...
     })
 
-    // Card is STILL removed — UI update is not blocked by DB error
+    // Card stays visible because DB cleanup is the authoritative state.
     await waitFor(() => {
-      expect(screen.queryByText('Acta')).not.toBeInTheDocument()
+      expect(screen.getByText('Acta')).toBeInTheDocument()
     })
 
-    // Modal closes even on DB failure
+    // Modal stays open and explains the partial failure instead of pretending success.
     await waitFor(() => {
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
+      expect(screen.getByRole('dialog')).toBeInTheDocument()
+      expect(screen.getByText(/DB locked/)).toBeInTheDocument()
     })
-  })
-
-  it('closes delete confirmation with Escape and restores focus to the trigger', async () => {
-    await renderAndWaitForItems()
-
-    const deleteBtn = screen.getByRole('button', { name: 'Delete Acta' })
-    deleteBtn.focus()
-    await fireEvent.click(deleteBtn)
-    await vi.advanceTimersByTimeAsync(0)
-
-    const dialog = screen.getByRole('alertdialog')
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus()
-    })
-
-    await fireEvent.keyDown(dialog, { key: 'Escape' })
-
-    await waitFor(() => {
-      expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    })
-    expect(deleteBtn).toHaveFocus()
   })
 
   it('does NOT call findById — uses cached path for file deletion', async () => {
@@ -365,6 +962,53 @@ describe('CollectionView asset deletion', () => {
       expect(deleteAssetFile).toHaveBeenCalled()
       // findById should NOT be called — path comes from cache
       expect(storeRef.current.assets.findById).not.toHaveBeenCalled()
+    })
+  })
+
+  it('routes image asset deletion through delete_asset_files to remove versioned siblings', async () => {
+    const { invoke } = await import('@tauri-apps/api/core')
+    const { deleteAssetFile } = await import('$lib/file-import')
+    vi.mocked(invoke).mockClear()
+    vi.mocked(deleteAssetFile).mockClear()
+
+    const imageAsset: AssetRow = {
+      id: 'asset-img-1',
+      itemId: 'item-1',
+      path: '/app-data/assets/col-1/item-1/uuid_foto_v3.png',
+      type: 'image',
+      size: 2048,
+      createdAt: Date.now(),
+    }
+    storeRef.current = createStore(
+      [
+        {
+          id: 'item-1',
+          title: 'Acta',
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+          collectionId: 'col-1',
+          metadata: null,
+        },
+      ],
+      [imageAsset]
+    )
+
+    await renderAndWaitForItems()
+
+    const deleteBtn = screen.getByRole('button', { name: 'Delete Acta' })
+    await fireEvent.click(deleteBtn)
+
+    const confirmBtn = screen.getByRole('button', { name: 'Eliminar asset' })
+    await fireEvent.click(confirmBtn)
+
+    await waitFor(() => {
+      // Image files go through the backend GC so edited versions
+      // (foto_v2.png, foto_v3.png, …) are deleted together.
+      expect(invoke).toHaveBeenCalledWith('delete_asset_files', { assetPath: imageAsset.path })
+      // The plain single-file deletion must NOT be used for images.
+      expect(deleteAssetFile).not.toHaveBeenCalled()
+      // DB cascade is preserved: last asset → entire item removed.
+      expect(storeRef.current.items.deleteWithCascade).toHaveBeenCalledWith('item-1')
     })
   })
 })
@@ -446,5 +1090,142 @@ describe('CollectionView PDF thumbnail', () => {
     const confirmBtn = screen.getByRole('button', { name: 'Eliminar asset' })
     expect(confirmBtn.querySelector('svg')).toBeInTheDocument()
     expect(confirmBtn).not.toHaveTextContent('Eliminar')
+  })
+})
+
+describe('CollectionView analysis panel', () => {
+  beforeEach(() => {
+    locale.set('es')
+    localStorage.clear()
+    navigationRef.navigate.mockReset()
+    storeRef.current = createStore([
+      {
+        id: 'item-1',
+        title: 'Acta',
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+        collectionId: 'col-1',
+        metadata: null,
+      },
+    ])
+  })
+
+  it('renders the toggle but does not load the corpus while the panel is closed', async () => {
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await waitFor(() => {
+      expect(storeRef.current.items.findByCollection).toHaveBeenCalledWith('col-1')
+    })
+
+    expect(
+      screen.getByRole('button', { name: 'Mostrar análisis textual' })
+    ).toBeInTheDocument()
+    expect(storeRef.current.extractions.findTextByCollection).not.toHaveBeenCalled()
+    expect(storeRef.current.transcriptions.findTextByCollection).not.toHaveBeenCalled()
+  })
+
+  it('loads the corpus lazily on open and renders cloud and bar chart', async () => {
+    storeRef.current.extractions.findTextByCollection = vi.fn().mockResolvedValue([
+      { assetId: 'asset-1', textContent: 'fábrica fábrica huelga conserva', createdAt: 100 },
+    ])
+    storeRef.current.transcriptions.findTextByCollection = vi.fn().mockResolvedValue([
+      { assetId: 'asset-2', textContent: 'Hablante 1: la fábrica de conservas', createdAt: 200 },
+    ])
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Mostrar análisis textual' }))
+
+    await waitFor(() => {
+      expect(storeRef.current.extractions.findTextByCollection).toHaveBeenCalledWith('col-1')
+      expect(storeRef.current.transcriptions.findTextByCollection).toHaveBeenCalledWith('col-1')
+    })
+
+    expect(await screen.findByText('Análisis textual')).toBeInTheDocument()
+    // "fábrica" appears in the cloud span and in the bar chart x-label.
+    const matches = await screen.findAllByText('fábrica')
+    expect(matches.length).toBeGreaterThan(0)
+    // Speaker labels never reach the frequencies.
+    expect(screen.queryByText('hablante')).not.toBeInTheDocument()
+    // Distinct words: fábrica, huelga, conserva, conservas → meta line.
+    expect(screen.getByText('4 palabras distintas · 6 tokens')).toBeInTheDocument()
+
+    // Closing unmounts the panel.
+    await fireEvent.click(screen.getByRole('button', { name: 'Ocultar análisis textual' }))
+    await waitFor(() => {
+      expect(screen.queryByText('Análisis textual')).not.toBeInTheDocument()
+    })
+  })
+
+  it('shows the empty state when the collection has no extracted text', async () => {
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Mostrar análisis textual' }))
+
+    expect(
+      await screen.findByText(
+        'No hay texto extraído en esta colección. Ejecutá OCR o transcripción en los documentos.'
+      )
+    ).toBeInTheDocument()
+  })
+
+  it('shows the error state with retry when the corpus load fails', async () => {
+    storeRef.current.extractions.findTextByCollection = vi
+      .fn()
+      .mockRejectedValueOnce(new Error('DB locked'))
+      .mockResolvedValueOnce([
+        { assetId: 'asset-1', textContent: 'fábrica conserva', createdAt: 100 },
+      ])
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Mostrar análisis textual' }))
+
+    expect(
+      await screen.findByText('No se pudo analizar el texto de la colección.')
+    ).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Reintentar' }))
+
+    const matches = await screen.findAllByText('fábrica')
+    expect(matches.length).toBeGreaterThan(0)
+  })
+
+  it('applies term count and custom stopwords reactively and persists them per collection', async () => {
+    storeRef.current.extractions.findTextByCollection = vi.fn().mockResolvedValue([
+      { assetId: 'asset-1', textContent: 'fábrica fábrica huelga conserva', createdAt: 100 },
+    ])
+
+    render(CollectionView, { collectionId: 'col-1' })
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Mostrar análisis textual' }))
+    expect((await screen.findAllByText('fábrica')).length).toBeGreaterThan(0)
+
+    await fireEvent.click(screen.getByRole('tab', { name: 'Parámetros' }))
+
+    const termInput = screen.getByLabelText('Términos en la nube')
+    await fireEvent.change(termInput, { target: { value: '20' } })
+
+    const stopwordsArea = screen.getByLabelText('Stopwords personalizadas')
+    await fireEvent.input(stopwordsArea, { target: { value: 'fábrica' } })
+
+    // Debounced recompute drops the word from cloud and bar chart alike.
+    await waitFor(() => {
+      expect(screen.queryAllByText('fábrica')).toHaveLength(0)
+    })
+    expect(screen.queryAllByText('huelga').length).toBeGreaterThan(0)
+
+    const stored = JSON.parse(
+      localStorage.getItem('entropia-collection-analysis-settings:col-1') ?? 'null'
+    )
+    expect(stored).toEqual({ cloudTermCount: 20, customStopwords: ['fábrica'] })
+
+    // Out-of-range input clamps to the configured maximum.
+    await fireEvent.change(termInput, { target: { value: '999' } })
+    expect((termInput as HTMLInputElement).value).toBe('100')
+
+    // Back to the visualization: cloud title reflects the term count.
+    await fireEvent.click(screen.getByRole('tab', { name: 'Visualización' }))
+    expect(await screen.findByText('Top 100 palabras')).toBeInTheDocument()
   })
 })

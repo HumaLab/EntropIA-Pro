@@ -174,6 +174,83 @@ describe('ItemRepo', () => {
       const result = await repo.findByCollection('col-1')
       expect(result).toEqual(items)
       expect(result).toHaveLength(2)
+      expect(selectResult.chain['orderBy']).toHaveBeenCalledOnce()
+    })
+  })
+
+  describe('findCardSummariesByCollection', () => {
+    it('uses one raw query for item card summaries with asset counts and primary asset fields', async () => {
+      const rawSelectMock = vi.fn().mockResolvedValue([
+        {
+          id: 'item-1',
+          title: 'Doc A',
+          collection_id: 'col-1',
+          metadata: null,
+          created_at: 100,
+          updated_at: 200,
+          asset_count: 2,
+          primary_asset_id: 'asset-image-1',
+          primary_asset_path: '/assets/doc-a.jpg',
+          primary_asset_type: 'image',
+        },
+      ])
+      const rawClient = {
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+        executeBatch: vi.fn().mockResolvedValue(undefined),
+        select: rawSelectMock,
+      } as unknown as DbClient
+      const repoWithRaw = new ItemRepo(db.db, rawClient)
+
+      const result = await repoWithRaw.findCardSummariesByCollection('col-1')
+
+      expect(rawSelectMock).toHaveBeenCalledOnce()
+      expect(rawSelectMock.mock.calls[0]?.[0]).toContain('COUNT(a.id) AS asset_count')
+      expect(rawSelectMock.mock.calls[0]?.[0]).toContain('LEFT JOIN assets pa')
+      expect(rawSelectMock.mock.calls[0]?.[0]).toContain(
+        'ORDER BY i.title COLLATE NOCASE ASC, i.id ASC'
+      )
+      expect(rawSelectMock.mock.calls[0]?.[1]).toEqual(['col-1'])
+      expect(db.db.select).not.toHaveBeenCalled()
+      expect(result).toEqual([
+        {
+          id: 'item-1',
+          title: 'Doc A',
+          collectionId: 'col-1',
+          metadata: null,
+          createdAt: 100,
+          updatedAt: 200,
+          assetCount: 2,
+          primaryAssetId: 'asset-image-1',
+          primaryAssetPath: '/assets/doc-a.jpg',
+          primaryAssetType: 'image',
+        },
+      ])
+    })
+
+    it('uses existing text search results to filter summary queries when searching', async () => {
+      const rawSelectMock = vi.fn().mockResolvedValue([])
+      const rawClient = {
+        execute: vi.fn().mockResolvedValue({ rowsAffected: 0 }),
+        executeBatch: vi.fn().mockResolvedValue(undefined),
+        select: rawSelectMock,
+      } as unknown as DbClient
+      const repoWithRaw = new ItemRepo(db.db, rawClient)
+      vi.spyOn(repoWithRaw, 'searchByText').mockResolvedValue([
+        {
+          id: 'item-match',
+          title: 'Acta con texto OCR',
+          collectionId: 'col-1',
+          metadata: null,
+          createdAt: 100,
+          updatedAt: 200,
+        },
+      ])
+
+      await repoWithRaw.findCardSummariesByCollection('col-1', 'acta')
+
+      expect(repoWithRaw.searchByText).toHaveBeenCalledWith('col-1', 'acta')
+      expect(rawSelectMock.mock.calls[0]?.[0]).toContain('i.id IN (?)')
+      expect(rawSelectMock.mock.calls[0]?.[1]).toEqual(['item-match'])
     })
   })
 

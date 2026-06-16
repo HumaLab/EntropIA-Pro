@@ -2,8 +2,7 @@
   import { getStore } from '$lib/db'
   import { navigation } from '$lib/navigation'
   import { locale, t } from '$lib/i18n'
-  import { getFocusableElements, getNextFocusTrapTarget } from '$lib/modal-focus'
-  import { CollectionCard, SearchBar, Button, Input, Card } from '@entropia/ui'
+  import { CollectionCard, SearchBar, Button, Input, Card, ConfirmDialog } from '@entropia/ui'
   import { onMount, onDestroy } from 'svelte'
   import type { Collection } from '@entropia/store'
 
@@ -21,9 +20,8 @@
   let deletingId = $state<string | null>(null)
   let deletingName = $state('')
   let deleting = $state(false)
-  let deleteDialogEl: HTMLElement | undefined = $state()
-  let previousFocusedElement: HTMLElement | null = null
   const currentLocale = locale
+  let collectionsLoadRequestId = 0
 
   let filtered = $derived(
     searchQuery
@@ -39,23 +37,30 @@
   })
 
   async function loadCollections() {
+    const requestId = ++collectionsLoadRequestId
     try {
       loading = true
       error = null
       const store = getStore()
       // Load ALL collections (including newly created ones with 0 items)
-      collections = await store.collections.findAll()
+      const loadedCollections = await store.collections.findAll()
+      if (requestId !== collectionsLoadRequestId) return
 
       // Load item counts
       const counts: Record<string, number> = {}
-      for (const c of collections) {
+      for (const c of loadedCollections) {
         counts[c.id] = await store.collections.countItems(c.id)
+        if (requestId !== collectionsLoadRequestId) return
       }
+      collections = loadedCollections
       itemCounts = counts
     } catch (e) {
+      if (requestId !== collectionsLoadRequestId) return
       error = e instanceof Error ? e.message : t('collections.error.load')
     } finally {
-      loading = false
+      if (requestId === collectionsLoadRequestId) {
+        loading = false
+      }
     }
   }
 
@@ -63,17 +68,16 @@
     if (!newName.trim()) return
     try {
       const store = getStore()
-      const collection = await store.collections.create({
+      await store.collections.create({
         name: newName.trim(),
         description: newDescription.trim() || null,
       })
-      console.log('[Collections] created collection:', collection.id, collection.name)
       newName = ''
       newDescription = ''
       showCreate = false
       await loadCollections()
     } catch (e) {
-      console.log('[Collections] ERROR creating collection:', e)
+      console.error('[Collections] ERROR creating collection:', e)
       error = e instanceof Error ? e.message : t('collections.error.create')
     }
   }
@@ -108,7 +112,6 @@
   }
 
   function handleDeleteRequest(id: string, name: string) {
-    previousFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null
     deletingId = id
     deletingName = name
     deleting = false
@@ -119,22 +122,17 @@
     deletingId = null
     deletingName = ''
     deleting = false
-    previousFocusedElement?.focus()
-    previousFocusedElement = null
   }
 
   async function handleConfirmDelete() {
     if (!deletingId) return
-    console.log('[Collections] deleting collection:', deletingId, deletingName)
     try {
       deleting = true
       const store = getStore()
       await store.collections.delete(deletingId)
-      console.log('[Collections] deleted successfully')
       deletingId = null
       deletingName = ''
       deleting = false
-      previousFocusedElement = null
       await loadCollections()
     } catch (e) {
       console.error('[Collections] ERROR deleting collection:', e)
@@ -142,39 +140,8 @@
       deletingId = null
       deletingName = ''
       deleting = false
-      previousFocusedElement = null
     }
   }
-
-  function handleDeleteDialogKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      handleCancelDelete()
-      return
-    }
-
-    if (event.key !== 'Tab') return
-
-    const target = getNextFocusTrapTarget(
-      getFocusableElements(deleteDialogEl ?? null),
-      event.target instanceof HTMLElement ? event.target : null,
-      event.shiftKey,
-      deleteDialogEl ?? null
-    )
-
-    if (target) {
-      event.preventDefault()
-      target.focus()
-    }
-  }
-
-  $effect(() => {
-    if (!deletingId || !deleteDialogEl) return
-
-    setTimeout(() => {
-      getFocusableElements(deleteDialogEl ?? null)[0]?.focus()
-    }, 0)
-  })
 
   function handleExternalCreate() {
     showCreate = true
@@ -201,26 +168,31 @@
 </script>
 
 <div class="collections-view page-shell">
-  <section class="page-header">
-    <div class="page-header__content">
-      <span class="page-header__eyebrow">{$currentLocale && t('collections.eyebrow')}</span>
-      <h1>{$currentLocale && t('collections.title')}</h1>
-      <p>{$currentLocale && t('collections.subtitle')}</p>
-      <span class="page-header__meta">{visibleCountLabel}</span>
+  <section class="collections-intro" aria-labelledby="collections-title">
+    <div class="collections-intro__content">
+      <span class="collections-intro__eyebrow">{$currentLocale && t('collections.eyebrow')}</span>
+      <div class="collections-intro__copy">
+        <h1 id="collections-title">{$currentLocale && t('collections.title')}</h1>
+        <p>{$currentLocale && t('collections.subtitle')}</p>
+      </div>
+      <span class="collections-intro__meta">{visibleCountLabel}</span>
     </div>
+  </section>
 
-    <div class="page-toolbar collections-toolbar">
+  <section class="collections-controls" aria-label={$currentLocale && t('collections.title')}>
+    <div class="collections-controls__search">
+      <span class="collections-controls__label">{$currentLocale && t('collections.searchPlaceholder')}</span>
       <SearchBar
         placeholder={$currentLocale && t('collections.searchPlaceholder')}
         onsearch={(q) => (searchQuery = q)}
         onclear={() => (searchQuery = '')}
       />
-      <Button variant="primary" onclick={() => (showCreate = !showCreate)}>
-        {showCreate
-          ? $currentLocale && t('collections.cancel')
-          : $currentLocale && t('collections.new')}
-      </Button>
     </div>
+    <Button variant="primary" onclick={() => (showCreate = !showCreate)}>
+      {showCreate
+        ? $currentLocale && t('collections.cancel')
+        : $currentLocale && t('collections.new')}
+    </Button>
   </section>
 
   {#if showCreate}
@@ -319,59 +291,20 @@
   {/if}
 
   {#if deletingId}
-    <div class="confirm-overlay" role="presentation" onclick={handleCancelDelete}>
-      <Card>
-        <div
-          bind:this={deleteDialogEl}
-          class="confirm-dialog"
-          role="alertdialog"
-          aria-modal="true"
-          aria-labelledby="delete-collection-title"
-          aria-describedby="delete-collection-description"
-          tabindex="-1"
-          onkeydown={handleDeleteDialogKeydown}
-          onclick={(event) => event.stopPropagation()}
-        >
-          <h3 id="delete-collection-title" class="confirm-dialog__title">{t('collections.deleteTitle')}</h3>
-          <p id="delete-collection-description" class="confirm-dialog__message">
-            {t('collections.deleteMessage', { name: deletingName })}
-          </p>
-          <div class="confirm-dialog__actions">
-            <button
-              type="button"
-              class="confirm-dialog__delete-button"
-              aria-label={t('collections.deleteAria')}
-              title={deleting ? t('collections.deletingTitle') : t('collections.deleteAria')}
-              aria-busy={deleting}
-              onclick={handleConfirmDelete}
-              disabled={deleting}
-            >
-              <svg
-                xmlns="http://www.w3.org/2000/svg"
-                width="16"
-                height="16"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                aria-hidden="true"
-              >
-                <path d="M3 6h18" />
-                <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-                <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-                <line x1="10" y1="11" x2="10" y2="17" />
-                <line x1="14" y1="11" x2="14" y2="17" />
-              </svg>
-            </button>
-            <Button variant="ghost" onclick={handleCancelDelete} disabled={deleting}
-              >{t('collections.cancel')}</Button
-            >
-          </div>
-        </div>
-      </Card>
-    </div>
+    <ConfirmDialog
+      title={t('collections.deleteTitle')}
+      message={t('collections.deleteMessage', { name: deletingName })}
+      cancelLabel={t('collections.cancel')}
+      confirmIcon="delete"
+      confirmAriaLabel={t('collections.deleteAria')}
+      confirmTitle={deleting ? t('collections.deletingTitle') : t('collections.deleteAria')}
+      variant="destructive"
+      confirming={deleting}
+      cancelDisabled={deleting}
+      confirmFirst
+      oncancel={handleCancelDelete}
+      onconfirm={handleConfirmDelete}
+    />
   {/if}
 </div>
 
@@ -380,15 +313,62 @@
     min-height: 100%;
   }
 
-  .collections-toolbar {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex: 1;
+  .collections-intro {
+    padding: var(--space-4) 0 var(--space-3);
+    border-bottom: 1px solid var(--border-subtle);
   }
 
-  .collections-toolbar :global(.search-bar) {
+  .collections-intro__content {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-2);
+    max-width: 760px;
+  }
+
+  .collections-intro__eyebrow,
+  .collections-controls__label {
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-medium);
+    letter-spacing: 0.075em;
+    text-transform: uppercase;
+    color: var(--color-text-muted);
+  }
+
+  .collections-intro__copy {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+  }
+
+  .collections-intro__copy p {
+    max-width: 62ch;
+  }
+
+  .collections-intro__meta {
+    font-size: var(--font-size-xs);
+    color: var(--color-text-muted);
+  }
+
+  .collections-controls {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
+    padding: var(--space-3) 0;
+  }
+
+  .collections-controls__search {
+    display: flex;
+    align-items: center;
+    gap: var(--space-3);
+    min-width: min(100%, 360px);
+    flex: 1 1 360px;
+  }
+
+  .collections-controls :global(.search-bar) {
     min-width: min(100%, 320px);
+    max-width: 360px;
     flex: 1 1 260px;
   }
 
@@ -442,94 +422,26 @@
     gap: var(--space-2);
   }
 
-  .confirm-overlay {
-    position: fixed;
-    top: 0;
-    left: 0;
-    right: 0;
-    bottom: 0;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    background-color: var(--color-overlay);
-    z-index: 100;
-  }
-  .confirm-dialog {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-4);
-    padding: var(--space-5);
-    min-width: min(100vw - 32px, 440px);
-  }
-
-  .confirm-dialog__title {
-    margin: 0;
-  }
-
-  .confirm-dialog__message {
-    margin: 0;
-    font-size: var(--font-size-base, 1rem);
-    color: var(--color-text-primary);
-  }
-
-  .confirm-dialog__actions {
-    display: flex;
-    flex-wrap: wrap;
-    gap: var(--space-2);
-    justify-content: flex-end;
-  }
-
-  .confirm-dialog__delete-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--control-height-sm);
-    height: var(--control-height-sm);
-    padding: 0;
-    border: 1px solid var(--color-danger);
-    border-radius: var(--radius-md);
-    background-color: var(--color-danger);
-    color: var(--color-bg);
-    cursor: pointer;
-    transition:
-      background-color var(--transition-smooth),
-      border-color var(--transition-smooth),
-      box-shadow var(--transition-smooth),
-      transform var(--transition-smooth);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--color-danger) 18%, transparent);
-  }
-
-  .confirm-dialog__delete-button:hover:not(:disabled) {
-    background-color: var(--color-danger-hover);
-    border-color: var(--color-danger-hover);
-    transform: translateY(-1px);
-  }
-
-  .confirm-dialog__delete-button:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
-  }
-
-  .confirm-dialog__delete-button:disabled {
-    opacity: 0.48;
-    cursor: not-allowed;
-    transform: none;
-  }
-
   @media (max-width: 720px) {
-    .collections-toolbar {
+    .collections-controls {
       width: 100%;
-      justify-content: stretch;
+      align-items: stretch;
     }
 
-    .collections-toolbar :global(.search-bar),
-    .collections-toolbar :global(.btn) {
+    .collections-controls__search {
+      flex-direction: column;
+      align-items: stretch;
+      gap: var(--space-2);
+    }
+
+    .collections-controls :global(.search-bar),
+    .collections-controls :global(.btn) {
       width: 100%;
+      max-width: none;
     }
 
     .create-form__actions :global(.btn),
-    .edit-form__actions :global(.btn),
-    .confirm-dialog__actions :global(.btn) {
+    .edit-form__actions :global(.btn) {
       width: 100%;
     }
   }

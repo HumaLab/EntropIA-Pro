@@ -22,7 +22,34 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self' data:; img-src 'self' asset: http://asset.localhost data: blob:; media-src 'self' asset: http://asset.localhost data: blob:; connect-src 'self' ipc: http://ipc.localhost http://localhost:1420 ws://localhost:1420 https://api.openrouter.ai https://api.assemblyai.com https://*.assemblyai.com https://huggingface.co https://*.huggingface.co; worker-src 'self' blob:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost data: blob: https://tile.openstreetmap.org https://*.tile.openstreetmap.org",
+        "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost asset: http://asset.localhost https://asset.localhost",
+        "worker-src": "'self' blob:",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
+      "devCsp": {
+        "default-src": "'self'",
+        "script-src": "'self'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' asset: http://asset.localhost https://asset.localhost data: blob: https://tile.openstreetmap.org https://*.tile.openstreetmap.org",
+        "media-src": "'self' asset: http://asset.localhost https://asset.localhost blob:",
+        "font-src": "'self' data:",
+        "connect-src": "'self' ipc: http://ipc.localhost https://ipc.localhost asset: http://asset.localhost https://asset.localhost ws://localhost:1420 http://localhost:1420",
+        "worker-src": "'self' blob:",
+        "frame-src": "'none'",
+        "object-src": "'none'",
+        "base-uri": "'self'",
+        "form-action": "'self'"
+      },
       "assetProtocol": {
         "enable": true,
         "scope": ["$APPDATA/**/*"]

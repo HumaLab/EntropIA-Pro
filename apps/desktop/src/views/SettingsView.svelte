@@ -1,9 +1,54 @@
+<script module lang="ts">
+  /**
+   * Serializable snapshot of every user-editable settings value. Compared
+   * against the baseline captured at load/save time to detect unsaved edits.
+   */
+  export type SettingsSnapshotInput = {
+    apiKey: string
+    model: string
+    embeddingModel: string
+    embeddingProvider: string
+    localEmbeddingModelDir: string
+    llmMode: string
+    sttMode: string
+    ocrhMode: string
+    localModelSourceUrl: string
+    localModelFilename: string
+    assemblyAiApiKey: string
+    assemblyAiCollectionSpeakerLabels: boolean
+    glmOcrApiKey: string
+    selectedLocale: string
+    ocrCorrectionPrompt: string
+    summaryPrompt: string
+    nerPrompt: string
+    tripletsPrompt: string
+    modelParamsByFlow: Record<string, Record<string, string>>
+    ragParams: Record<string, string>
+  }
+
+  export function buildSettingsSnapshot(input: SettingsSnapshotInput): string {
+    return JSON.stringify(input)
+  }
+
+  /** Dirty = a baseline exists and the current snapshot differs from it. */
+  export function hasUnsavedSettingsChanges(
+    savedSnapshot: string | null,
+    currentSnapshot: string
+  ): boolean {
+    return savedSnapshot !== null && savedSnapshot !== currentSnapshot
+  }
+</script>
+
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
   import { get } from 'svelte/store'
   import { locale, isLocale, t, type Locale } from '$lib/i18n'
+  import { navigation } from '$lib/navigation'
+  import { registerEscapeInterceptor } from '$lib/keyboard'
+  import { openExternalUrlFromClick } from '$lib/external-links'
   import {
     settingsGet,
+    settingsGetAll,
     settingsSet,
     testOpenrouterConnection,
     testAssemblyaiConnection,
@@ -15,6 +60,10 @@
     DEFAULT_EMBEDDING_PROVIDER,
     DEFAULT_STT_MODE,
     DEFAULT_OCRH_MODE,
+    DEFAULT_PROMPTS,
+    DEFAULT_MODEL_PARAMS,
+    DEFAULT_MODEL_PARAMS_BY_FLOW,
+    DEFAULT_RAG_PARAMS,
     type EmbeddingProvider,
     type LlmMode,
     type OcrhMode,
@@ -41,16 +90,17 @@
   } from '$lib/embeddings'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-  import { Button, Card, Input } from '@entropia/ui'
+  import { ActionIcon, Button, Card, ConfirmDialog, Input, TabButton, TabList } from '@entropia/ui'
   import DependenciasTab from './DependenciasTab.svelte'
   import LogsTab from './LogsTab.svelte'
 
-  // Tab state — auto-open deps tab if critical deps are missing
+  // Tab state — auto-open deps tab if critical deps are missing (Pro-only behaviour).
   let hasDepsWarning = $state(isCriticalMissing())
-  const unsubDeps = onCriticalMissingChange((v) => { hasDepsWarning = v })
-  let activeTab = $state<'openrouter' | 'dependencias' | 'logs'>(
-    isCriticalMissing() ? 'dependencias' : 'openrouter',
-  )
+  const unsubDeps = onCriticalMissingChange((v) => {
+    hasDepsWarning = v
+  })
+  type SettingsTab = 'api' | 'prompts' | 'modelParams' | 'ragParams' | 'dependencias' | 'logs'
+  let activeTab = $state<SettingsTab>(isCriticalMissing() ? 'dependencias' : 'api')
 
   // State
   let apiKey = $state('')
@@ -71,9 +121,110 @@
   let assemblyAiApiKey = $state('')
   let maskedAssemblyAiApiKey = $state('')
   let showAssemblyAiApiKey = $state(false)
+  let assemblyAiCollectionSpeakerLabels = $state(true)
   let glmOcrApiKey = $state('')
   let maskedGlmOcrApiKey = $state('')
   let showGlmOcrApiKey = $state(false)
+  let ocrCorrectionPrompt = $state<string>(DEFAULT_PROMPTS.ocrCorrectionPrompt)
+  let summaryPrompt = $state<string>(DEFAULT_PROMPTS.summaryPrompt)
+  let nerPrompt = $state<string>(DEFAULT_PROMPTS.nerPrompt)
+  let tripletsPrompt = $state<string>(DEFAULT_PROMPTS.tripletsPrompt)
+  type PromptKey = keyof typeof DEFAULT_PROMPTS
+  type ValidationFeedback = { tone: 'success' | 'error'; text: string } | null
+  let promptValidationFeedback = $state<Record<PromptKey, ValidationFeedback>>({
+    ocrCorrectionPrompt: null,
+    summaryPrompt: null,
+    nerPrompt: null,
+    tripletsPrompt: null,
+  })
+  type ModelParamFlow = 'ocrCorrection' | 'summary' | 'ner' | 'triplets'
+  type EditableModelParams = {
+    temperature: string
+    maxTokens: string
+    topP: string
+    topK: string
+    presencePenalty: string
+    frequencyPenalty: string
+    stopSequences: string
+  }
+  const MODEL_PARAM_FLOWS: Array<{ id: ModelParamFlow; label: string }> = [
+    { id: 'ocrCorrection', label: 'OCR correction' },
+    { id: 'summary', label: 'Summary' },
+    { id: 'ner', label: 'NER' },
+    { id: 'triplets', label: 'Triplets' },
+  ]
+  const MODEL_PARAM_KEYS: Record<ModelParamFlow, Record<keyof EditableModelParams, string>> = {
+    ocrCorrection: {
+      temperature: SETTINGS_KEYS.LLM_OCR_CORRECTION_TEMPERATURE,
+      maxTokens: SETTINGS_KEYS.LLM_OCR_CORRECTION_MAX_TOKENS,
+      topP: SETTINGS_KEYS.LLM_OCR_CORRECTION_TOP_P,
+      topK: SETTINGS_KEYS.LLM_OCR_CORRECTION_TOP_K,
+      presencePenalty: SETTINGS_KEYS.LLM_OCR_CORRECTION_PRESENCE_PENALTY,
+      frequencyPenalty: SETTINGS_KEYS.LLM_OCR_CORRECTION_FREQUENCY_PENALTY,
+      stopSequences: SETTINGS_KEYS.LLM_OCR_CORRECTION_STOP_SEQUENCES,
+    },
+    summary: {
+      temperature: SETTINGS_KEYS.LLM_SUMMARY_TEMPERATURE,
+      maxTokens: SETTINGS_KEYS.LLM_SUMMARY_MAX_TOKENS,
+      topP: SETTINGS_KEYS.LLM_SUMMARY_TOP_P,
+      topK: SETTINGS_KEYS.LLM_SUMMARY_TOP_K,
+      presencePenalty: SETTINGS_KEYS.LLM_SUMMARY_PRESENCE_PENALTY,
+      frequencyPenalty: SETTINGS_KEYS.LLM_SUMMARY_FREQUENCY_PENALTY,
+      stopSequences: SETTINGS_KEYS.LLM_SUMMARY_STOP_SEQUENCES,
+    },
+    ner: {
+      temperature: SETTINGS_KEYS.LLM_NER_TEMPERATURE,
+      maxTokens: SETTINGS_KEYS.LLM_NER_MAX_TOKENS,
+      topP: SETTINGS_KEYS.LLM_NER_TOP_P,
+      topK: SETTINGS_KEYS.LLM_NER_TOP_K,
+      presencePenalty: SETTINGS_KEYS.LLM_NER_PRESENCE_PENALTY,
+      frequencyPenalty: SETTINGS_KEYS.LLM_NER_FREQUENCY_PENALTY,
+      stopSequences: SETTINGS_KEYS.LLM_NER_STOP_SEQUENCES,
+    },
+    triplets: {
+      temperature: SETTINGS_KEYS.LLM_TRIPLETS_TEMPERATURE,
+      maxTokens: SETTINGS_KEYS.LLM_TRIPLETS_MAX_TOKENS,
+      topP: SETTINGS_KEYS.LLM_TRIPLETS_TOP_P,
+      topK: SETTINGS_KEYS.LLM_TRIPLETS_TOP_K,
+      presencePenalty: SETTINGS_KEYS.LLM_TRIPLETS_PRESENCE_PENALTY,
+      frequencyPenalty: SETTINGS_KEYS.LLM_TRIPLETS_FREQUENCY_PENALTY,
+      stopSequences: SETTINGS_KEYS.LLM_TRIPLETS_STOP_SEQUENCES,
+    },
+  }
+  let modelParamsByFlow = $state<Record<ModelParamFlow, EditableModelParams>>({
+    ocrCorrection: { ...DEFAULT_MODEL_PARAMS_BY_FLOW.ocrCorrection },
+    summary: { ...DEFAULT_MODEL_PARAMS_BY_FLOW.summary },
+    ner: { ...DEFAULT_MODEL_PARAMS_BY_FLOW.ner },
+    triplets: { ...DEFAULT_MODEL_PARAMS_BY_FLOW.triplets },
+  })
+  let modelParamsError = $state<string | null>(null)
+
+  type EditableRagParams = {
+    topK: string
+    minSimilarity: string
+    candidatesPerLeg: string
+    rrfK: string
+    snippetMaxChars: string
+    contextMaxChars: string
+    historyTurns: string
+    historyTurnMaxChars: string
+    temperature: string
+    maxTokens: string
+  }
+  const RAG_PARAM_KEYS: Record<keyof EditableRagParams, string> = {
+    topK: SETTINGS_KEYS.RAG_TOP_K,
+    minSimilarity: SETTINGS_KEYS.RAG_MIN_SIMILARITY,
+    candidatesPerLeg: SETTINGS_KEYS.RAG_CANDIDATES_PER_LEG,
+    rrfK: SETTINGS_KEYS.RAG_RRF_K,
+    snippetMaxChars: SETTINGS_KEYS.RAG_SNIPPET_MAX_CHARS,
+    contextMaxChars: SETTINGS_KEYS.RAG_CONTEXT_MAX_CHARS,
+    historyTurns: SETTINGS_KEYS.RAG_HISTORY_TURNS,
+    historyTurnMaxChars: SETTINGS_KEYS.RAG_HISTORY_TURN_MAX_CHARS,
+    temperature: SETTINGS_KEYS.RAG_TEMPERATURE,
+    maxTokens: SETTINGS_KEYS.RAG_MAX_TOKENS,
+  }
+  let ragParams = $state<EditableRagParams>({ ...DEFAULT_RAG_PARAMS })
+  let ragParamsError = $state<string | null>(null)
 
   // Test connection state
   let testing = $state(false)
@@ -83,9 +234,20 @@
   let testingGlmOcr = $state(false)
   let glmOcrTestResult = $state<{ success: boolean; message: string } | null>(null)
   let availableModels = $state<ModelInfo[]>([])
+  let loadSettingsError = $state<string | null>(null)
 
-  const LANGUAGE_KEY = 'language'
+  const hasOpenRouterCredential = $derived(Boolean(apiKey.trim() || maskedApiKey))
+  const hasAssemblyAiCredential = $derived(Boolean(assemblyAiApiKey.trim() || maskedAssemblyAiApiKey))
+  const hasGlmOcrCredential = $derived(Boolean(glmOcrApiKey.trim() || maskedGlmOcrApiKey))
+
+  const SECRET_REF_PREFIX = 'secret_ref:'
+  const LANGUAGE_KEY = SETTINGS_KEYS.LANGUAGE
   const LEGACY_LOCAL_EMBEDDING_MODEL_DIR = 'resources/models/embeddings/bge-m3'
+  const PROVIDER_LINKS = {
+    openrouter: 'https://openrouter.ai/settings/keys',
+    assemblyai: 'https://www.assemblyai.com/app/account',
+    glmOcr: 'https://z.ai/manage-apikey/apikey-list',
+  } as const
 
   // Local model download state
   let downloading = $state(false)
@@ -102,6 +264,10 @@
   // Save state
   let saving = $state(false)
   let saveFeedback = $state<{ tone: 'success' | 'error'; text: string } | null>(null)
+
+  // Unsaved-changes guard: baseline snapshot captured after load/save.
+  let savedSnapshot = $state<string | null>(null)
+  let showDiscardConfirm = $state(false)
 
   let currentModeLabel = $derived(
     llmMode === 'local'
@@ -135,6 +301,32 @@
         : t('settings.ocrhMode.auto.summary')
   )
 
+  const currentSnapshot = $derived(
+    buildSettingsSnapshot({
+      apiKey,
+      model,
+      embeddingModel,
+      embeddingProvider,
+      localEmbeddingModelDir,
+      llmMode,
+      sttMode,
+      ocrhMode,
+      localModelSourceUrl,
+      localModelFilename,
+      assemblyAiApiKey,
+      assemblyAiCollectionSpeakerLabels,
+      glmOcrApiKey,
+      selectedLocale,
+      ocrCorrectionPrompt,
+      summaryPrompt,
+      nerPrompt,
+      tripletsPrompt,
+      modelParamsByFlow,
+      ragParams,
+    })
+  )
+  const isDirty = $derived(hasUnsavedSettingsChanges(savedSnapshot, currentSnapshot))
+
   const activeLocale = $derived($locale)
 
   onDestroy(() => {
@@ -143,70 +335,128 @@
     downloadUnlisteners = []
   })
 
-  onMount(async () => {
-    const [
-      storedKey,
-      storedModel,
-      storedEmbeddingProvider,
-      storedEmbeddingModel,
-      storedLocalEmbeddingModelDir,
-      storedMode,
-      storedSttMode,
-      storedOcrhMode,
-      storedAssemblyAiKey,
-      storedGlmOcrKey,
-      storedLanguage,
-      modelInfo,
-      embeddingModelInfo,
-    ] = await Promise.all([
-      settingsGet(SETTINGS_KEYS.OPENROUTER_API_KEY),
-      settingsGet(SETTINGS_KEYS.OPENROUTER_MODEL),
-      settingsGet(SETTINGS_KEYS.EMBEDDING_PROVIDER),
-      settingsGet(SETTINGS_KEYS.OPENROUTER_EMBEDDING_MODEL),
-      settingsGet(SETTINGS_KEYS.LOCAL_EMBEDDING_MODEL_DIR),
-      settingsGet(SETTINGS_KEYS.LLM_MODE),
-      settingsGet(SETTINGS_KEYS.STT_MODE),
-      settingsGet(SETTINGS_KEYS.OCRH_MODE),
-      settingsGet(SETTINGS_KEYS.ASSEMBLYAI_API_KEY),
-      settingsGet(SETTINGS_KEYS.GLM_OCR_API_KEY),
-      settingsGet(LANGUAGE_KEY),
-      llmLocalModelInfo().catch(() => null),
-      embeddingLocalModelInfo().catch(() => null),
-    ])
+  onMount(() => {
+    void loadInitialSettings()
+    void registerDownloadListeners()
+    // Escape must not silently discard unsaved edits: when dirty, ask for
+    // confirmation instead of navigating back.
+    return registerEscapeInterceptor(() => {
+      if (!isDirty) return false
+      showDiscardConfirm = true
+      return true
+    })
+  })
 
-    if (storedKey) {
-      apiKey = storedKey
-      maskedApiKey = maskKey(storedKey)
-    }
-    if (storedModel) model = storedModel
-    if (storedEmbeddingProvider === 'api' || storedEmbeddingProvider === 'local') {
-      embeddingProvider = storedEmbeddingProvider
-    }
-    if (storedEmbeddingModel) embeddingModel = storedEmbeddingModel
-    if (storedLocalEmbeddingModelDir && !isLegacyLocalEmbeddingModelDir(storedLocalEmbeddingModelDir)) {
-      localEmbeddingModelDir = storedLocalEmbeddingModelDir
-    }
-    if (storedMode) llmMode = storedMode as LlmMode
-    if (storedSttMode) sttMode = storedSttMode as SttMode
-    if (storedOcrhMode) ocrhMode = storedOcrhMode as OcrhMode
-    if (storedAssemblyAiKey) {
-      assemblyAiApiKey = storedAssemblyAiKey
-      maskedAssemblyAiApiKey = maskKey(storedAssemblyAiKey, 5)
-    }
-    if (storedGlmOcrKey) {
-      glmOcrApiKey = storedGlmOcrKey
-      maskedGlmOcrApiKey = maskKey(storedGlmOcrKey, 0)
-    }
-    if (!languageTouched) {
-      selectedLocale = isLocale(storedLanguage) ? storedLanguage : get(locale)
-    }
-    localModel = modelInfo
-    localAvailable = modelInfo?.available ?? false
-    localModelSourceUrl = modelInfo?.source_url ?? ''
-    localModelFilename = modelInfo?.filename ?? ''
-    localEmbeddingModel = embeddingModelInfo
+  function handleDiscardConfirm() {
+    showDiscardConfirm = false
+    navigation.back()
+  }
 
-    // Listen to model download events
+  async function loadInitialSettings() {
+    loadSettingsError = null
+
+    try {
+      const [
+        storedKey,
+        storedModel,
+        storedEmbeddingProvider,
+        storedEmbeddingModel,
+        storedLocalEmbeddingModelDir,
+        storedMode,
+        storedSttMode,
+        storedOcrhMode,
+        storedAssemblyAiKey,
+        storedAssemblyAiSpeakerLabels,
+        storedGlmOcrKey,
+        storedLanguage,
+        storedOcrCorrectionPrompt,
+        storedSummaryPrompt,
+        storedNerPrompt,
+        storedTripletsPrompt,
+        modelInfo,
+        embeddingModelInfo,
+      ] = await Promise.all([
+        settingsGet(SETTINGS_KEYS.OPENROUTER_API_KEY),
+        settingsGet(SETTINGS_KEYS.OPENROUTER_MODEL),
+        settingsGet(SETTINGS_KEYS.EMBEDDING_PROVIDER),
+        settingsGet(SETTINGS_KEYS.OPENROUTER_EMBEDDING_MODEL),
+        settingsGet(SETTINGS_KEYS.LOCAL_EMBEDDING_MODEL_DIR),
+        settingsGet(SETTINGS_KEYS.LLM_MODE),
+        settingsGet(SETTINGS_KEYS.STT_MODE),
+        settingsGet(SETTINGS_KEYS.OCRH_MODE),
+        settingsGet(SETTINGS_KEYS.ASSEMBLYAI_API_KEY),
+        settingsGet(SETTINGS_KEYS.ASSEMBLYAI_SPEAKER_LABELS),
+        settingsGet(SETTINGS_KEYS.GLM_OCR_API_KEY),
+        settingsGet(LANGUAGE_KEY),
+        settingsGet(SETTINGS_KEYS.OCR_CORRECTION_PROMPT),
+        settingsGet(SETTINGS_KEYS.SUMMARY_PROMPT),
+        settingsGet(SETTINGS_KEYS.NER_PROMPT),
+        settingsGet(SETTINGS_KEYS.TRIPLETS_PROMPT),
+        llmLocalModelInfo().catch(() => null),
+        embeddingLocalModelInfo().catch(() => null),
+      ])
+      const settingsMap = new Map((await settingsGetAll()).map((entry) => [entry.key, entry.value]))
+
+      if (storedKey?.startsWith(SECRET_REF_PREFIX)) {
+        apiKey = ''
+        maskedApiKey = t('settings.keyStoredInCredentialManager')
+      } else if (storedKey) {
+        apiKey = storedKey
+        maskedApiKey = maskKey(storedKey)
+      }
+      if (storedModel) model = storedModel
+      if (storedEmbeddingProvider === 'api' || storedEmbeddingProvider === 'local') {
+        embeddingProvider = storedEmbeddingProvider
+      }
+      if (storedEmbeddingModel) embeddingModel = storedEmbeddingModel
+      if (
+        storedLocalEmbeddingModelDir &&
+        !isLegacyLocalEmbeddingModelDir(storedLocalEmbeddingModelDir)
+      ) {
+        localEmbeddingModelDir = storedLocalEmbeddingModelDir
+      }
+      if (storedMode) llmMode = storedMode as LlmMode
+      if (storedSttMode) sttMode = storedSttMode as SttMode
+      if (storedOcrhMode) ocrhMode = storedOcrhMode as OcrhMode
+      if (storedAssemblyAiKey?.startsWith(SECRET_REF_PREFIX)) {
+        assemblyAiApiKey = ''
+        maskedAssemblyAiApiKey = t('settings.keyStoredInCredentialManager')
+      } else if (storedAssemblyAiKey) {
+        assemblyAiApiKey = storedAssemblyAiKey
+        maskedAssemblyAiApiKey = maskKey(storedAssemblyAiKey, 5)
+      }
+      assemblyAiCollectionSpeakerLabels = parseEnabledByDefault(storedAssemblyAiSpeakerLabels)
+      if (storedGlmOcrKey?.startsWith(SECRET_REF_PREFIX)) {
+        glmOcrApiKey = ''
+        maskedGlmOcrApiKey = t('settings.keyStoredInCredentialManager')
+      } else if (storedGlmOcrKey) {
+        glmOcrApiKey = storedGlmOcrKey
+        maskedGlmOcrApiKey = maskKey(storedGlmOcrKey, 0)
+      }
+      if (!languageTouched) {
+        selectedLocale = isLocale(storedLanguage) ? storedLanguage : get(locale)
+      }
+      localModel = modelInfo
+      localAvailable = modelInfo?.available ?? false
+      localModelSourceUrl = modelInfo?.source_url ?? ''
+      localModelFilename = modelInfo?.filename ?? ''
+      localEmbeddingModel = embeddingModelInfo
+      ocrCorrectionPrompt = storedOcrCorrectionPrompt?.trim() || DEFAULT_PROMPTS.ocrCorrectionPrompt
+      summaryPrompt = storedSummaryPrompt?.trim() || DEFAULT_PROMPTS.summaryPrompt
+      nerPrompt = storedNerPrompt?.trim() || DEFAULT_PROMPTS.nerPrompt
+      tripletsPrompt = storedTripletsPrompt?.trim() || DEFAULT_PROMPTS.tripletsPrompt
+      for (const flow of MODEL_PARAM_FLOWS) {
+        modelParamsByFlow[flow.id] = readModelParamsFromSettings(settingsMap, flow.id)
+      }
+      ragParams = readRagParamsFromSettings(settingsMap)
+      savedSnapshot = currentSnapshot
+    } catch (e) {
+      loadSettingsError = e instanceof Error ? e.message : String(e)
+    }
+  }
+
+  async function registerDownloadListeners() {
+    // Listen to local model download events (Pro-only local inference wiring).
     downloadUnlisteners.push(
       await listen<LlmDownloadProgressPayload>('llm:download_progress', (event) => {
         downloading = true
@@ -243,9 +493,9 @@
         embeddingDownloadPct = 0
         embeddingDownloadFile = ''
         embeddingDownloadError = event.payload.error
-      }),
+      })
     )
-  })
+  }
 
   function maskKey(key: string, prefixLength = 4): string {
     const trimmed = key.trim()
@@ -254,8 +504,193 @@
     return `${trimmed.slice(0, prefixLength)}****...****${trimmed.slice(-4)}`
   }
 
+  function parseEnabledByDefault(value: string | null): boolean {
+    const normalized = value?.trim().toLowerCase()
+    if (!normalized) return true
+    return !['0', 'false', 'no', 'off'].includes(normalized)
+  }
+
+  // Los params numéricos viajan como TEXTO a Rust (str::parse): solo se acepta
+  // lo que Rust puede parsear — enteros planos y decimales planos (sin '12.0'
+  // para enteros, sin notación '1e3' ni '0x10'). Number() de JS es más laxo.
+  const INTEGER_TEXT_PATTERN = /^[+-]?\d+$/
+  const DECIMAL_TEXT_PATTERN = /^[+-]?(\d+(\.\d+)?|\.\d+)$/
+
+  function validNumberText(value: string | null, min: number, max: number): string | null {
+    const trimmed = value?.trim()
+    if (!trimmed || !DECIMAL_TEXT_PATTERN.test(trimmed)) return null
+    const parsed = Number(trimmed)
+    return Number.isFinite(parsed) && parsed >= min && parsed <= max ? trimmed : null
+  }
+
+  function validIntegerText(value: string | null, min: number, max: number): string | null {
+    const trimmed = value?.trim()
+    if (!trimmed || !INTEGER_TEXT_PATTERN.test(trimmed)) return null
+    const parsed = Number(trimmed)
+    return Number.isInteger(parsed) && parsed >= min && parsed <= max ? trimmed : null
+  }
+
+  /** Canonicaliza texto numérico ya validado ('007' → '7', '.5' → '0.5'); vacío queda vacío. */
+  function normalizedNumericText(value: string): string {
+    const trimmed = value.trim()
+    return trimmed ? String(Number(trimmed)) : ''
+  }
+
+  function readModelParamsFromSettings(
+    settingsMap: Map<string, string>,
+    flow: ModelParamFlow
+  ): EditableModelParams {
+    const keys = MODEL_PARAM_KEYS[flow]
+    return {
+      temperature:
+        validNumberText(settingsMap.get(keys.temperature) ?? null, 0, 2) ??
+        DEFAULT_MODEL_PARAMS.temperature,
+      maxTokens:
+        validIntegerText(settingsMap.get(keys.maxTokens) ?? null, 1, 32000) ??
+        DEFAULT_MODEL_PARAMS.maxTokens,
+      topP: validNumberText(settingsMap.get(keys.topP) ?? null, 0, 1) ?? DEFAULT_MODEL_PARAMS.topP,
+      topK: validIntegerText(settingsMap.get(keys.topK) ?? null, 1, 1000) ?? DEFAULT_MODEL_PARAMS.topK,
+      presencePenalty:
+        validNumberText(settingsMap.get(keys.presencePenalty) ?? null, -2, 2) ??
+        DEFAULT_MODEL_PARAMS.presencePenalty,
+      frequencyPenalty:
+        validNumberText(settingsMap.get(keys.frequencyPenalty) ?? null, -2, 2) ??
+        DEFAULT_MODEL_PARAMS.frequencyPenalty,
+      stopSequences: settingsMap.get(keys.stopSequences) ?? DEFAULT_MODEL_PARAMS.stopSequences,
+    }
+  }
+
+  function validateModelParams(): string | null {
+    for (const flow of MODEL_PARAM_FLOWS) {
+      const params = modelParamsByFlow[flow.id]
+      const checks: Array<[string, string, (value: string) => boolean]> = [
+        ['temperature', params.temperature, (value) => !value.trim() || validNumberText(value, 0, 2) !== null],
+        ['maxTokens', params.maxTokens, (value) => !value.trim() || validIntegerText(value, 1, 32000) !== null],
+        ['topP', params.topP, (value) => !value.trim() || validNumberText(value, 0, 1) !== null],
+        ['topK', params.topK, (value) => !value.trim() || validIntegerText(value, 1, 1000) !== null],
+        ['presencePenalty', params.presencePenalty, (value) => !value.trim() || validNumberText(value, -2, 2) !== null],
+        ['frequencyPenalty', params.frequencyPenalty, (value) => !value.trim() || validNumberText(value, -2, 2) !== null],
+      ]
+      const invalid = checks.find(([_, value, isValid]) => !isValid(value))
+      if (invalid) return t('settings.modelParams.invalidParam', { flow: flow.label, param: invalid[0] })
+    }
+    return null
+  }
+
+  function readRagParamsFromSettings(settingsMap: Map<string, string>): EditableRagParams {
+    const keys = RAG_PARAM_KEYS
+    return {
+      topK: validIntegerText(settingsMap.get(keys.topK) ?? null, 1, 20) ?? DEFAULT_RAG_PARAMS.topK,
+      minSimilarity:
+        validNumberText(settingsMap.get(keys.minSimilarity) ?? null, 0, 1) ?? DEFAULT_RAG_PARAMS.minSimilarity,
+      candidatesPerLeg:
+        validIntegerText(settingsMap.get(keys.candidatesPerLeg) ?? null, 4, 200) ??
+        DEFAULT_RAG_PARAMS.candidatesPerLeg,
+      rrfK: validIntegerText(settingsMap.get(keys.rrfK) ?? null, 1, 500) ?? DEFAULT_RAG_PARAMS.rrfK,
+      snippetMaxChars:
+        validIntegerText(settingsMap.get(keys.snippetMaxChars) ?? null, 200, 8000) ??
+        DEFAULT_RAG_PARAMS.snippetMaxChars,
+      contextMaxChars:
+        validIntegerText(settingsMap.get(keys.contextMaxChars) ?? null, 1000, 60000) ??
+        DEFAULT_RAG_PARAMS.contextMaxChars,
+      historyTurns:
+        validIntegerText(settingsMap.get(keys.historyTurns) ?? null, 0, 20) ?? DEFAULT_RAG_PARAMS.historyTurns,
+      historyTurnMaxChars:
+        validIntegerText(settingsMap.get(keys.historyTurnMaxChars) ?? null, 100, 4000) ??
+        DEFAULT_RAG_PARAMS.historyTurnMaxChars,
+      temperature:
+        validNumberText(settingsMap.get(keys.temperature) ?? null, 0, 2) ?? DEFAULT_RAG_PARAMS.temperature,
+      maxTokens:
+        validIntegerText(settingsMap.get(keys.maxTokens) ?? null, 64, 32000) ?? DEFAULT_RAG_PARAMS.maxTokens,
+    }
+  }
+
+  /** Valor RAG efectivo para chequeos cross-field: texto editado o default si quedó vacío. */
+  function effectiveRagNumber(param: keyof EditableRagParams): number {
+    return Number(ragParams[param].trim() || DEFAULT_RAG_PARAMS[param])
+  }
+
+  function validateRagParams(): string | null {
+    const checks: Array<[keyof EditableRagParams, (value: string) => boolean]> = [
+      ['topK', (value) => !value.trim() || validIntegerText(value, 1, 20) !== null],
+      ['minSimilarity', (value) => !value.trim() || validNumberText(value, 0, 1) !== null],
+      ['candidatesPerLeg', (value) => !value.trim() || validIntegerText(value, 4, 200) !== null],
+      ['rrfK', (value) => !value.trim() || validIntegerText(value, 1, 500) !== null],
+      ['snippetMaxChars', (value) => !value.trim() || validIntegerText(value, 200, 8000) !== null],
+      ['contextMaxChars', (value) => !value.trim() || validIntegerText(value, 1000, 60000) !== null],
+      ['historyTurns', (value) => !value.trim() || validIntegerText(value, 0, 20) !== null],
+      ['historyTurnMaxChars', (value) => !value.trim() || validIntegerText(value, 100, 4000) !== null],
+      ['temperature', (value) => !value.trim() || validNumberText(value, 0, 2) !== null],
+      ['maxTokens', (value) => !value.trim() || validIntegerText(value, 64, 32000) !== null],
+    ]
+    const invalid = checks.find(([param, isValid]) => !isValid(ragParams[param]))
+    if (invalid) return t('settings.ragParams.invalidParam', { param: invalid[0] })
+    // Invariante cross-field (espejo del clamp del backend): el snippet no
+    // puede superar el presupuesto total de contexto.
+    if (effectiveRagNumber('snippetMaxChars') > effectiveRagNumber('contextMaxChars')) {
+      return t('settings.ragParams.snippetVsContext')
+    }
+    return null
+  }
+
+  function promptValue(key: PromptKey): string {
+    if (key === 'ocrCorrectionPrompt') return ocrCorrectionPrompt
+    if (key === 'summaryPrompt') return summaryPrompt
+    if (key === 'nerPrompt') return nerPrompt
+    return tripletsPrompt
+  }
+
+  function validatePromptContract(key: PromptKey, value = promptValue(key)): string | null {
+    const prompt = value.trim()
+    if (!prompt) return t('settings.promptValidation.empty')
+    if ((key === 'ocrCorrectionPrompt' || key === 'summaryPrompt') && !prompt.includes('{text}')) {
+      return t('settings.promptValidation.missingText')
+    }
+    if (key === 'nerPrompt') {
+      if (!prompt.includes('{text}')) return t('settings.promptValidation.nerMissingText')
+      const requiredLabels = ['PER', 'LOC', 'ORG', 'DATE', 'MISC']
+      const missing = requiredLabels.filter((label) => !prompt.includes(label))
+      if (missing.length > 0) return t('settings.promptValidation.nerMissingLabels', { labels: missing.join(', ') })
+    }
+    if (key === 'tripletsPrompt') {
+      if (!prompt.includes('{text}')) return t('settings.promptValidation.tripletsMissingText')
+      const requiredKeys = ['subject', 'predicate', 'object']
+      const missing = requiredKeys.filter((label) => !prompt.includes(label))
+      if (missing.length > 0) return t('settings.promptValidation.tripletsMissingKeys', { keys: missing.join(', ') })
+    }
+    return null
+  }
+
+  function validatePrompt(key: PromptKey): boolean {
+    const error = validatePromptContract(key)
+    promptValidationFeedback[key] = error
+      ? { tone: 'error', text: error }
+      : { tone: 'success', text: t('settings.promptValidation.valid') }
+    return !error
+  }
+
+  function validateAllPrompts(): string | null {
+    const keys: PromptKey[] = ['ocrCorrectionPrompt', 'summaryPrompt', 'nerPrompt', 'tripletsPrompt']
+    for (const key of keys) {
+      const error = validatePromptContract(key)
+      if (error) {
+        promptValidationFeedback[key] = { tone: 'error', text: error }
+        return `${promptLabel(key)}: ${error}`
+      }
+      promptValidationFeedback[key] = { tone: 'success', text: t('settings.promptValidation.valid') }
+    }
+    return null
+  }
+
+  function promptLabel(key: PromptKey): string {
+    if (key === 'ocrCorrectionPrompt') return 'OCR correction prompt'
+    if (key === 'summaryPrompt') return 'Summary prompt'
+    if (key === 'nerPrompt') return 'NER prompt'
+    return 'Triplets prompt'
+  }
+
   async function handleTestConnection() {
-    if (!apiKey.trim()) {
+    if (!hasOpenRouterCredential) {
       testResult = { success: false, message: t('settings.enterApiKey') }
       return
     }
@@ -279,7 +714,7 @@
   }
 
   async function handleTestAssemblyAiConnection() {
-    if (!assemblyAiApiKey.trim()) {
+    if (!hasAssemblyAiCredential) {
       assemblyAiTestResult = { success: false, message: t('settings.enterAssemblyAiApiKey') }
       return
     }
@@ -303,7 +738,7 @@
   }
 
   async function handleTestGlmOcrConnection() {
-    if (!glmOcrApiKey.trim()) {
+    if (!hasGlmOcrCredential) {
       glmOcrTestResult = { success: false, message: t('settings.enterGlmOcrApiKey') }
       return
     }
@@ -329,25 +764,87 @@
   async function handleSave() {
     saving = true
     saveFeedback = null
+    const promptError = validateAllPrompts()
+    if (promptError) {
+      saving = false
+      saveFeedback = { tone: 'error', text: promptError }
+      activeTab = 'prompts'
+      return
+    }
+    modelParamsError = validateModelParams()
+    if (modelParamsError) {
+      saving = false
+      saveFeedback = { tone: 'error', text: modelParamsError }
+      activeTab = 'modelParams'
+      return
+    }
+    ragParamsError = validateRagParams()
+    if (ragParamsError) {
+      saving = false
+      saveFeedback = { tone: 'error', text: ragParamsError }
+      activeTab = 'ragParams'
+      return
+    }
     try {
-      await Promise.all([
-        settingsSet(SETTINGS_KEYS.OPENROUTER_API_KEY, apiKey.trim()),
+      const writes: Promise<void>[] = [
         settingsSet(SETTINGS_KEYS.OPENROUTER_MODEL, model),
+        // Pro is local-first: persist the user-selected modes, not hardcoded
+        // cloud ones. The selectors carry the real local/remote/auto choice.
         settingsSet(SETTINGS_KEYS.EMBEDDING_PROVIDER, embeddingProvider),
-        settingsSet(SETTINGS_KEYS.OPENROUTER_EMBEDDING_MODEL, embeddingModel.trim() || DEFAULT_OPENROUTER_EMBEDDING_MODEL),
+        settingsSet(
+          SETTINGS_KEYS.OPENROUTER_EMBEDDING_MODEL,
+          embeddingModel.trim() || DEFAULT_OPENROUTER_EMBEDDING_MODEL
+        ),
         settingsSet(SETTINGS_KEYS.LOCAL_EMBEDDING_MODEL_DIR, localEmbeddingModelDir.trim()),
         settingsSet(SETTINGS_KEYS.LLM_MODE, llmMode),
-        settingsSet(SETTINGS_KEYS.ASSEMBLYAI_API_KEY, assemblyAiApiKey.trim()),
         settingsSet(SETTINGS_KEYS.STT_MODE, sttMode),
-        settingsSet(SETTINGS_KEYS.GLM_OCR_API_KEY, glmOcrApiKey.trim()),
+        settingsSet(
+          SETTINGS_KEYS.ASSEMBLYAI_SPEAKER_LABELS,
+          assemblyAiCollectionSpeakerLabels ? 'true' : 'false'
+        ),
         settingsSet(SETTINGS_KEYS.OCRH_MODE, ocrhMode),
         settingsSet(LANGUAGE_KEY, selectedLocale),
         settingsSet(SETTINGS_KEYS.LOCAL_MODEL_SOURCE_URL, localModelSourceUrl.trim()),
-        settingsSet(SETTINGS_KEYS.LOCAL_MODEL_FILENAME, (localModelFilename.trim() || localModel?.filename) ?? ''),
-      ])
-      maskedApiKey = maskKey(apiKey)
-      maskedAssemblyAiApiKey = maskKey(assemblyAiApiKey, 5)
-      maskedGlmOcrApiKey = maskKey(glmOcrApiKey, 0)
+        settingsSet(
+          SETTINGS_KEYS.LOCAL_MODEL_FILENAME,
+          (localModelFilename.trim() || localModel?.filename) ?? ''
+        ),
+        settingsSet(SETTINGS_KEYS.OCR_CORRECTION_PROMPT, ocrCorrectionPrompt.trim() || DEFAULT_PROMPTS.ocrCorrectionPrompt),
+        settingsSet(SETTINGS_KEYS.SUMMARY_PROMPT, summaryPrompt.trim() || DEFAULT_PROMPTS.summaryPrompt),
+        settingsSet(SETTINGS_KEYS.NER_PROMPT, nerPrompt.trim() || DEFAULT_PROMPTS.nerPrompt),
+        settingsSet(SETTINGS_KEYS.TRIPLETS_PROMPT, tripletsPrompt.trim() || DEFAULT_PROMPTS.tripletsPrompt),
+      ]
+      for (const flow of MODEL_PARAM_FLOWS) {
+        const params = modelParamsByFlow[flow.id]
+        const keys = MODEL_PARAM_KEYS[flow.id]
+        writes.push(
+          settingsSet(keys.temperature, normalizedNumericText(params.temperature) || DEFAULT_MODEL_PARAMS.temperature),
+          settingsSet(keys.maxTokens, normalizedNumericText(params.maxTokens)),
+          settingsSet(keys.topP, normalizedNumericText(params.topP)),
+          settingsSet(keys.topK, normalizedNumericText(params.topK)),
+          settingsSet(keys.presencePenalty, normalizedNumericText(params.presencePenalty)),
+          settingsSet(keys.frequencyPenalty, normalizedNumericText(params.frequencyPenalty)),
+          settingsSet(keys.stopSequences, params.stopSequences)
+        )
+      }
+      for (const param of Object.keys(RAG_PARAM_KEYS) as Array<keyof EditableRagParams>) {
+        // Se persiste el valor canónico ('0.20' → '0.2') para que el texto
+        // guardado coincida con lo que Rust parsea y la UI relee.
+        writes.push(
+          settingsSet(
+            RAG_PARAM_KEYS[param],
+            normalizedNumericText(ragParams[param]) || DEFAULT_RAG_PARAMS[param]
+          )
+        )
+      }
+      if (apiKey.trim()) writes.push(settingsSet(SETTINGS_KEYS.OPENROUTER_API_KEY, apiKey.trim()))
+      if (assemblyAiApiKey.trim()) writes.push(settingsSet(SETTINGS_KEYS.ASSEMBLYAI_API_KEY, assemblyAiApiKey.trim()))
+      if (glmOcrApiKey.trim()) writes.push(settingsSet(SETTINGS_KEYS.GLM_OCR_API_KEY, glmOcrApiKey.trim()))
+      await Promise.all(writes)
+      if (apiKey.trim()) maskedApiKey = maskKey(apiKey)
+      if (assemblyAiApiKey.trim()) maskedAssemblyAiApiKey = maskKey(assemblyAiApiKey, 5)
+      if (glmOcrApiKey.trim()) maskedGlmOcrApiKey = maskKey(glmOcrApiKey, 0)
+      savedSnapshot = currentSnapshot
       saveFeedback = {
         tone: 'success',
         text: t('settings.saved'),
@@ -437,6 +934,33 @@
       embeddingDownloadError = e instanceof Error ? e.message : String(e)
     }
   }
+
+  async function resetPrompt(key: keyof typeof DEFAULT_PROMPTS) {
+    const value = DEFAULT_PROMPTS[key]
+    if (key === 'ocrCorrectionPrompt') ocrCorrectionPrompt = value
+    if (key === 'summaryPrompt') summaryPrompt = value
+    if (key === 'nerPrompt') nerPrompt = value
+    if (key === 'tripletsPrompt') tripletsPrompt = value
+    promptValidationFeedback[key] = null
+  }
+
+  function resetModelParams(flow: ModelParamFlow) {
+    modelParamsByFlow[flow] = { ...DEFAULT_MODEL_PARAMS_BY_FLOW[flow] }
+    modelParamsError = null
+  }
+
+  function resetRagParams() {
+    ragParams = { ...DEFAULT_RAG_PARAMS }
+    ragParamsError = null
+  }
+
+  async function openProviderLink(event: MouseEvent, url: string, providerName: string) {
+    try {
+      await openExternalUrlFromClick(event, url)
+    } catch (error) {
+      console.error(`[Settings] No se pudo abrir el enlace de ${providerName}`, error)
+    }
+  }
 </script>
 
 {#key activeLocale}
@@ -446,9 +970,7 @@
         <span class="page-header__eyebrow">{t('settings.preferences')}</span>
         <h1>{t('settings.title')}</h1>
         <p>{t('settings.subtitle')}</p>
-        <span class="page-header__meta"
-          >{t('settings.currentMode', { mode: currentModeLabel })}</span
-        >
+        <span class="page-header__meta">{t('settings.currentMode', { mode: currentModeLabel })}</span>
       </div>
 
       <div class="page-toolbar settings-view__toolbar">
@@ -458,38 +980,28 @@
       </div>
     </section>
 
-    <!-- Tab navigation -->
-    <nav class="settings-tabs" aria-label="Secciones de configuración">
-      <button
-        class="settings-tab"
-        class:settings-tab--active={activeTab === 'openrouter'}
-        type="button"
-        onclick={() => (activeTab = 'openrouter')}
-      >
-        LLM, OCR y STT
-      </button>
-      <button
-        class="settings-tab"
-        class:settings-tab--active={activeTab === 'dependencias'}
-        type="button"
-        onclick={() => (activeTab = 'dependencias')}
-      >
-        Dependencias de IA
-        {#if hasDepsWarning}
-          <span class="settings-tab__badge"></span>
-        {/if}
-      </button>
-      <button
-        class="settings-tab"
-        class:settings-tab--active={activeTab === 'logs'}
-        type="button"
-        onclick={() => (activeTab = 'logs')}
-      >
-        Logs
-      </button>
-    </nav>
+    <TabList aria-label={t('settings.tabsAria')}>
+      <TabButton active={activeTab === 'api'} onclick={() => (activeTab = 'api')}>
+        {t('settings.remoteApisTab')}
+      </TabButton>
+      <TabButton active={activeTab === 'prompts'} onclick={() => (activeTab = 'prompts')}>
+        {t('settings.promptsTab')}
+      </TabButton>
+      <TabButton active={activeTab === 'modelParams'} onclick={() => (activeTab = 'modelParams')}>
+        {t('settings.modelParamsTab')}
+      </TabButton>
+      <TabButton active={activeTab === 'ragParams'} onclick={() => (activeTab = 'ragParams')}>
+        {t('settings.ragParamsTab')}
+      </TabButton>
+      <TabButton active={activeTab === 'dependencias'} onclick={() => (activeTab = 'dependencias')}>
+        {t('settings.dependenciesTab')}{#if hasDepsWarning}<span class="settings-tab__badge"></span>{/if}
+      </TabButton>
+      <TabButton active={activeTab === 'logs'} onclick={() => (activeTab = 'logs')}>
+        {t('settings.logsTab')}
+      </TabButton>
+    </TabList>
 
-    {#if activeTab === 'openrouter'}
+    {#if activeTab === 'api'}
     {#if saveFeedback}
       <p
         class="surface-message"
@@ -498,6 +1010,15 @@
       >
         {saveFeedback.text}
       </p>
+    {/if}
+
+    {#if loadSettingsError}
+      <div class="surface-message surface-message--error settings__load-error" role="alert">
+        <span>{t('settings.loadError', { error: loadSettingsError })}</span>
+        <Button variant="secondary" size="sm" onclick={loadInitialSettings}>
+          {t('settings.retryLoad')}
+        </Button>
+      </div>
     {/if}
 
     <Card>
@@ -511,7 +1032,7 @@
           <label class="settings__label" for="language-select">{t('settings.languageLabel')}</label>
           <select
             id="language-select"
-            class="settings__input"
+            class="settings__input settings__input--select"
             bind:value={selectedLocale}
             onchange={handleLanguageChange}
           >
@@ -537,17 +1058,11 @@
               <span class="settings__radio-desc">
                 {t('settings.llmMode.local.description')}
                 {#if localModel?.exists}
-                  <span class="settings__badge settings__badge--ok"
-                    >{t('settings.badge.available')}</span
-                  >
+                  <span class="settings__badge settings__badge--ok">{t('settings.badge.available')}</span>
                 {:else if localModel?.can_auto_download || localAvailable}
-                  <span class="settings__badge settings__badge--warn"
-                    >{t('settings.badge.downloadable')}</span
-                  >
+                  <span class="settings__badge settings__badge--warn">{t('settings.badge.downloadable')}</span>
                 {:else}
-                  <span class="settings__badge settings__badge--warn"
-                    >{t('settings.badge.notFound')}</span
-                  >
+                  <span class="settings__badge settings__badge--warn">{t('settings.badge.notFound')}</span>
                 {/if}
               </span>
             </div>
@@ -557,9 +1072,7 @@
             <input type="radio" name="llm_mode" value="openrouter" bind:group={llmMode} />
             <div class="settings__radio-content">
               <strong>{t('settings.llmMode.openrouter.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.llmMode.openrouter.description')}
-              </span>
+              <span class="settings__radio-desc">{t('settings.llmMode.openrouter.description')}</span>
             </div>
           </label>
 
@@ -567,206 +1080,10 @@
             <input type="radio" name="llm_mode" value="auto" bind:group={llmMode} />
             <div class="settings__radio-content">
               <strong>{t('settings.llmMode.auto.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.llmMode.auto.description')}
-              </span>
+              <span class="settings__radio-desc">{t('settings.llmMode.auto.description')}</span>
             </div>
           </label>
         </div>
-      </section>
-    </Card>
-
-    <Card>
-      <section class="settings-card-section">
-        <div class="settings-card-section__copy">
-          <h2>{t('settings.embeddingProvider.title')}</h2>
-          <p>{t('settings.embeddingProvider.description')}</p>
-        </div>
-
-        <div class="settings__mode-options">
-          <label class="settings__radio" class:active={embeddingProvider === 'api'}>
-            <input type="radio" name="embedding_provider" value="api" bind:group={embeddingProvider} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.embeddingProvider.api.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.embeddingProvider.api.description')}
-              </span>
-            </div>
-          </label>
-
-          <label class="settings__radio" class:active={embeddingProvider === 'local'}>
-            <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.embeddingProvider.local.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.embeddingProvider.local.description')}
-              </span>
-            </div>
-          </label>
-        </div>
-
-        <div class="settings__field settings__field--stacked">
-          <Input
-            label={t('settings.embeddingProvider.model')}
-            type="text"
-            bind:value={embeddingModel}
-            placeholder={DEFAULT_OPENROUTER_EMBEDDING_MODEL}
-          />
-          <p class="settings__hint">{t('settings.embeddingProvider.modelHint')}</p>
-        </div>
-
-        {#if embeddingProvider === 'local'}
-          <div class="settings__field settings__field--stacked">
-            <label class="settings__label" for="local-embedding-model-dir">
-              {t('settings.embeddingProvider.localPath')}
-            </label>
-            <input
-              id="local-embedding-model-dir"
-              type="text"
-              class="settings__input"
-              bind:value={localEmbeddingModelDir}
-              placeholder={t('settings.embeddingProvider.localPathPlaceholder')}
-            />
-            <p class="settings__hint">{t('settings.embeddingProvider.localPathHint')}</p>
-          </div>
-
-          {#if localEmbeddingModel}
-            <div class="settings__local-model">
-              <div class="settings__local-model-row">
-                <span class="settings__label">{t('settings.embeddingProvider.localStatus')}</span>
-                {#if localEmbeddingModel.available}
-                  <span class="settings__badge settings__badge--ok">{t('settings.embeddingProvider.localComplete')}</span>
-                {:else}
-                  <span class="settings__badge settings__badge--warn">{t('settings.embeddingProvider.localIncomplete')}</span>
-                {/if}
-              </div>
-
-              <div class="settings__local-model-row">
-                <span class="settings__label">{t('settings.embeddingProvider.localPath')}</span>
-                <code class="settings__local-model-path">{localEmbeddingModel.directory}</code>
-              </div>
-
-              <p class="settings__hint">
-                {t('settings.embeddingProvider.localInstallHint', { repo: localEmbeddingModel.source_repo })}
-              </p>
-
-              {#if localEmbeddingModel.missing_files.length > 0}
-                <ul class="settings__hint">
-                  {#each localEmbeddingModel.missing_files as file}
-                    <li><code>{file.filename}</code> ← {file.source_path} ({formatBytes(file.size_bytes)})</li>
-                  {/each}
-                </ul>
-              {/if}
-
-              {#if embeddingDownloading}
-                <div class="settings__download-progress">
-                  <span class="settings__download-progress-bar" style="width: {embeddingDownloadPct}%"></span>
-                  <span class="settings__download-progress-text">
-                    {embeddingDownloadPct}% — {embeddingDownloadFile || t('settings.embeddingProvider.downloading')}
-                  </span>
-                </div>
-              {:else if !localEmbeddingModel.available}
-                <Button variant="primary" size="sm" onclick={handleDownloadEmbeddingModel}>
-                  {t('settings.embeddingProvider.installLocal')}
-                </Button>
-              {/if}
-
-              {#if embeddingDownloadError}
-                <p class="surface-message surface-message--error">{embeddingDownloadError}</p>
-              {/if}
-
-              <Button variant="secondary" size="sm" onclick={() => embeddingOpenModelsDir()}>
-                {t('settings.embeddingProvider.openLocalFolder')}
-              </Button>
-            </div>
-          {/if}
-        {:else}
-          <p class="settings__hint settings__hint--privacy">
-            {t('settings.embeddingProvider.apiPrivacyNotice')}
-          </p>
-        {/if}
-      </section>
-    </Card>
-
-    <Card>
-      <section class="settings-card-section">
-        <div class="settings-card-section__copy">
-          <h2>{t('settings.sttModeTitle')}</h2>
-          <p>{currentSttModeDescription}</p>
-        </div>
-
-        <div class="settings__mode-options">
-          <label class="settings__radio" class:active={sttMode === 'local'}>
-            <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.sttMode.local.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
-            </div>
-          </label>
-
-          <label class="settings__radio" class:active={sttMode === 'assemblyai'}>
-            <input type="radio" name="stt_mode" value="assemblyai" bind:group={sttMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.sttMode.assemblyai.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.sttMode.assemblyai.description')}
-              </span>
-            </div>
-          </label>
-
-          <label class="settings__radio" class:active={sttMode === 'auto'}>
-            <input type="radio" name="stt_mode" value="auto" bind:group={sttMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.sttMode.auto.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.sttMode.auto.description')}</span>
-            </div>
-          </label>
-        </div>
-
-        {#if sttMode !== 'local'}
-          <p class="settings__hint settings__hint--privacy">{t('settings.sttPrivacyNotice')}</p>
-        {/if}
-      </section>
-    </Card>
-
-    <Card>
-      <section class="settings-card-section">
-        <div class="settings-card-section__copy">
-          <h2>{t('settings.ocrhModeTitle')}</h2>
-          <p>{currentOcrhModeDescription}</p>
-        </div>
-
-        <div class="settings__mode-options">
-          <label class="settings__radio" class:active={ocrhMode === 'local'}>
-            <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.ocrhMode.local.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
-            </div>
-          </label>
-
-          <label class="settings__radio" class:active={ocrhMode === 'glm_ocr'}>
-            <input type="radio" name="ocrh_mode" value="glm_ocr" bind:group={ocrhMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.ocrhMode.glm_ocr.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.ocrhMode.glm_ocr.description')}
-              </span>
-            </div>
-          </label>
-
-          <label class="settings__radio" class:active={ocrhMode === 'auto'}>
-            <input type="radio" name="ocrh_mode" value="auto" bind:group={ocrhMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.ocrhMode.auto.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.ocrhMode.auto.description')}</span>
-            </div>
-          </label>
-        </div>
-
-        {#if ocrhMode !== 'local'}
-          <p class="settings__hint settings__hint--privacy">{t('settings.ocrhPrivacyNotice')}</p>
-        {/if}
       </section>
     </Card>
 
@@ -850,8 +1167,105 @@
             </Button>
           </div>
         {:else}
-          <p class="settings__hint">Cargando estado del modelo local…</p>
+          <p class="settings__hint">{t('settings.localModel.loading')}</p>
+        {/if}
+      </section>
+    </Card>
 
+    <Card>
+      <section class="settings-card-section">
+        <div class="settings-card-section__copy">
+          <h2>{t('settings.embeddingProvider.title')}</h2>
+          <p>{t('settings.embeddingProvider.description')}</p>
+        </div>
+
+        <div class="settings__mode-options">
+          <label class="settings__radio" class:active={embeddingProvider === 'api'}>
+            <input type="radio" name="embedding_provider" value="api" bind:group={embeddingProvider} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.embeddingProvider.api.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.embeddingProvider.api.description')}</span>
+            </div>
+          </label>
+
+          <label class="settings__radio" class:active={embeddingProvider === 'local'}>
+            <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.embeddingProvider.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.embeddingProvider.local.description')}</span>
+            </div>
+          </label>
+        </div>
+
+        {#if embeddingProvider === 'local'}
+          <div class="settings__field settings__field--stacked">
+            <label class="settings__label" for="local-embedding-model-dir">
+              {t('settings.embeddingProvider.localPath')}
+            </label>
+            <input
+              id="local-embedding-model-dir"
+              type="text"
+              class="settings__input"
+              bind:value={localEmbeddingModelDir}
+              placeholder={t('settings.embeddingProvider.localPathPlaceholder')}
+            />
+            <p class="settings__hint">{t('settings.embeddingProvider.localPathHint')}</p>
+          </div>
+
+          {#if localEmbeddingModel}
+            <div class="settings__local-model">
+              <div class="settings__local-model-row">
+                <span class="settings__label">{t('settings.embeddingProvider.localStatus')}</span>
+                {#if localEmbeddingModel.available}
+                  <span class="settings__badge settings__badge--ok">{t('settings.embeddingProvider.localComplete')}</span>
+                {:else}
+                  <span class="settings__badge settings__badge--warn">{t('settings.embeddingProvider.localIncomplete')}</span>
+                {/if}
+              </div>
+
+              <div class="settings__local-model-row">
+                <span class="settings__label">{t('settings.embeddingProvider.localPath')}</span>
+                <code class="settings__local-model-path">{localEmbeddingModel.directory}</code>
+              </div>
+
+              <p class="settings__hint">
+                {t('settings.embeddingProvider.localInstallHint', { repo: localEmbeddingModel.source_repo })}
+              </p>
+
+              {#if localEmbeddingModel.missing_files.length > 0}
+                <ul class="settings__hint">
+                  {#each localEmbeddingModel.missing_files as file (file.filename)}
+                    <li><code>{file.filename}</code> ← {file.source_path} ({formatBytes(file.size_bytes)})</li>
+                  {/each}
+                </ul>
+              {/if}
+
+              {#if embeddingDownloading}
+                <div class="settings__download-progress">
+                  <span class="settings__download-progress-bar" style="width: {embeddingDownloadPct}%"></span>
+                  <span class="settings__download-progress-text">
+                    {embeddingDownloadPct}% — {embeddingDownloadFile || t('settings.embeddingProvider.downloading')}
+                  </span>
+                </div>
+              {:else if !localEmbeddingModel.available}
+                <Button variant="primary" size="sm" onclick={handleDownloadEmbeddingModel}>
+                  {t('settings.embeddingProvider.installLocal')}
+                </Button>
+              {/if}
+
+              {#if embeddingDownloadError}
+                <p class="surface-message surface-message--error">{embeddingDownloadError}</p>
+              {/if}
+
+              <Button variant="secondary" size="sm" onclick={() => embeddingOpenModelsDir()}>
+                {t('settings.embeddingProvider.openLocalFolder')}
+              </Button>
+            </div>
+          {/if}
+        {:else}
+          <p class="settings__hint settings__hint--privacy">
+            {t('settings.embeddingProvider.apiPrivacyNotice')}
+          </p>
         {/if}
       </section>
     </Card>
@@ -861,6 +1275,14 @@
         <div class="settings-card-section__copy">
           <h2>{t('settings.openrouter.title')}</h2>
           <p>{t('settings.openrouter.description')}</p>
+          <a
+            class="settings__provider-link"
+            href={PROVIDER_LINKS.openrouter}
+            onclick={(event) => openProviderLink(event, PROVIDER_LINKS.openrouter, 'OpenRouter')}
+          >
+            <span>{t('settings.getApiKeyLink', { provider: 'OpenRouter' })}</span>
+            <ActionIcon name="external-link" size={14} />
+          </a>
         </div>
 
         <div class="settings__field settings__field--stacked">
@@ -890,13 +1312,13 @@
               title={showApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
               aria-label={showApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
             >
-              {showApiKey ? '🙈' : '👁'}
+              <ActionIcon name={showApiKey ? 'eye-off' : 'eye'} size={15} />
             </button>
             <Button
               variant="secondary"
               size="sm"
               onclick={handleTestConnection}
-              disabled={testing || !apiKey.trim()}
+              disabled={testing || !hasOpenRouterCredential}
             >
               {testing ? t('settings.testingConnection') : t('settings.testConnection')}
             </Button>
@@ -938,13 +1360,61 @@
                   onclick={() => handleModelSelect(m.id)}
                 >
                   <span class="settings__model-id">{m.id}</span>
-                  <span class="settings__model-ctx">{Math.round(m.context_length / 1024)}k ctx</span
-                  >
+                  <span class="settings__model-ctx">{Math.round(m.context_length / 1024)}k ctx</span>
                 </button>
               {/each}
             </div>
           {/if}
         </div>
+
+        <div class="settings__field settings__field--stacked">
+          <Input
+            label={t('settings.embeddingProvider.model')}
+            type="text"
+            bind:value={embeddingModel}
+            placeholder={DEFAULT_OPENROUTER_EMBEDDING_MODEL}
+          />
+          <p class="settings__hint">{t('settings.embeddingProvider.modelHint')}</p>
+        </div>
+      </section>
+    </Card>
+
+    <Card>
+      <section class="settings-card-section">
+        <div class="settings-card-section__copy">
+          <h2>{t('settings.sttModeTitle')}</h2>
+          <p>{currentSttModeDescription}</p>
+        </div>
+
+        <div class="settings__mode-options">
+          <label class="settings__radio" class:active={sttMode === 'local'}>
+            <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.sttMode.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
+            </div>
+          </label>
+
+          <label class="settings__radio" class:active={sttMode === 'assemblyai'}>
+            <input type="radio" name="stt_mode" value="assemblyai" bind:group={sttMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.sttMode.assemblyai.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.sttMode.assemblyai.description')}</span>
+            </div>
+          </label>
+
+          <label class="settings__radio" class:active={sttMode === 'auto'}>
+            <input type="radio" name="stt_mode" value="auto" bind:group={sttMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.sttMode.auto.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.sttMode.auto.description')}</span>
+            </div>
+          </label>
+        </div>
+
+        {#if sttMode !== 'local'}
+          <p class="settings__hint settings__hint--privacy">{t('settings.sttPrivacyNotice')}</p>
+        {/if}
       </section>
     </Card>
 
@@ -953,6 +1423,14 @@
         <div class="settings-card-section__copy">
           <h2>{t('settings.assemblyai.title')}</h2>
           <p>{t('settings.assemblyai.description')}</p>
+          <a
+            class="settings__provider-link"
+            href={PROVIDER_LINKS.assemblyai}
+            onclick={(event) => openProviderLink(event, PROVIDER_LINKS.assemblyai, 'AssemblyAI')}
+          >
+            <span>{t('settings.getApiKeyLink', { provider: 'AssemblyAI' })}</span>
+            <ActionIcon name="external-link" size={14} />
+          </a>
         </div>
 
         <div class="settings__field settings__field--stacked">
@@ -972,13 +1450,13 @@
               title={showAssemblyAiApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
               aria-label={showAssemblyAiApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
             >
-              {showAssemblyAiApiKey ? '🙈' : '👁'}
+              <ActionIcon name={showAssemblyAiApiKey ? 'eye-off' : 'eye'} size={15} />
             </button>
             <Button
               variant="secondary"
               size="sm"
               onclick={handleTestAssemblyAiConnection}
-              disabled={testingAssemblyAi || !assemblyAiApiKey.trim()}
+              disabled={testingAssemblyAi || !hasAssemblyAiCredential}
             >
               {testingAssemblyAi ? t('settings.testingConnection') : t('settings.testConnection')}
             </Button>
@@ -998,6 +1476,60 @@
             </p>
           {/if}
         </div>
+
+        <div class="settings__field settings__field--stacked">
+          <label class="settings__label" for="assemblyai-speaker-labels">
+            {t('settings.assemblyAiSpeakerLabels')}
+          </label>
+          <select
+            id="assemblyai-speaker-labels"
+            class="settings__input settings__input--select"
+            bind:value={assemblyAiCollectionSpeakerLabels}
+          >
+            <option value={true}>{t('settings.optionEnabled')}</option>
+            <option value={false}>{t('settings.optionDisabled')}</option>
+          </select>
+          <p class="settings__hint">{t('settings.assemblyAiSpeakerLabelsHint')}</p>
+        </div>
+      </section>
+    </Card>
+
+    <Card>
+      <section class="settings-card-section">
+        <div class="settings-card-section__copy">
+          <h2>{t('settings.ocrhModeTitle')}</h2>
+          <p>{currentOcrhModeDescription}</p>
+        </div>
+
+        <div class="settings__mode-options">
+          <label class="settings__radio" class:active={ocrhMode === 'local'}>
+            <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.ocrhMode.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
+            </div>
+          </label>
+
+          <label class="settings__radio" class:active={ocrhMode === 'glm_ocr'}>
+            <input type="radio" name="ocrh_mode" value="glm_ocr" bind:group={ocrhMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.ocrhMode.glm_ocr.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.ocrhMode.glm_ocr.description')}</span>
+            </div>
+          </label>
+
+          <label class="settings__radio" class:active={ocrhMode === 'auto'}>
+            <input type="radio" name="ocrh_mode" value="auto" bind:group={ocrhMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.ocrhMode.auto.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.ocrhMode.auto.description')}</span>
+            </div>
+          </label>
+        </div>
+
+        {#if ocrhMode !== 'local'}
+          <p class="settings__hint settings__hint--privacy">{t('settings.ocrhPrivacyNotice')}</p>
+        {/if}
       </section>
     </Card>
 
@@ -1006,6 +1538,14 @@
         <div class="settings-card-section__copy">
           <h2>{t('settings.glmOcr.title')}</h2>
           <p>{t('settings.glmOcr.description')}</p>
+          <a
+            class="settings__provider-link"
+            href={PROVIDER_LINKS.glmOcr}
+            onclick={(event) => openProviderLink(event, PROVIDER_LINKS.glmOcr, 'Z.ai')}
+          >
+            <span>{t('settings.getApiKeyLink', { provider: 'Z.ai' })}</span>
+            <ActionIcon name="external-link" size={14} />
+          </a>
         </div>
 
         <div class="settings__field settings__field--stacked">
@@ -1025,13 +1565,13 @@
               title={showGlmOcrApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
               aria-label={showGlmOcrApiKey ? t('settings.hideApiKey') : t('settings.showApiKey')}
             >
-              {showGlmOcrApiKey ? '🙈' : '👁'}
+              <ActionIcon name={showGlmOcrApiKey ? 'eye-off' : 'eye'} size={15} />
             </button>
             <Button
               variant="secondary"
               size="sm"
               onclick={handleTestGlmOcrConnection}
-              disabled={testingGlmOcr || !glmOcrApiKey.trim()}
+              disabled={testingGlmOcr || !hasGlmOcrCredential}
             >
               {testingGlmOcr ? t('settings.testingConnection') : t('settings.testConnection')}
             </Button>
@@ -1054,10 +1594,178 @@
       </section>
     </Card>
 
+    {:else if activeTab === 'prompts'}
+      {#if saveFeedback}
+        <p
+          class="surface-message"
+          class:surface-message--error={saveFeedback.tone === 'error'}
+          class:surface-message--success={saveFeedback.tone === 'success'}
+        >
+          {saveFeedback.text}
+        </p>
+      {/if}
+
+      <Card>
+        <section class="settings-card-section settings-card-section--vertical">
+          <div class="settings-card-section__copy">
+            <h2>{t('settings.prompts.title')}</h2>
+            <p>{t('settings.prompts.descriptionLead')} <code>{'{text}'}</code> {t('settings.prompts.descriptionTrail')}</p>
+          </div>
+
+          <div class="settings__prompt-grid">
+            <div class="settings__field settings__field--stacked settings__prompt-card">
+              <label class="settings__label" for="ocr-correction-prompt">OCR correction prompt</label>
+              <textarea id="ocr-correction-prompt" class="settings__textarea" rows="12" bind:value={ocrCorrectionPrompt}></textarea>
+              {#if promptValidationFeedback.ocrCorrectionPrompt}
+                <p class="settings__validation" class:settings__validation--error={promptValidationFeedback.ocrCorrectionPrompt.tone === 'error'}>{promptValidationFeedback.ocrCorrectionPrompt.text}</p>
+              {/if}
+              <div class="settings__button-row">
+                <Button variant="secondary" size="sm" onclick={() => validatePrompt('ocrCorrectionPrompt')}>{t('settings.prompts.validate')}</Button>
+                <Button variant="secondary" size="sm" onclick={() => resetPrompt('ocrCorrectionPrompt')}>{t('settings.prompts.restoreDefault')}</Button>
+              </div>
+            </div>
+            <div class="settings__field settings__field--stacked settings__prompt-card">
+              <label class="settings__label" for="summary-prompt">Summary prompt</label>
+              <textarea id="summary-prompt" class="settings__textarea" rows="10" bind:value={summaryPrompt}></textarea>
+              {#if promptValidationFeedback.summaryPrompt}
+                <p class="settings__validation" class:settings__validation--error={promptValidationFeedback.summaryPrompt.tone === 'error'}>{promptValidationFeedback.summaryPrompt.text}</p>
+              {/if}
+              <div class="settings__button-row">
+                <Button variant="secondary" size="sm" onclick={() => validatePrompt('summaryPrompt')}>{t('settings.prompts.validate')}</Button>
+                <Button variant="secondary" size="sm" onclick={() => resetPrompt('summaryPrompt')}>{t('settings.prompts.restoreDefault')}</Button>
+              </div>
+            </div>
+            <div class="settings__field settings__field--stacked settings__prompt-card">
+              <label class="settings__label" for="ner-prompt">NER prompt</label>
+              <textarea id="ner-prompt" class="settings__textarea" rows="8" bind:value={nerPrompt}></textarea>
+              {#if promptValidationFeedback.nerPrompt}
+                <p class="settings__validation" class:settings__validation--error={promptValidationFeedback.nerPrompt.tone === 'error'}>{promptValidationFeedback.nerPrompt.text}</p>
+              {/if}
+              <div class="settings__button-row">
+                <Button variant="secondary" size="sm" onclick={() => validatePrompt('nerPrompt')}>{t('settings.prompts.validate')}</Button>
+                <Button variant="secondary" size="sm" onclick={() => resetPrompt('nerPrompt')}>{t('settings.prompts.restoreDefault')}</Button>
+              </div>
+            </div>
+            <div class="settings__field settings__field--stacked settings__prompt-card">
+              <label class="settings__label" for="triplets-prompt">Triplets prompt</label>
+              <textarea id="triplets-prompt" class="settings__textarea" rows="10" bind:value={tripletsPrompt}></textarea>
+              {#if promptValidationFeedback.tripletsPrompt}
+                <p class="settings__validation" class:settings__validation--error={promptValidationFeedback.tripletsPrompt.tone === 'error'}>{promptValidationFeedback.tripletsPrompt.text}</p>
+              {/if}
+              <div class="settings__button-row">
+                <Button variant="secondary" size="sm" onclick={() => validatePrompt('tripletsPrompt')}>{t('settings.prompts.validate')}</Button>
+                <Button variant="secondary" size="sm" onclick={() => resetPrompt('tripletsPrompt')}>{t('settings.prompts.restoreDefault')}</Button>
+              </div>
+            </div>
+          </div>
+        </section>
+      </Card>
+
+    {:else if activeTab === 'modelParams'}
+      {#if saveFeedback}
+        <p
+          class="surface-message"
+          class:surface-message--error={saveFeedback.tone === 'error'}
+          class:surface-message--success={saveFeedback.tone === 'success'}
+        >
+          {saveFeedback.text}
+        </p>
+      {/if}
+
+      <Card>
+        <section class="settings-card-section settings-card-section--vertical">
+          <div class="settings-card-section__copy">
+            <h2>{t('settings.modelParams.title')}</h2>
+            <p><strong>{t('settings.modelParams.advancedLabel')}</strong> {t('settings.modelParams.description')}</p>
+          </div>
+
+          {#if modelParamsError}
+            <p class="surface-message surface-message--error">{modelParamsError}</p>
+          {/if}
+
+          <div class="settings__params-grid settings__params-grid--flows">
+            {#each MODEL_PARAM_FLOWS as flow (flow.id)}
+              <div class="settings__field settings__field--stacked settings__param-card">
+                <h3>{flow.label}</h3>
+                <div class="settings__param-card-grid">
+                  <Input label="temperature (0-2)" type="text" bind:value={modelParamsByFlow[flow.id].temperature} />
+                  <Input label="maxTokens (1-32000, vacío = default)" type="text" bind:value={modelParamsByFlow[flow.id].maxTokens} />
+                  <Input label="topP (0-1, opcional)" type="text" bind:value={modelParamsByFlow[flow.id].topP} />
+                  <Input label="topK (1-1000, opcional)" type="text" bind:value={modelParamsByFlow[flow.id].topK} />
+                  <Input label="presencePenalty (-2 a 2)" type="text" bind:value={modelParamsByFlow[flow.id].presencePenalty} />
+                  <Input label="frequencyPenalty (-2 a 2)" type="text" bind:value={modelParamsByFlow[flow.id].frequencyPenalty} />
+                  <div class="settings__field settings__field--stacked settings__field--wide">
+                    <label class="settings__label" for={`${flow.id}-stop-sequences`}>stopSequences</label>
+                    <textarea id={`${flow.id}-stop-sequences`} class="settings__textarea" rows="3" bind:value={modelParamsByFlow[flow.id].stopSequences} placeholder={t('settings.modelParams.stopSequencesPlaceholder')}></textarea>
+                  </div>
+                </div>
+                <Button variant="secondary" size="sm" onclick={() => resetModelParams(flow.id)}>{t('settings.modelParams.restoreDefaults')}</Button>
+              </div>
+            {/each}
+          </div>
+        </section>
+      </Card>
+
+    {:else if activeTab === 'ragParams'}
+      {#if saveFeedback}
+        <p
+          class="surface-message"
+          class:surface-message--error={saveFeedback.tone === 'error'}
+          class:surface-message--success={saveFeedback.tone === 'success'}
+        >
+          {saveFeedback.text}
+        </p>
+      {/if}
+
+      <Card>
+        <section class="settings-card-section settings-card-section--vertical">
+          <div class="settings-card-section__copy">
+            <h2>{t('settings.ragParams.title')}</h2>
+            <p>{t('settings.ragParams.description')}</p>
+          </div>
+
+          {#if ragParamsError}
+            <p class="surface-message surface-message--error">{ragParamsError}</p>
+          {/if}
+
+          <div class="settings__params-grid">
+            <div class="settings__field settings__field--stacked settings__param-card">
+              <div class="settings__param-card-grid">
+                <Input label="topK (1-20)" type="text" bind:value={ragParams.topK} />
+                <Input label="minSimilarity (0-1, 0 = off)" type="text" bind:value={ragParams.minSimilarity} />
+                <Input label="candidatesPerLeg (4-200)" type="text" bind:value={ragParams.candidatesPerLeg} />
+                <Input label="rrfK (1-500)" type="text" bind:value={ragParams.rrfK} />
+                <Input label="snippetMaxChars (200-8000)" type="text" bind:value={ragParams.snippetMaxChars} />
+                <Input label="contextMaxChars (1000-60000)" type="text" bind:value={ragParams.contextMaxChars} />
+                <Input label="historyTurns (0-20)" type="text" bind:value={ragParams.historyTurns} />
+                <Input label="historyTurnMaxChars (100-4000)" type="text" bind:value={ragParams.historyTurnMaxChars} />
+                <Input label="temperature (0-2)" type="text" bind:value={ragParams.temperature} />
+                <Input label="maxTokens (64-32000)" type="text" bind:value={ragParams.maxTokens} />
+              </div>
+              <Button variant="secondary" size="sm" onclick={resetRagParams}>{t('settings.ragParams.restoreDefaults')}</Button>
+            </div>
+          </div>
+        </section>
+      </Card>
+
     {:else if activeTab === 'dependencias'}
-    <DependenciasTab />
+      <DependenciasTab />
+
     {:else if activeTab === 'logs'}
-    <LogsTab />
+      <LogsTab />
+    {/if}
+
+    {#if showDiscardConfirm}
+      <ConfirmDialog
+        title={t('settings.discardTitle')}
+        titleId="settings-discard-title"
+        message={t('settings.discardMessage')}
+        cancelLabel={t('settings.discardCancel')}
+        confirmLabel={t('settings.discardConfirm')}
+        variant="destructive"
+        oncancel={() => (showDiscardConfirm = false)}
+        onconfirm={handleDiscardConfirm}
+      />
     {/if}
   </div>
 {/key}
@@ -1065,54 +1773,6 @@
 <style>
   .settings-view {
     min-height: 100%;
-  }
-
-  /* Tab navigation */
-  .settings-tabs {
-    display: flex;
-    gap: 0;
-    border-bottom: 1px solid var(--color-border-subtle);
-    margin-bottom: var(--space-1);
-  }
-
-  .settings-tab {
-    padding: var(--space-2) var(--space-5);
-    background: none;
-    border: none;
-    border-bottom: 2px solid transparent;
-    cursor: pointer;
-    font-size: var(--font-size-sm);
-    font-weight: var(--font-weight-medium);
-    color: var(--color-text-secondary);
-    transition:
-      color 0.15s ease,
-      border-color 0.15s ease;
-    margin-bottom: -1px;
-  }
-
-  .settings-tab:hover {
-    color: var(--color-text-primary);
-  }
-
-  .settings-tab--active {
-    color: var(--color-accent);
-    border-bottom-color: var(--color-accent);
-  }
-
-  .settings-tab__badge {
-    display: inline-block;
-    width: 6px;
-    height: 6px;
-    border-radius: 50%;
-    background: var(--color-warning);
-    margin-left: var(--space-1);
-    vertical-align: middle;
-    animation: tab-badge-pulse 2s ease-in-out 3;
-  }
-
-  @keyframes tab-badge-pulse {
-    0%, 100% { box-shadow: 0 0 0 0 transparent; }
-    50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 25%, transparent); }
   }
 
   .settings-view__toolbar {
@@ -1137,6 +1797,22 @@
   .settings-view__header .page-header__meta {
     color: var(--color-text-secondary);
     line-height: 1.5;
+  }
+
+  .settings-tab__badge {
+    display: inline-block;
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--color-warning);
+    margin-left: var(--space-1);
+    vertical-align: middle;
+    animation: tab-badge-pulse 2s ease-in-out 3;
+  }
+
+  @keyframes tab-badge-pulse {
+    0%, 100% { box-shadow: 0 0 0 0 transparent; }
+    50% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-warning) 25%, transparent); }
   }
 
   .settings-view :global(.card) {
@@ -1164,6 +1840,10 @@
     gap: var(--space-5);
   }
 
+  .settings-card-section--vertical {
+    align-items: stretch;
+  }
+
   .settings-card-section__copy {
     display: flex;
     flex-direction: column;
@@ -1183,6 +1863,21 @@
     color: var(--color-text-secondary);
     line-height: 1.6;
     margin: 0;
+  }
+
+  .settings__provider-link {
+    align-items: center;
+    display: inline-flex;
+    gap: var(--space-1);
+    width: fit-content;
+    color: var(--color-accent);
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+    text-decoration: none;
+  }
+
+  .settings__provider-link:hover {
+    text-decoration: underline;
   }
 
   .settings__mode-options {
@@ -1269,6 +1964,125 @@
     gap: var(--space-3);
   }
 
+  .settings__field--wide {
+    grid-column: 1 / -1;
+  }
+
+  .settings__prompt-grid,
+  .settings__params-grid {
+    display: grid;
+    gap: var(--space-4);
+  }
+
+  .settings__prompt-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .settings__params-grid {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
+
+  .settings__params-grid--flows {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    align-items: stretch;
+  }
+
+  .settings__prompt-card {
+    min-height: 430px;
+    margin-bottom: 0;
+    padding: var(--space-4);
+    border: 1px solid color-mix(in srgb, var(--color-hairline) 72%, transparent);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-surface-glass) 70%, transparent);
+  }
+
+  .settings__prompt-card .settings__textarea {
+    flex: 1;
+    min-height: 300px;
+  }
+
+  .settings__button-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin-top: auto;
+  }
+
+  .settings__prompt-card .settings__button-row :global(.btn) {
+    align-self: flex-start;
+    margin-top: 0;
+  }
+
+  .settings__validation {
+    margin: 0;
+    color: var(--color-success);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+  }
+
+  .settings__validation--error {
+    color: var(--color-danger);
+  }
+
+  .settings__param-card {
+    min-height: 520px;
+    margin-bottom: 0;
+    padding: var(--space-4);
+    border: 1px solid color-mix(in srgb, var(--color-hairline) 72%, transparent);
+    border-radius: var(--radius-lg);
+    background: color-mix(in srgb, var(--color-surface-glass) 70%, transparent);
+  }
+
+  .settings__param-card h3 {
+    margin: 0;
+    font-size: var(--font-size-sm);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .settings__param-card-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: var(--space-3);
+  }
+
+  .settings__param-card :global(.btn) {
+    align-self: flex-start;
+    margin-top: auto;
+  }
+
+  .settings__textarea {
+    width: 100%;
+    border: 1px solid color-mix(in srgb, var(--color-hairline) 78%, transparent);
+    border-radius: var(--radius-input);
+    background: color-mix(in srgb, var(--color-surface-glass) 78%, transparent);
+    color: var(--color-text-primary);
+    padding: var(--space-3);
+    font: inherit;
+    font-family: var(--font-mono, monospace);
+    font-size: var(--font-size-sm);
+    line-height: 1.5;
+    resize: vertical;
+  }
+
+  .settings__textarea:focus {
+    outline: none;
+    border-color: var(--color-accent);
+    box-shadow: var(--focus-ring);
+    background: color-mix(in srgb, var(--color-surface-glass) 88%, transparent);
+  }
+
+  @media (max-width: 760px) {
+    .settings__prompt-grid,
+    .settings__params-grid--flows {
+      grid-template-columns: 1fr;
+    }
+
+    .settings__param-card-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+
   .settings__label {
     display: block;
     font-size: var(--font-size-xs);
@@ -1305,6 +2119,11 @@
     background: color-mix(in srgb, var(--color-surface-glass) 88%, transparent);
   }
 
+  .settings__input--select {
+    max-width: 240px;
+    font-family: var(--font-sans);
+  }
+
   .settings__icon-btn {
     display: flex;
     align-items: center;
@@ -1316,12 +2135,22 @@
     background: color-mix(in srgb, var(--color-surface-glass) 78%, transparent);
     color: var(--color-text-secondary);
     cursor: pointer;
-    font-size: 14px;
+    font-size: var(--font-size-sm);
+    transition:
+      background-color var(--transition-base),
+      border-color var(--transition-base),
+      color var(--transition-base),
+      box-shadow var(--transition-base);
   }
 
   .settings__icon-btn:hover {
     border-color: color-mix(in srgb, var(--color-accent) 18%, var(--color-hairline));
     background: color-mix(in srgb, var(--color-surface-glass) 88%, transparent);
+  }
+
+  .settings__icon-btn:focus-visible {
+    outline: none;
+    box-shadow: var(--focus-ring);
   }
 
   .settings-view :global(.input-field__input) {
@@ -1350,6 +2179,14 @@
   .settings__feedback {
     margin: 0;
     line-height: 1.55;
+  }
+
+  .settings__load-error {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-3);
   }
 
   .settings__hint--privacy {

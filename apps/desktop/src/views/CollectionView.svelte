@@ -2,7 +2,6 @@
   import { getStore } from '$lib/db'
   import { navigation } from '$lib/navigation'
   import { locale, t } from '$lib/i18n'
-  import { getFocusableElements, getNextFocusTrapTarget } from '$lib/modal-focus'
   import {
     pickFiles,
     classifyFiles,
@@ -13,17 +12,25 @@
   } from '$lib/file-import'
   import {
     getAssetUrl,
+    generateImageThumbnail,
     deleteAssetFile,
+    deleteImageThumbnail,
     deletePdfThumbnail,
   } from '$lib/file-import'
   import { appDataDir, join } from '@tauri-apps/api/path'
+  import { invoke } from '@tauri-apps/api/core'
   import { stat } from '@tauri-apps/plugin-fs'
   import { exportCollectionById } from '$lib/export'
-  import { ItemCard, SearchBar, Button } from '@entropia/ui'
+  import {
+    DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT,
+    type DocumentExplorerCollectionChangedDetail,
+  } from '$lib/document-explorer'
+  import { ActionIcon, ConfirmDialog, IconButton, ItemCard, SearchBar, Button } from '@entropia/ui'
+  import CollectionAnalysisPanel from './CollectionAnalysisPanel.svelte'
   import { onMount, onDestroy } from 'svelte'
   import { getCurrentWebview, type DragDropEvent } from '@tauri-apps/api/webview'
-  import { listen, type UnlistenFn } from '@tauri-apps/api/event'
-  import type { Item, Asset } from '@entropia/store'
+  import { listen } from '@tauri-apps/api/event'
+  import type { Item, Asset, CollectionItemCardSummary } from '@entropia/store'
 
   let { collectionId }: { collectionId: string } = $props()
 
@@ -33,11 +40,100 @@
   let error = $state<string | null>(null)
   let importing = $state(false)
   let exporting = $state(false)
-  let importNotice = $state<string | null>(null)
+  type ImportSummary = {
+    imported: number
+    skipped: number
+    errors: string[]
+    rejected: string[]
+    lastItemTitle: string | null
+  }
+  let importSummary = $state<ImportSummary | null>(null)
   let dragActive = $state(false)
   let unlistenDragDrop: (() => void) | null = null
   let unlistenAssetUpdate: (() => void) | null = null
   const currentLocale = locale
+  let itemsLoadRequestId = 0
+  let itemAssetsLoadRequestId = 0
+  let imageThumbnailLoadRequestId = 0
+  let activeCollectionId: string | null = null
+  const IMAGE_THUMBNAIL_CONCURRENCY = 4
+
+  // ── Analysis panel (right side) ──
+  const MIN_PANEL_PCT = 20
+  const MAX_PANEL_PCT = 50
+  const DEFAULT_PANEL_PCT = 33
+
+  let analysisPanelOpen = $state(false)
+  let analysisRefreshToken = $state(0)
+  let analysisPanelWidth = $state(
+    (() => {
+      try {
+        const stored = localStorage.getItem('entropia-collection-analysis-width')
+        if (stored !== null) {
+          const parsed = Number(stored)
+          if (!isNaN(parsed)) {
+            return Math.max(MIN_PANEL_PCT, Math.min(MAX_PANEL_PCT, parsed))
+          }
+        }
+      } catch {}
+      return DEFAULT_PANEL_PCT
+    })()
+  )
+
+  let collectionShellEl: HTMLElement | undefined = $state()
+  let panelDragCleanup: (() => void) | null = null
+
+  function onResizeHandlePointerDown(e: PointerEvent) {
+    e.preventDefault()
+
+    const startX = e.clientX
+    const startWidthPct = analysisPanelWidth
+    const containerEl = collectionShellEl ?? document.body
+    const containerWidth = containerEl.clientWidth
+
+    let rafId: number | null = null
+    let lastClientX = startX
+
+    function onPointerMove(e: PointerEvent) {
+      lastClientX = e.clientX
+      if (rafId !== null) return
+      rafId = requestAnimationFrame(() => {
+        const deltaX = lastClientX - startX
+        const deltaPct = (deltaX / containerWidth) * 100
+        analysisPanelWidth = Math.max(
+          MIN_PANEL_PCT,
+          Math.min(MAX_PANEL_PCT, startWidthPct - deltaPct)
+        )
+        rafId = null
+      })
+    }
+
+    function onPointerUp() {
+      try {
+        localStorage.setItem(
+          'entropia-collection-analysis-width',
+          String(Math.round(analysisPanelWidth))
+        )
+      } catch {}
+      window.removeEventListener('pointermove', onPointerMove)
+      window.removeEventListener('pointerup', onPointerUp)
+      document.body.classList.remove('no-select')
+      panelDragCleanup = null
+    }
+
+    document.body.classList.add('no-select')
+    window.addEventListener('pointermove', onPointerMove)
+    window.addEventListener('pointerup', onPointerUp)
+    panelDragCleanup = onPointerUp
+  }
+
+  type ItemAssetMeta = {
+    assetCount: number
+    thumbnailUrl: string | null
+    primaryAssetId: string | null
+    primaryAssetPath: string | null
+    primaryAssetType: string | null
+  }
 
   let visibleCountLabel = $derived.by(() => {
     $currentLocale
@@ -54,18 +150,7 @@
   })
 
   // Cache itemId → { assetCount, thumbnailUrl, primaryAssetId, primaryAssetPath, primaryAssetType }
-  let itemAssetMeta = $state<
-    Map<
-      string,
-      {
-        assetCount: number
-        thumbnailUrl: string | null
-        primaryAssetId: string | null
-        primaryAssetPath: string | null
-        primaryAssetType: string | null
-      }
-    >
-  >(new Map())
+  let itemAssetMeta = $state<Map<string, ItemAssetMeta>>(new Map())
 
   // Delete confirmation state
   let showDeleteConfirm = $state(false)
@@ -74,16 +159,8 @@
   let pendingDeleteFilename = $state<string | null>(null)
   let deleting = $state(false)
   let deleteError = $state<string | null>(null)
-  let deleteDialogEl: HTMLElement | undefined = $state()
-  let deleteTriggerEl: HTMLElement | null = null
 
-  function getItemAssetMeta(itemId: string): {
-    assetCount: number
-    thumbnailUrl: string | null
-    primaryAssetId: string | null
-    primaryAssetPath: string | null
-    primaryAssetType: string | null
-  } {
+  function getItemAssetMeta(itemId: string): ItemAssetMeta {
     return (
       itemAssetMeta.get(itemId) ?? {
         assetCount: 0,
@@ -95,13 +172,81 @@
     )
   }
 
-  async function loadItemAssets(itemIds: string[]) {
+  function buildMetaFromSummary(summary: CollectionItemCardSummary): ItemAssetMeta {
+    return {
+      assetCount: summary.assetCount,
+      thumbnailUrl: null,
+      primaryAssetId: summary.primaryAssetId,
+      primaryAssetPath: summary.primaryAssetPath,
+      primaryAssetType: summary.primaryAssetType,
+    }
+  }
+
+  function applySummaries(summaries: CollectionItemCardSummary[]) {
+    items = summaries.map(
+      ({ assetCount, primaryAssetId, primaryAssetPath, primaryAssetType, ...item }) => item
+    )
+
+    const newMeta = new Map<string, ItemAssetMeta>()
+    for (const summary of summaries) {
+      newMeta.set(summary.id, buildMetaFromSummary(summary))
+    }
+    itemAssetMeta = newMeta
+  }
+
+  async function loadImageThumbnails(summaries: CollectionItemCardSummary[]) {
+    const requestId = ++imageThumbnailLoadRequestId
+    const imageSummaries = summaries.filter(
+      (summary) =>
+        summary.primaryAssetType === 'image' &&
+        summary.primaryAssetId &&
+        summary.primaryAssetPath
+    )
+
+    for (let i = 0; i < imageSummaries.length; i += IMAGE_THUMBNAIL_CONCURRENCY) {
+      const chunk = imageSummaries.slice(i, i + IMAGE_THUMBNAIL_CONCURRENCY)
+      const thumbnailResults = await Promise.all(
+        chunk.map(async (summary) => {
+          try {
+            const thumbnailUrl = await generateImageThumbnail(
+              summary.primaryAssetPath!,
+              summary.primaryAssetId!
+            )
+            return { summary, thumbnailUrl }
+          } catch (e) {
+            console.warn('[CollectionView] Failed to generate image thumbnail for item', summary.id, e)
+            return null
+          }
+        })
+      )
+
+      if (requestId !== imageThumbnailLoadRequestId) return
+
+      const newMeta = new Map(itemAssetMeta)
+      let changed = false
+      for (const result of thumbnailResults) {
+        if (!result) continue
+
+        const currentMeta = newMeta.get(result.summary.id)
+        if (!currentMeta || currentMeta.primaryAssetPath !== result.summary.primaryAssetPath) continue
+
+        newMeta.set(result.summary.id, { ...currentMeta, thumbnailUrl: result.thumbnailUrl })
+        changed = true
+      }
+
+      if (changed) itemAssetMeta = newMeta
+    }
+  }
+
+  async function refreshItemAssetMeta(itemIds: string[]) {
+    const requestId = ++itemAssetsLoadRequestId
     if (itemIds.length === 0) return
     const store = getStore()
     const newMeta = new Map(itemAssetMeta)
     for (const itemId of itemIds) {
       try {
         const assets: Asset[] = await store.assets.findByItem(itemId)
+        if (requestId !== itemAssetsLoadRequestId) return
         const imageAsset = assets.find((a) => a.type === 'image')
         // For PDFs, keep exploration lightweight: ItemCard shows the PDF icon.
         const pdfAsset = assets.find((a) => a.type === 'pdf')
@@ -110,7 +255,7 @@
         let primaryAssetType: string | null = null
 
         if (imageAsset) {
-          thumbnailUrl = getAssetUrl(imageAsset.path)
+          thumbnailUrl = await generateImageThumbnail(imageAsset.path, imageAsset.id)
           primaryAssetType = imageAsset.type
         } else if (pdfAsset) {
           thumbnailUrl = null
@@ -134,27 +279,41 @@
         // Non-fatal: item card shows placeholder
       }
     }
+    if (requestId !== itemAssetsLoadRequestId) return
     itemAssetMeta = newMeta
   }
 
-  let filtered = $derived(
-    searchQuery ? items : items // search is handled by repo call below
-  )
-
+  // Search filtering is delegated to the repo call in loadItems(); there is
+  // no client-side filtering of the loaded items.
   async function loadItems() {
+    const requestId = ++itemsLoadRequestId
     try {
       loading = true
       error = null
       const store = getStore()
-      items = searchQuery
-        ? await store.items.searchByText(collectionId, searchQuery)
-        : await store.items.findByCollection(collectionId)
-      // Load asset metadata (count + thumbnail) for each item
-      await loadItemAssets(items.map((i) => i.id))
+      const loadedSummaries = store.items.findCardSummariesByCollection
+        ? await store.items.findCardSummariesByCollection(collectionId, searchQuery)
+        : null
+      const loadedItems = loadedSummaries
+        ? []
+        : searchQuery
+          ? await store.items.searchByText(collectionId, searchQuery)
+          : await store.items.findByCollection(collectionId)
+      if (requestId !== itemsLoadRequestId) return
+      if (loadedSummaries) {
+        applySummaries(loadedSummaries)
+        void loadImageThumbnails(loadedSummaries)
+      } else {
+        items = loadedItems
+        await refreshItemAssetMeta(items.map((i) => i.id))
+      }
     } catch (e) {
+      if (requestId !== itemsLoadRequestId) return
       error = e instanceof Error ? e.message : t('collection.error.load')
     } finally {
-      loading = false
+      if (requestId === itemsLoadRequestId) {
+        loading = false
+      }
     }
   }
 
@@ -166,6 +325,35 @@
   async function handleClearSearch() {
     searchQuery = ''
     await loadItems()
+  }
+
+  function resetCollectionState() {
+    itemsLoadRequestId++
+    itemAssetsLoadRequestId++
+    imageThumbnailLoadRequestId++
+    items = []
+    itemAssetMeta = new Map()
+    searchQuery = ''
+    error = null
+    importSummary = null
+    dragActive = false
+    showDeleteConfirm = false
+    pendingDeleteAssetId = null
+    pendingDeleteItemId = null
+    pendingDeleteFilename = null
+    deleting = false
+    deleteError = null
+  }
+
+  function notifyExplorerCollectionChanged(itemId?: string) {
+    window.dispatchEvent(
+      new CustomEvent<DocumentExplorerCollectionChangedDetail>(
+        DOCUMENT_EXPLORER_COLLECTION_CHANGED_EVENT,
+        {
+          detail: { collectionId, itemId },
+        }
+      )
+    )
   }
 
   async function finalizeImportedItem(itemId: string, imported: ImportedFile) {
@@ -189,8 +377,17 @@
           // If page conversion failed, fall through to create a regular PDF asset
         }
       } catch (e) {
-        console.warn('[CollectionView] Scanned PDF detection failed, treating as text PDF:', e)
-        // Fall through to create a regular PDF asset
+        console.warn('[CollectionView] PDF profile failed, trying image-page conversion:', e)
+        const pages = await convertScannedPdfToPages(imported, collectionId, itemId, store)
+        if (pages.length > 0) {
+          try {
+            await deleteAssetFile(imported.destPath)
+          } catch (deleteError) {
+            console.warn('[CollectionView] Failed to delete original PDF after fallback conversion:', deleteError)
+          }
+          return
+        }
+        // If both profiling and rendering fail, keep the imported PDF as the recoverable fallback.
       }
     }
 
@@ -270,13 +467,105 @@
     return `${baseMessage} (${stage}): ${getErrorDetails(e)}`
   }
 
+  async function importClassifiedPaths(paths: string[], baseErrorMessage: string) {
+    const store = getStore()
+
+    // Classify files before creating items or copying assets.
+    const { classified, rejected } = classifyFiles(paths)
+
+    if (classified.length === 0) {
+      if (rejected.length > 0) {
+        error = t('collection.error.unsupportedFormat', { files: rejected.join(', ') })
+        importSummary = {
+          imported: 0,
+          skipped: rejected.length,
+          errors: [],
+          rejected,
+          lastItemTitle: null,
+        }
+      }
+      return
+    }
+
+    // Create one item per file, copy file, create asset.
+    // Failures are collected per file so every error stays visible in the
+    // import summary; one bad file no longer aborts the remaining imports.
+    const createdItems: Array<{ id: string; title: string }> = []
+    const importErrors: string[] = []
+
+    for (const file of classified) {
+      const title = file.name.replace(/\.[^.]+$/, '')
+      let itemId: string
+      try {
+        const item = await store.items.create({
+          title,
+          collectionId,
+          metadata: null,
+        })
+        itemId = item.id
+      } catch (e) {
+        importErrors.push(formatImportStageError(baseErrorMessage, 'creating item', e))
+        continue
+      }
+
+      try {
+        const imported = await importSingleFile(file.sourcePath, collectionId, itemId)
+        await store.items.update(itemId, { metadata: buildImportedItemMetadata(imported) })
+        await finalizeImportedItem(itemId, imported)
+        createdItems.push({ id: itemId, title })
+      } catch (e) {
+        // Clean up the item if file copy failed
+        try {
+          await store.items.delete(itemId)
+        } catch {
+          // ignore cleanup errors
+        }
+        importErrors.push(formatImportStageError(baseErrorMessage, `importing ${file.name}`, e))
+      }
+    }
+
+    await loadItems()
+    notifyExplorerCollectionChanged()
+    analysisRefreshToken++
+
+    const hasFailures = importErrors.length > 0 || rejected.length > 0
+    const lastCreated = createdItems.at(-1) ?? null
+
+    importSummary = {
+      imported: createdItems.length,
+      skipped: rejected.length,
+      errors: importErrors,
+      rejected,
+      lastItemTitle: hasFailures ? null : (lastCreated?.title ?? null),
+    }
+
+    if (importErrors.length > 0 && createdItems.length === 0) {
+      error = importErrors[0]!
+    }
+
+    // Auto-open the last created item only when everything succeeded. With
+    // any failure we stay in the collection so the summary and the per-file
+    // errors remain visible instead of being lost behind navigation.
+    if (!hasFailures && lastCreated) {
+      navigation.navigate({
+        name: 'item',
+        collectionId,
+        collectionName:
+          navigation.current.name === 'collection'
+            ? (navigation.current as { collectionName: string }).collectionName
+            : '',
+        itemId: lastCreated.id,
+        itemTitle: lastCreated.title,
+      })
+    }
+  }
+
   async function handleImport() {
     importing = true
     error = null
-    importNotice = null
-    const store = getStore()
+    importSummary = null
 
-    // Step 1: Open file picker — get raw paths BEFORE creating any items
+    // Open file picker — get raw paths BEFORE creating any items.
     let selectedPaths: string[]
     try {
       selectedPaths = await pickFiles()
@@ -291,181 +580,16 @@
       return
     }
 
-    // Step 2: Classify files (no DB or FS side effects yet)
-    const { classified, rejected } = classifyFiles(selectedPaths)
-
-    if (classified.length === 0) {
-      if (rejected.length > 0) {
-        error = `Unsupported format: ${rejected.join(', ')}`
-      }
-      importing = false
-      return
-    }
-
-    // Step 3: Create one item per file, copy file, create asset
-    const createdItemIds: string[] = []
-    let importError: string | null = null
-
-    for (const file of classified) {
-      let itemId: string
-      try {
-        const item = await store.items.create({
-          title: file.name.replace(/\.[^.]+$/, ''),
-          collectionId,
-          metadata: null,
-        })
-        itemId = item.id
-      } catch (e) {
-        importError = formatImportStageError('Failed to import files', 'creating item', e)
-        break
-      }
-
-      try {
-        const imported = await importSingleFile(file.sourcePath, collectionId, itemId)
-        await store.items.update(itemId, { metadata: buildImportedItemMetadata(imported) })
-        await finalizeImportedItem(itemId, imported)
-        createdItemIds.push(itemId)
-      } catch (e) {
-        // Clean up the item if file copy failed
-        try {
-          await store.items.delete(itemId)
-        } catch {
-          // ignore cleanup errors
-        }
-        importError = formatImportStageError('Failed to import files', `importing ${file.name}`, e)
-        break
-      }
-    }
-
-    await loadItems()
-
-    // Navigate to the last created item
-    if (createdItemIds.length > 0) {
-      const lastItemId = createdItemIds[createdItemIds.length - 1]!
-      const lastFile = classified[classified.length - 1]!
-      navigation.navigate({
-        name: 'item',
-        collectionId,
-        collectionName:
-          navigation.current.name === 'collection'
-            ? (navigation.current as { collectionName: string }).collectionName
-            : '',
-        itemId: lastItemId,
-        itemTitle: lastFile.name.replace(/\.[^.]+$/, ''),
-      })
-    }
-
-    // Build notice for partial imports
-    const noticeParts: string[] = []
-    if (rejected.length > 0) {
-      noticeParts.push(`${rejected.length} unsupported skipped: ${rejected.join(', ')}`)
-    }
-    if (importError) {
-      noticeParts.push(`error: ${importError}`)
-    }
-    importNotice =
-      noticeParts.length > 0
-        ? `${createdItemIds.length} imported (${noticeParts.join(' · ')})`
-        : null
-
-    if (importError && createdItemIds.length === 0) {
-      error = importError
-    }
-
+    await importClassifiedPaths(selectedPaths, 'Failed to import files')
     importing = false
   }
 
   async function handleImportFromDroppedPaths(paths: string[]) {
     importing = true
     error = null
-    importNotice = null
-    const store = getStore()
+    importSummary = null
 
-    // Step 1: Classify dropped files (no DB or FS side effects yet)
-    const { classified, rejected } = classifyFiles(paths)
-
-    if (classified.length === 0) {
-      if (rejected.length > 0) {
-        error = `Unsupported format: ${rejected.join(', ')}`
-      }
-      importing = false
-      dragActive = false
-      return
-    }
-
-    // Step 2: Create one item per file, copy file, create asset
-    const createdItemIds: string[] = []
-    let importError: string | null = null
-
-    for (const file of classified) {
-      let itemId: string
-      try {
-        const item = await store.items.create({
-          title: file.name.replace(/\.[^.]+$/, ''),
-          collectionId,
-          metadata: null,
-        })
-        itemId = item.id
-      } catch (e) {
-        importError = formatImportStageError('Failed to import dropped files', 'creating item', e)
-        break
-      }
-
-      try {
-        const imported = await importSingleFile(file.sourcePath, collectionId, itemId)
-        await store.items.update(itemId, { metadata: buildImportedItemMetadata(imported) })
-        await finalizeImportedItem(itemId, imported)
-        createdItemIds.push(itemId)
-      } catch (e) {
-        try {
-          await store.items.delete(itemId)
-        } catch {
-          // ignore cleanup errors
-        }
-        importError = formatImportStageError(
-          'Failed to import dropped files',
-          `importing ${file.name}`,
-          e
-        )
-        break
-      }
-    }
-
-    await loadItems()
-
-    // Navigate to the last created item
-    if (createdItemIds.length > 0) {
-      const lastItemId = createdItemIds[createdItemIds.length - 1]!
-      const lastFile = classified[classified.length - 1]!
-      navigation.navigate({
-        name: 'item',
-        collectionId,
-        collectionName:
-          navigation.current.name === 'collection'
-            ? (navigation.current as { collectionName: string }).collectionName
-            : '',
-        itemId: lastItemId,
-        itemTitle: lastFile.name.replace(/\.[^.]+$/, ''),
-      })
-    }
-
-    // Build notice
-    const noticeParts: string[] = []
-    if (rejected.length > 0) {
-      noticeParts.push(`${rejected.length} unsupported skipped: ${rejected.join(', ')}`)
-    }
-    if (importError) {
-      noticeParts.push(`error: ${importError}`)
-    }
-    importNotice =
-      noticeParts.length > 0
-        ? `${createdItemIds.length} imported (${noticeParts.join(' · ')})`
-        : null
-
-    if (importError && createdItemIds.length === 0) {
-      error = importError
-    }
-
+    await importClassifiedPaths(paths, 'Failed to import dropped files')
     importing = false
     dragActive = false
   }
@@ -503,7 +627,6 @@
       error = t('collection.error.noAssetToDelete')
       return
     }
-    deleteTriggerEl = document.activeElement instanceof HTMLElement ? document.activeElement : null
     pendingDeleteAssetId = meta.primaryAssetId
     pendingDeleteItemId = itemId
     pendingDeleteFilename = extractFilename(meta.primaryAssetPath)
@@ -520,30 +643,6 @@
     pendingDeleteItemId = null
     pendingDeleteFilename = null
     deleteError = null
-    deleteTriggerEl?.focus()
-    deleteTriggerEl = null
-  }
-
-  function handleDeleteDialogKeydown(event: KeyboardEvent) {
-    if (event.key === 'Escape') {
-      event.preventDefault()
-      handleDeleteCancel()
-      return
-    }
-
-    if (event.key !== 'Tab') return
-
-    const target = getNextFocusTrapTarget(
-      getFocusableElements(deleteDialogEl ?? null),
-      event.target instanceof HTMLElement ? event.target : null,
-      event.shiftKey,
-      deleteDialogEl ?? null
-    )
-
-    if (target) {
-      event.preventDefault()
-      target.focus()
-    }
   }
 
   /**
@@ -569,14 +668,22 @@
     // Use the cached path — do NOT depend on a DB lookup
     if (assetPath) {
       try {
-        await deleteAssetFile(assetPath)
+        if (meta.primaryAssetType === 'image') {
+          // Image edits write versioned siblings (photo_v2.png…) next to the
+          // current file — the backend command deletes the whole family so
+          // older versions don't leak on disk forever.
+          await invoke('delete_asset_files', { assetPath })
+        } else {
+          await deleteAssetFile(assetPath)
+        }
       } catch (e) {
         // Log but continue — file deletion should not block UI update
         console.warn('[CollectionView] File deletion warning:', e)
       }
     }
 
-    // Step 2: Try DB cleanup — non-blocking
+    // Step 2: Try DB cleanup — non-blocking, but keep the warning visible if it fails.
+    let dbCleanupFailed = false
     try {
       if (isLastAsset) {
         await store.items.deleteWithCascade(pendingDeleteItemId)
@@ -586,10 +693,12 @@
     } catch (e) {
       // Log DB error but do NOT block UI update
       const message = e instanceof Error ? e.message : String(e)
-      console.error('[CollectionView] DB cleanup failed (UI will still update):', message)
-      // Show a subtle warning in the error field but still close the dialog
+      console.error('[CollectionView] DB cleanup failed:', message)
       deleteError = t('collection.error.fileRemovedDbFailed', { message })
+      dbCleanupFailed = true
     }
+
+    analysisRefreshToken++
 
     // Step 2b: Clean up cached PDF thumbnail if the asset was a PDF
     if (meta.primaryAssetType === 'pdf' && pendingDeleteAssetId) {
@@ -601,32 +710,47 @@
       }
     }
 
-    // Step 3: Always update UI — remove card or refresh meta
+    if (meta.primaryAssetType === 'image' && pendingDeleteAssetId) {
+      try {
+        await deleteImageThumbnail(pendingDeleteAssetId)
+      } catch (e) {
+        console.warn('[CollectionView] Failed to delete image thumbnail:', e)
+      }
+    }
+
+    if (dbCleanupFailed) {
+      await loadItems()
+      notifyExplorerCollectionChanged(pendingDeleteItemId)
+      deleting = false
+      return
+    }
+
+    // Step 3: Update UI after confirmed DB cleanup
     if (isLastAsset) {
       items = items.filter((i) => i.id !== pendingDeleteItemId)
       const newMeta = new Map(itemAssetMeta)
       newMeta.delete(pendingDeleteItemId)
       itemAssetMeta = newMeta
     } else {
-      await loadItemAssets([pendingDeleteItemId])
+      await refreshItemAssetMeta([pendingDeleteItemId])
     }
 
-    // Step 4: Close dialog (even if DB failed — file is gone, UI is updated)
-    deleteTriggerEl = null
+    notifyExplorerCollectionChanged(pendingDeleteItemId)
+
+    // Step 4: Close only on full success.
     handleDeleteCancel()
     deleting = false
   }
 
   $effect(() => {
-    if (!showDeleteConfirm || !deleteDialogEl) return
+    if (collectionId === activeCollectionId) return
 
-    setTimeout(() => {
-      getFocusableElements(deleteDialogEl ?? null)[0]?.focus()
-    }, 0)
+    activeCollectionId = collectionId
+    resetCollectionState()
+    void loadItems()
   })
 
   onMount(() => {
-    loadItems()
 
     getCurrentWebview()
       .onDragDropEvent((event: { payload: DragDropEvent }) => {
@@ -665,7 +789,7 @@
       // Invalidate the cached metadata for this item so the thumbnail
       // is regenerated with the new path (which includes a cache-busting
       // version number since edits create new files).
-      void loadItemAssets([updatedItemId])
+      void refreshItemAssetMeta([updatedItemId])
     })
       .then((unlisten) => {
         unlistenAssetUpdate = unlisten
@@ -678,9 +802,15 @@
   onDestroy(() => {
     unlistenDragDrop?.()
     unlistenAssetUpdate?.()
+    panelDragCleanup?.()
   })
 </script>
 
+<div
+  class="collection-shell"
+  bind:this={collectionShellEl}
+  style="grid-template-columns: 1fr auto {analysisPanelOpen ? `6px ${analysisPanelWidth}%` : ''}"
+>
 <div class="collection-view page-shell" class:drag-active={dragActive}>
   <section class="page-header collection-view__header">
     <div class="page-header__content">
@@ -713,8 +843,64 @@
     <p class="surface-message surface-message--error">{error}</p>
   {/if}
 
-  {#if importNotice}
-    <p class="surface-message surface-message--success">{importNotice}</p>
+  {#if importing || importSummary}
+    <section class="import-summary" aria-live="polite" aria-label={t('collection.importSummary.title')}>
+      <div class="import-summary__header">
+        <div class="import-summary__heading">
+          <strong>
+            {importing ? t('collection.importSummary.importingTitle') : t('collection.importSummary.title')}
+          </strong>
+          {#if !importing && importSummary}
+            <Button variant="secondary" size="sm" onclick={() => (importSummary = null)}>
+              {t('collection.importSummary.dismiss')}
+            </Button>
+          {/if}
+        </div>
+        <span>
+          {#if importing}
+            {t('collection.importSummary.importingDescription')}
+          {:else if importSummary && (importSummary.errors.length > 0 || importSummary.skipped > 0)}
+            {t('collection.importSummary.partialFailure')}
+          {:else if importSummary?.lastItemTitle}
+            {t('collection.importSummary.openedLast', { title: importSummary.lastItemTitle })}
+          {:else}
+            {t('collection.importSummary.reviewCollection')}
+          {/if}
+        </span>
+      </div>
+
+      {#if importSummary}
+        <dl class="import-summary__counts">
+          <div>
+            <dt>{t('collection.importSummary.imported')}</dt>
+            <dd>{importSummary.imported}</dd>
+          </div>
+          <div>
+            <dt>{t('collection.importSummary.skipped')}</dt>
+            <dd>{importSummary.skipped}</dd>
+          </div>
+          <div>
+            <dt>{t('collection.importSummary.errors')}</dt>
+            <dd>{importSummary.errors.length}</dd>
+          </div>
+        </dl>
+
+        {#if importSummary.rejected.length > 0}
+          <p class="import-summary__detail">
+            {t('collection.importSummary.skippedFiles', { files: importSummary.rejected.join(', ') })}
+          </p>
+        {/if}
+        {#if importSummary.errors.length > 0}
+          <ul class="import-summary__errors">
+            {#each importSummary.errors as importErrorLine, index (index)}
+              <li class="import-summary__detail import-summary__detail--error">
+                {importErrorLine}
+              </li>
+            {/each}
+          </ul>
+        {/if}
+      {/if}
+    </section>
   {/if}
 
   {#if dragActive}
@@ -759,73 +945,123 @@
 
   <!-- Delete confirmation modal -->
   {#if showDeleteConfirm}
-    <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="modal-overlay" onclick={handleDeleteCancel} role="presentation">
-      <div
-        bind:this={deleteDialogEl}
-        class="modal"
-        tabindex="-1"
-        role="alertdialog"
-        aria-modal="true"
-        aria-labelledby="delete-modal-title"
-        aria-describedby="delete-modal-description"
-        onclick={(e) => e.stopPropagation()}
-        onkeydown={handleDeleteDialogKeydown}
-      >
-        <h3 id="delete-modal-title" class="modal-title">{t('collection.deleteAssetTitle')}</h3>
-        <p id="delete-modal-description" class="modal-message">
-          {t('collection.deleteAssetMessage', { name: pendingDeleteFilename ?? '' })}
-        </p>
-
-        {#if deleteError}
-          <p class="modal-error">{deleteError}</p>
-        {/if}
-
-        <div class="modal-actions">
-          <Button variant="secondary" onclick={handleDeleteCancel} disabled={deleting}>
-            {t('collections.cancel')}
-          </Button>
-          <button
-            type="button"
-            class="modal-delete-button"
-            aria-label={t('collection.deleteAssetAria')}
-            title={deleting ? t('collection.deletingAssetTitle') : t('collection.deleteAssetAria')}
-            aria-busy={deleting}
-            onclick={handleDeleteConfirm}
-            disabled={deleting}
-          >
-            <svg
-              xmlns="http://www.w3.org/2000/svg"
-              width="16"
-              height="16"
-              viewBox="0 0 24 24"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="2"
-              stroke-linecap="round"
-              stroke-linejoin="round"
-              aria-hidden="true"
-            >
-              <path d="M3 6h18" />
-              <path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6" />
-              <path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2" />
-              <line x1="10" y1="11" x2="10" y2="17" />
-              <line x1="14" y1="11" x2="14" y2="17" />
-            </svg>
-          </button>
-        </div>
-      </div>
-    </div>
+    <ConfirmDialog
+      title={t('collection.deleteAssetTitle')}
+      titleId="delete-modal-title"
+      message={t('collection.deleteAssetMessage', { name: pendingDeleteFilename ?? '' })}
+      error={deleteError}
+      cancelLabel={t('collections.cancel')}
+      confirmIcon="delete"
+      confirmAriaLabel={t('collection.deleteAssetAria')}
+      confirmTitle={deleting ? t('collection.deletingAssetTitle') : t('collection.deleteAssetAria')}
+      variant="destructive"
+      confirming={deleting}
+      cancelDisabled={deleting}
+      oncancel={handleDeleteCancel}
+      onconfirm={handleDeleteConfirm}
+    />
   {/if}
 </div>
 
+<!-- Analysis panel toggle -->
+<IconButton
+  class="right-panel-toggle"
+  variant="ghost"
+  size="sm"
+  label={analysisPanelOpen
+    ? $currentLocale && t('collectionAnalysis.toggleClose')
+    : $currentLocale && t('collectionAnalysis.toggleOpen')}
+  title={analysisPanelOpen
+    ? $currentLocale && t('collectionAnalysis.toggleClose')
+    : $currentLocale && t('collectionAnalysis.toggleOpen')}
+  onclick={() => {
+    analysisPanelOpen = !analysisPanelOpen
+  }}
+>
+  <ActionIcon name={analysisPanelOpen ? 'chevron-right' : 'chevron-left'} size={14} />
+</IconButton>
+
+{#if analysisPanelOpen}
+  <div
+    class="resize-handle"
+    role="separator"
+    aria-orientation="vertical"
+    aria-label={$currentLocale && t('collectionAnalysis.resizeAria')}
+    onpointerdown={onResizeHandlePointerDown}
+  ></div>
+
+  <CollectionAnalysisPanel {collectionId} refreshToken={analysisRefreshToken} />
+{/if}
+</div>
+
 <style>
+  .collection-shell {
+    display: grid;
+    /* grid-template-columns set via inline style */
+    gap: var(--space-3);
+    height: 100%;
+    min-height: 0;
+  }
+
   .collection-view {
-    min-height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+  }
+
+  :global(.icon-button.right-panel-toggle) {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 20px;
+    height: auto;
+    flex-shrink: 0;
+    border-radius: var(--radius-dialog);
+    background: var(--surface-input);
+    border: 1px solid var(--border-subtle);
+    color: var(--color-text-muted);
+    cursor: pointer;
+  }
+
+  :global(.icon-button.right-panel-toggle:hover) {
+    color: var(--color-accent);
+    background: var(--color-accent-soft);
+  }
+
+  .resize-handle {
+    width: 6px;
+    position: relative;
+    cursor: col-resize;
+    z-index: 1;
+  }
+
+  .resize-handle::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 1px;
+    background-color: var(--color-border);
+    transition:
+      background-color 0.15s ease,
+      width 0.15s ease;
+  }
+
+  .resize-handle:hover::before {
+    background-color: var(--color-text-muted, var(--color-border));
+    width: 2px;
+  }
+
+  :global(body.no-select),
+  :global(body.no-select *) {
+    cursor: col-resize !important;
+    user-select: none !important;
+    -webkit-user-select: none !important;
   }
 
   .collection-view__header {
-    align-items: center;
+    align-items: flex-start;
   }
 
   .collection-toolbar {
@@ -853,108 +1089,16 @@
   .drop-hint {
     padding: var(--space-4);
     border: 1px dashed color-mix(in srgb, var(--color-accent) 44%, transparent);
-    border-radius: var(--radius-lg);
+    border-radius: var(--radius-surface);
     color: var(--color-text-secondary);
     text-align: center;
-    background:
-      linear-gradient(180deg, var(--color-accent-faint), transparent),
-      var(--color-surface-sunken);
+    background: var(--color-surface-sunken);
   }
 
   .collection-view.drag-active {
     outline: 1px dashed var(--color-primary);
     outline-offset: 6px;
     border-radius: var(--radius-md);
-  }
-
-  /* Delete confirmation modal */
-  .modal-overlay {
-    position: fixed;
-    inset: 0;
-    background-color: var(--color-overlay);
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    z-index: 1000;
-    padding: var(--space-4);
-  }
-
-  .modal {
-    background:
-      linear-gradient(180deg, rgba(255, 255, 255, 0.02), transparent 58%),
-      var(--color-surface-glass);
-    border: 1px solid var(--color-hairline);
-    border-radius: var(--radius-lg);
-    padding: var(--space-6);
-    max-width: 420px;
-    width: 100%;
-    box-shadow: var(--shadow-lg);
-  }
-
-  .modal-title {
-    font-size: var(--font-size-lg);
-    font-weight: var(--font-weight-bold);
-    color: var(--color-text-primary);
-    margin: 0 0 var(--space-3) 0;
-  }
-
-  .modal-message {
-    font-size: var(--font-size-sm);
-    color: var(--color-text-secondary);
-    margin: 0 0 var(--space-4) 0;
-    line-height: 1.5;
-  }
-
-  .modal-error {
-    font-size: var(--font-size-sm);
-    color: var(--color-danger);
-    margin: 0 0 var(--space-4) 0;
-    padding: var(--space-2) var(--space-3);
-    background-color: var(--color-danger-soft);
-    border-radius: var(--radius-sm);
-  }
-
-  .modal-actions {
-    display: flex;
-    gap: var(--space-3);
-    justify-content: flex-end;
-  }
-
-  .modal-delete-button {
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    width: var(--control-height-sm);
-    height: var(--control-height-sm);
-    padding: 0;
-    border: 1px solid var(--color-danger);
-    border-radius: var(--radius-md);
-    background-color: var(--color-danger);
-    color: var(--color-bg);
-    cursor: pointer;
-    transition:
-      background-color var(--transition-smooth),
-      border-color var(--transition-smooth),
-      box-shadow var(--transition-smooth),
-      transform var(--transition-smooth);
-    box-shadow: 0 8px 18px color-mix(in srgb, var(--color-danger) 18%, transparent);
-  }
-
-  .modal-delete-button:hover:not(:disabled) {
-    background-color: var(--color-danger-hover);
-    border-color: var(--color-danger-hover);
-    transform: translateY(-1px);
-  }
-
-  .modal-delete-button:focus-visible {
-    outline: none;
-    box-shadow: var(--focus-ring);
-  }
-
-  .modal-delete-button:disabled {
-    opacity: 0.48;
-    cursor: not-allowed;
-    transform: none;
   }
 
   @media (max-width: 720px) {
@@ -964,13 +1108,75 @@
     }
 
     .collection-toolbar :global(.search-bar),
-    .collection-toolbar :global(.btn),
-    .modal-actions :global(.btn) {
+    .collection-toolbar :global(.btn) {
       width: 100%;
     }
+  }
 
-    .modal-actions {
-      flex-direction: column-reverse;
-    }
+  .import-summary {
+    display: grid;
+    gap: var(--space-3);
+    padding: var(--space-3);
+    border: 1px solid color-mix(in srgb, var(--color-accent) 24%, transparent);
+    border-radius: var(--radius-surface);
+    background: color-mix(in srgb, var(--color-surface) 92%, var(--color-accent));
+  }
+
+  .import-summary__header {
+    display: grid;
+    gap: var(--space-1);
+    color: var(--color-text-secondary);
+  }
+
+  .import-summary__heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  .import-summary__header strong {
+    color: var(--color-text-primary);
+  }
+
+  .import-summary__errors {
+    display: grid;
+    gap: var(--space-1);
+    margin: 0;
+    padding-left: var(--space-4);
+  }
+
+  .import-summary__counts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--space-2);
+    margin: 0;
+  }
+
+  .import-summary__counts div {
+    min-width: 96px;
+    padding: var(--space-2);
+    border-radius: var(--radius-sm);
+    background: var(--color-surface-sunken);
+  }
+
+  .import-summary__counts dt {
+    color: var(--color-text-secondary);
+    font-size: var(--font-size-xs);
+  }
+
+  .import-summary__counts dd {
+    margin: 0;
+    color: var(--color-text-primary);
+    font-weight: var(--font-weight-semibold);
+  }
+
+  .import-summary__detail {
+    margin: 0;
+    color: var(--color-text-secondary);
+  }
+
+  .import-summary__detail--error {
+    color: var(--color-danger);
   }
 </style>

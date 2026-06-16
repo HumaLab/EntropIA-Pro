@@ -1,22 +1,36 @@
 import { render, screen, fireEvent, waitFor, within } from '@testing-library/svelte'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import ItemView from './ItemView.svelte'
+import { navigation } from '$lib/navigation'
+import { setupKeyboardShortcuts } from '$lib/keyboard'
 
 const {
   nlpEventHandlers,
   embedAssetMock,
+  extractEntitiesForAssetMock,
+  indexFtsMock,
   extractTriplesMock,
+  llmCorrectOcrMock,
+  llmSummarizeAssetMock,
+  llmCorrectOcrAssetMock,
   llmExtractTriplesMock,
   llmExtractTriplesAssetMock,
   similarAssetsMock,
   extractTextMock,
   getLayoutByAssetMock,
   clipboardWriteTextMock,
+  llmIsAvailableMock,
   invokeMock,
+  emitMock,
 } = vi.hoisted(() => ({
   nlpEventHandlers: new Map<string, (event: { payload: unknown }) => void>(),
   embedAssetMock: vi.fn<(_: string, __: string) => Promise<void>>(),
+  extractEntitiesForAssetMock: vi.fn<(_: string, __: string) => Promise<void>>(),
+  indexFtsMock: vi.fn<(_: string) => Promise<void>>(),
   extractTriplesMock: vi.fn<(_: string) => Promise<void>>(),
+  llmCorrectOcrMock: vi.fn<(_: string) => Promise<void>>(),
+  llmSummarizeAssetMock: vi.fn<(_: string) => Promise<void>>(),
+  llmCorrectOcrAssetMock: vi.fn<(_: string) => Promise<void>>(),
   llmExtractTriplesMock: vi.fn<(_: string) => Promise<void>>(),
   llmExtractTriplesAssetMock: vi.fn<(_: string) => Promise<void>>(),
   similarAssetsMock: vi.fn<
@@ -31,6 +45,7 @@ const {
         collectionId: string
         assetPath: string
         assetType: string
+        textPreview?: string
         similarity: number
       }>
     >
@@ -38,13 +53,15 @@ const {
   extractTextMock: vi.fn(),
   getLayoutByAssetMock: vi.fn(),
   clipboardWriteTextMock: vi.fn<(_: string) => Promise<void>>(),
-  invokeMock: vi.fn(async (command: string) => {
+  llmIsAvailableMock: vi.fn<() => Promise<boolean>>(),
+  invokeMock: vi.fn<(_: string, __?: unknown) => Promise<unknown>>(async (command: string) => {
     if (command === 'llm_get_results') return []
     if (command === 'llm_get_result') return null
     if (command === 'llm_is_available') return true
     if (command === 'db_select') return []
     return null
   }),
+  emitMock: vi.fn<(_: string, __?: unknown) => Promise<void>>(),
 }))
 
 type TripleRow = { subject: string; predicate: string; object: string }
@@ -60,6 +77,16 @@ type AnnotationRow = {
   height: number
   createdAt: number
   updatedAt: number
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
 }
 
 type StoreOptions = {
@@ -116,6 +143,11 @@ type StoreOptions = {
     }
   >
   annotationsByAsset?: Record<string, AnnotationRow[]>
+  extractionsByAsset?: Record<string, { textContent: string; method?: string }>
+  transcriptionsByAsset?: Record<
+    string,
+    { textContent: string; language?: string | null; durationMs?: number | null; segments?: string | null }
+  >
   replaceAnnotationsImpl?: (
     assetId: string,
     page: number,
@@ -159,6 +191,8 @@ function createStore({
     },
   },
   annotationsByAsset = {},
+  extractionsByAsset = {},
+  transcriptionsByAsset = {},
   replaceAnnotationsImpl = async () => undefined,
 }: StoreOptions = {}) {
   return {
@@ -187,10 +221,17 @@ function createStore({
       replaceForAssetPage: vi.fn().mockImplementation(replaceAnnotationsImpl),
     },
     extractions: {
-      findByAsset: vi.fn().mockResolvedValue(null),
+      findByAsset: vi.fn().mockImplementation(async (assetId: string) => {
+        const extraction = extractionsByAsset[assetId]
+        return extraction
+          ? { textContent: extraction.textContent, method: extraction.method ?? 'light' }
+          : null
+      }),
     },
     transcriptions: {
-      findByAsset: vi.fn().mockResolvedValue(null),
+      findByAsset: vi.fn().mockImplementation(async (assetId: string) => {
+        return transcriptionsByAsset[assetId] ?? null
+      }),
     },
     entities: {
       findByItemId: vi.fn().mockResolvedValue(entitiesRows),
@@ -267,9 +308,10 @@ vi.mock('$lib/nlp', async () => {
     ...actual,
     extractTriples: extractTriplesMock,
     similarAssets: similarAssetsMock,
-    indexFts: vi.fn().mockResolvedValue(undefined),
+    indexFts: indexFtsMock,
     embedAsset: embedAssetMock,
     extractEntities: vi.fn().mockResolvedValue(undefined),
+    extractEntitiesForAsset: extractEntitiesForAssetMock,
   }
 })
 
@@ -277,14 +319,14 @@ vi.mock('$lib/llm', async () => {
   const actual = await vi.importActual<typeof import('$lib/llm')>('$lib/llm')
   return {
     ...actual,
-    llmIsAvailable: vi.fn().mockResolvedValue(true),
+    llmIsAvailable: llmIsAvailableMock,
     llmGetResult: vi.fn().mockResolvedValue(null),
     llmGetResults: vi.fn().mockResolvedValue([]),
     llmSummarize: vi.fn().mockResolvedValue(undefined),
-    llmCorrectOcr: vi.fn().mockResolvedValue(undefined),
+    llmCorrectOcr: llmCorrectOcrMock,
     llmExtractTriples: llmExtractTriplesMock,
-    llmSummarizeAsset: vi.fn().mockResolvedValue(undefined),
-    llmCorrectOcrAsset: vi.fn().mockResolvedValue(undefined),
+    llmSummarizeAsset: llmSummarizeAssetMock,
+    llmCorrectOcrAsset: llmCorrectOcrAssetMock,
     llmExtractTriplesAsset: llmExtractTriplesAssetMock,
   }
 })
@@ -294,6 +336,7 @@ vi.mock('@tauri-apps/api/event', () => ({
     nlpEventHandlers.set(eventName, callback)
     return Promise.resolve(vi.fn())
   }),
+  emit: emitMock,
 }))
 
 vi.mock('@tauri-apps/api/core', () => ({
@@ -304,22 +347,45 @@ vi.mock('@entropia/ui', async () => {
   const MockActionIcon = (await import('./__mocks__/MockActionIcon.svelte')).default
   const MockDocumentViewer = (await import('./__mocks__/MockDocumentViewer.svelte')).default
   const MockEntityViewer = (await import('./__mocks__/MockEntityViewer.svelte')).default
+  const ActualConfirmDialog = (
+    await import('../../../../packages/ui/src/components/ConfirmDialog/ConfirmDialog.svelte')
+  ).default
+  const ActualIconButton = (
+    await import('../../../../packages/ui/src/components/IconButton/IconButton.svelte')
+  ).default
   const ActualMetadataEditor = (
     await import('../../../../packages/ui/src/components/MetadataEditor/MetadataEditor.svelte')
   ).default
+  const ActualPanel = (await import('../../../../packages/ui/src/components/Panel/Panel.svelte')).default
+  const ActualStatusBadge = (
+    await import('../../../../packages/ui/src/components/StatusBadge/StatusBadge.svelte')
+  ).default
+  const ActualTabButton = (
+    await import('../../../../packages/ui/src/components/Tabs/TabButton.svelte')
+  ).default
+  const ActualTabList = (
+    await import('../../../../packages/ui/src/components/Tabs/TabList.svelte')
+  ).default
   const MockButton = (await import('./__mocks__/MockButton.svelte')).default
   const MockCard = (await import('./__mocks__/MockCard.svelte')).default
+  const MockMapViewer = (await import('./__mocks__/MockMapViewer.svelte')).default
   const MockNoteEditor = (await import('./__mocks__/MockNoteEditor.svelte')).default
 
   return {
     ActionIcon: MockActionIcon,
+    ConfirmDialog: ActualConfirmDialog,
     DocumentViewer: MockDocumentViewer,
     MetadataEditor: ActualMetadataEditor,
     NoteEditor: MockNoteEditor,
     Button: MockButton,
     Card: MockCard,
     EntityViewer: MockEntityViewer,
-    MapViewer: () => null,
+    IconButton: ActualIconButton,
+    MapViewer: MockMapViewer,
+    Panel: ActualPanel,
+    StatusBadge: ActualStatusBadge,
+    TabButton: ActualTabButton,
+    TabList: ActualTabList,
     TopicEditor: () => null,
     normalizeNoteLinkHref: (href: string | null) => {
       if (!href) return null
@@ -361,17 +427,165 @@ vi.mock('@entropia/ui', async () => {
 })
 
 beforeEach(() => {
+  navigation.resetToPath([{ name: 'collections' }])
   Object.defineProperty(globalThis.navigator, 'clipboard', {
     configurable: true,
     value: { writeText: clipboardWriteTextMock },
   })
   clipboardWriteTextMock.mockReset().mockResolvedValue(undefined)
+  llmIsAvailableMock.mockReset().mockResolvedValue(true)
+  llmCorrectOcrMock.mockReset().mockResolvedValue(undefined)
+  emitMock.mockReset().mockResolvedValue(undefined)
+  extractEntitiesForAssetMock.mockReset().mockResolvedValue(undefined)
+  indexFtsMock.mockReset().mockResolvedValue(undefined)
+  invokeMock.mockReset().mockImplementation(async (command: string) => {
+    if (command === 'llm_get_results') return []
+    if (command === 'llm_get_result') return null
+    if (command === 'llm_is_available') return true
+    if (command === 'db_select') return []
+    return null
+  })
+})
+
+describe('ItemView multi-asset navigation', () => {
+  const multiPageAssets = [
+    {
+      id: 'asset-page-1',
+      itemId: 'item-1',
+      path: 'docs/757-70_page_1.png',
+      type: 'image' as const,
+      createdAt: 1,
+    },
+    {
+      id: 'asset-page-2',
+      itemId: 'item-1',
+      path: 'docs/757-70_page_2.png',
+      type: 'image' as const,
+      createdAt: 2,
+    },
+    {
+      id: 'asset-page-3',
+      itemId: 'item-1',
+      path: 'docs/757-70_page_3.png',
+      type: 'image' as const,
+      createdAt: 3,
+    },
+  ]
+
+  beforeEach(() => {
+    nlpEventHandlers.clear()
+    embedAssetMock.mockReset().mockResolvedValue(undefined)
+    similarAssetsMock.mockReset().mockResolvedValue([])
+    llmCorrectOcrMock.mockReset().mockResolvedValue(undefined)
+    llmSummarizeAssetMock.mockReset().mockResolvedValue(undefined)
+    llmCorrectOcrAssetMock.mockReset().mockResolvedValue(undefined)
+    llmExtractTriplesAssetMock.mockReset().mockResolvedValue(undefined)
+    storeRef.current = createStore({ assetsRows: multiPageAssets })
+  })
+
+  it('opens the asset requested by navigation instead of pinning the first sibling', async () => {
+    navigation.resetToPath([
+      { name: 'collections' },
+      { name: 'collection', id: 'col-1', collectionName: 'Colección 1' },
+      {
+        name: 'item',
+        collectionId: 'col-1',
+        collectionName: 'Colección 1',
+        itemId: 'item-1',
+        itemTitle: 'Acta histórica',
+        assetId: 'asset-page-2',
+        assetLabel: '757-70_page_2.png',
+      },
+    ])
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    expect(await screen.findByText(/2\s*\/\s*3/)).toBeInTheDocument()
+    expect(screen.getAllByText(/757-70_page_2\.png/).length).toBeGreaterThan(0)
+  })
+
+  it('keeps navigation and explorer selection events synced when using the asset paginator', async () => {
+    const selectedEvents: Array<{ itemId: string; assetId: string | null }> = []
+    const handleSelected = (event: Event) => {
+      const detail = (event as CustomEvent<{ itemId: string; assetId: string | null }>).detail
+      selectedEvents.push({ itemId: detail.itemId, assetId: detail.assetId })
+    }
+    window.addEventListener('entropia:document-explorer-asset-selected', handleSelected)
+
+    try {
+      navigation.resetToPath([
+        { name: 'collections' },
+        { name: 'collection', id: 'col-1', collectionName: 'Colección 1' },
+        {
+          name: 'item',
+          collectionId: 'col-1',
+          collectionName: 'Colección 1',
+          itemId: 'item-1',
+          itemTitle: 'Acta histórica',
+        },
+      ])
+
+      render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+      expect(await screen.findByText(/1\s*\/\s*3/)).toBeInTheDocument()
+
+      await fireEvent.click(screen.getByRole('button', { name: /Página siguiente|Next page/i }))
+
+      expect(await screen.findByText(/2\s*\/\s*3/)).toBeInTheDocument()
+      expect(screen.getAllByText(/757-70_page_2\.png/).length).toBeGreaterThan(0)
+      await waitFor(() => {
+        expect(navigation.current).toMatchObject({
+          name: 'item',
+          itemId: 'item-1',
+          assetId: 'asset-page-2',
+          assetLabel: '757-70_page_2.png',
+        })
+        expect(selectedEvents.at(-1)).toEqual({ itemId: 'item-1', assetId: 'asset-page-2' })
+      })
+    } finally {
+      window.removeEventListener('entropia:document-explorer-asset-selected', handleSelected)
+    }
+  })
+
+  it('runs OCRC only for the currently selected asset in a multi-page item', async () => {
+    navigation.resetToPath([
+      { name: 'collections' },
+      { name: 'collection', id: 'col-1', collectionName: 'Colección 1' },
+      {
+        name: 'item',
+        collectionId: 'col-1',
+        collectionName: 'Colección 1',
+        itemId: 'item-1',
+        itemTitle: 'Acta histórica',
+        assetId: 'asset-page-2',
+        assetLabel: '757-70_page_2.png',
+      },
+    ])
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    expect(await screen.findByText(/2\s*\/\s*3/)).toBeInTheDocument()
+    await fireEvent.click(await screen.findByRole('tab', { name: 'Texto' }))
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: { asset_id: 'asset-page-2', method: 'paddle_vl', text_content: 'Texto OCR página 2' },
+    })
+
+    const correctButton = await screen.findByRole('button', { name: 'OCRC' })
+    await waitFor(() => expect(correctButton).toBeEnabled())
+    await fireEvent.click(correctButton)
+
+    expect(llmCorrectOcrAssetMock).toHaveBeenCalledWith('asset-page-2')
+    expect(llmCorrectOcrAssetMock).not.toHaveBeenCalledWith('asset-page-1')
+    expect(llmCorrectOcrMock).not.toHaveBeenCalled()
+  })
 })
 
 describe('ItemView semantic triples panel', () => {
   beforeEach(() => {
     nlpEventHandlers.clear()
     embedAssetMock.mockReset().mockResolvedValue(undefined)
+    extractEntitiesForAssetMock.mockReset().mockResolvedValue(undefined)
+    indexFtsMock.mockReset().mockResolvedValue(undefined)
     extractTriplesMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesAssetMock.mockReset().mockResolvedValue(undefined)
@@ -417,8 +631,8 @@ describe('ItemView semantic triples panel', () => {
     expect(triplesBtn).toBeDisabled()
     expect(screen.getByText('pending')).toBeInTheDocument()
 
-    nlpEventHandlers.get('nlp:progress')?.({
-      payload: { item_id: 'item-1', job: 'triples', pct: 25 },
+    nlpEventHandlers.get('llm:progress')?.({
+      payload: { id: 'asset-1', job: 'extract_triples', pct: 25 },
     })
     await waitFor(() => {
       expect(screen.getByText('running')).toBeInTheDocument()
@@ -455,6 +669,8 @@ describe('ItemView header hierarchy', () => {
     nlpEventHandlers.clear()
     embedAssetMock.mockReset().mockResolvedValue(undefined)
     extractTriplesMock.mockReset().mockResolvedValue(undefined)
+    llmSummarizeAssetMock.mockReset().mockResolvedValue(undefined)
+    llmCorrectOcrAssetMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesAssetMock.mockReset().mockResolvedValue(undefined)
     similarAssetsMock.mockReset().mockResolvedValue([])
@@ -519,12 +735,105 @@ describe('ItemView asset-level embedding and similarity', () => {
     expect(embedAssetMock).toHaveBeenCalledWith('item-1', 'asset-embed-1')
   })
 
+  it('does not show asset A embedding completion as ready on asset B', async () => {
+    await openAnalysis(
+      createStore({
+        assetsRows: [
+          {
+            id: 'asset-embed-a',
+            itemId: 'item-1',
+            path: 'docs/acta-1.pdf',
+            type: 'pdf',
+            createdAt: 1,
+          },
+          {
+            id: 'asset-embed-b',
+            itemId: 'item-1',
+            path: 'docs/acta-2.pdf',
+            type: 'pdf',
+            createdAt: 2,
+          },
+        ],
+      })
+    )
+
+    nlpEventHandlers.get('nlp:complete')?.({
+      payload: { item_id: 'item-1', asset_id: 'asset-embed-a', job: 'embed' },
+    })
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('button', { name: /EMBED/i })).getByText('done')
+      ).toBeInTheDocument()
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Página siguiente|Next page/i }))
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('button', { name: /EMBED/i })).getByText('idle')
+      ).toBeInTheDocument()
+    })
+  })
+
   it('disables EMBED and shows a graceful hint when no asset is selected', async () => {
     storeRef.current = createStore({ assetsRows: [] })
     render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
 
     expect(screen.queryByRole('button', { name: /EMBED/i })).not.toBeInTheDocument()
     expect(embedAssetMock).not.toHaveBeenCalled()
+  })
+
+  it('shows done · 0 on the NER chip when the completed run persisted zero entities', async () => {
+    await openAnalysis(
+      createStore({
+        assetsRows: [
+          {
+            id: 'asset-ner-1',
+            itemId: 'item-1',
+            path: 'docs/acta-1.pdf',
+            type: 'pdf',
+            createdAt: 1,
+          },
+        ],
+      })
+    )
+
+    nlpEventHandlers.get('nlp:complete')?.({
+      payload: { item_id: 'item-1', asset_id: 'asset-ner-1', job: 'ner', entity_count: 0 },
+    })
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('button', { name: /^NER/ })).getByText('done · 0')
+      ).toBeInTheDocument()
+    })
+  })
+
+  it('shows a plain done NER chip when the completed run persisted entities', async () => {
+    await openAnalysis(
+      createStore({
+        assetsRows: [
+          {
+            id: 'asset-ner-2',
+            itemId: 'item-1',
+            path: 'docs/acta-2.pdf',
+            type: 'pdf',
+            createdAt: 1,
+          },
+        ],
+      })
+    )
+
+    nlpEventHandlers.get('nlp:complete')?.({
+      payload: { item_id: 'item-1', asset_id: 'asset-ner-2', job: 'ner', entity_count: 12 },
+    })
+
+    await waitFor(() => {
+      expect(
+        within(screen.getByRole('button', { name: /^NER/ })).getByText('done')
+      ).toBeInTheDocument()
+    })
   })
 
   it('shows metadata labels and existing metadata values in the metadata tab', async () => {
@@ -640,6 +949,8 @@ describe('ItemView asset-level embedding and similarity', () => {
         collectionId: 'col-9',
         assetPath: 'archivo/carta-manuscrita.jpg',
         assetType: 'image',
+        textPreview:
+          'Excelentísimo señor:\nTengo el honor de remitir la carta solicitada.\nArchivo histórico.',
         similarity: 0.913,
       },
     ])
@@ -663,14 +974,21 @@ describe('ItemView asset-level embedding and similarity', () => {
     })
 
     expect(await screen.findByText('Assets similares')).toBeInTheDocument()
-    expect(await screen.findByTestId('similar-asset-asset-sim-2')).toBeInTheDocument()
+    const resultCard = await screen.findByTestId('similar-asset-asset-sim-2')
+    expect(resultCard).toBeInTheDocument()
     expect(screen.getByText('Carta manuscrita')).toBeInTheDocument()
-    expect(screen.getByText('IMAGE · carta-manuscrita.jpg')).toBeInTheDocument()
     expect(
-      screen.getByText('asset asset-sim-2 · item item-2 · colección col-9')
+      screen.getByText(/Excelentísimo señor: Tengo el honor de remitir la carta solicitada/)
     ).toBeInTheDocument()
-    expect(screen.getByText('archivo/carta-manuscrita.jpg')).toBeInTheDocument()
     expect(screen.getByText('91.3%')).toBeInTheDocument()
+    expect(resultCard.querySelector('img')).toHaveAttribute(
+      'src',
+      'https://asset.localhost/archivo/carta-manuscrita.jpg'
+    )
+
+    const technicalMeta = screen.getByText('asset asset-sim-2 · item item-2 · colección col-9')
+    expect(technicalMeta).not.toBeVisible()
+    expect(screen.getByText('archivo/carta-manuscrita.jpg')).not.toBeVisible()
   })
 })
 
@@ -826,6 +1144,39 @@ describe('ItemView full-text search in Analysis panel', () => {
       expect(screen.getAllByText('1').length).toBeGreaterThanOrEqual(2)
       expect(screen.getByText('item-2')).toBeInTheDocument()
     })
+  })
+
+  it('shows readiness guidance when search and similarity have no extracted text yet', async () => {
+    storeRef.current = createStore()
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    const analysisToggle = await screen.findByRole('tab', { name: /Análisis/i })
+    await fireEvent.click(analysisToggle)
+
+    expect(
+      await screen.findAllByText(
+        'Primero extraé o transcribí texto para que la búsqueda y la similitud tengan material para comparar.'
+      )
+    ).toHaveLength(2)
+  })
+
+  it('shows OpenRouter readiness guidance for semantic similarity after text exists', async () => {
+    llmIsAvailableMock.mockResolvedValue(false)
+    storeRef.current = createStore({
+      extractionsByAsset: {
+        'asset-1': { textContent: 'Texto histórico listo para comparar.' },
+      },
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    const analysisToggle = await screen.findByRole('tab', { name: /Análisis/i })
+    await fireEvent.click(analysisToggle)
+
+    expect(
+      await screen.findByText('La similitud semántica requiere OpenRouter configurado en Configuración.')
+    ).toBeInTheDocument()
   })
 })
 
@@ -984,12 +1335,7 @@ describe('ItemView note editing', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Eliminar nota' }))
 
     expect(noteRow).toHaveAttribute('aria-expanded', 'false')
-    const dialog = screen.getByRole('alertdialog', { name: 'Eliminar nota' })
-    expect(dialog).toBeInTheDocument()
-    expect(dialog).toHaveAttribute('aria-modal', 'true')
-    expect(dialog).toHaveAccessibleDescription(
-      '¿Seguro que querés eliminar esta nota? Esta acción no se puede deshacer.'
-    )
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
     expect(
       screen.getByText('¿Seguro que querés eliminar esta nota? Esta acción no se puede deshacer.')
     ).toBeInTheDocument()
@@ -1011,26 +1357,7 @@ describe('ItemView note editing', () => {
     await fireEvent.click(screen.getByRole('button', { name: 'Eliminar nota' }))
     await fireEvent.click(screen.getByRole('button', { name: 'Cancelar' }))
 
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(storeRef.current.notes.delete).not.toHaveBeenCalled()
-  })
-
-  it('closes note delete confirmation with Escape and restores focus to the trigger', async () => {
-    await renderItemViewWithNotes([sampleNote])
-
-    const deleteButton = screen.getByRole('button', { name: 'Eliminar nota' })
-    deleteButton.focus()
-    await fireEvent.click(deleteButton)
-
-    const dialog = screen.getByRole('alertdialog', { name: 'Eliminar nota' })
-    await waitFor(() => {
-      expect(screen.getByRole('button', { name: 'Cancelar' })).toHaveFocus()
-    })
-
-    await fireEvent.keyDown(dialog, { key: 'Escape' })
-
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument()
-    expect(deleteButton).toHaveFocus()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     expect(storeRef.current.notes.delete).not.toHaveBeenCalled()
   })
 
@@ -1060,6 +1387,60 @@ describe('ItemView note editing', () => {
     storeRef.current.notes.findByAsset.mockResolvedValue([])
     render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
     expect(await screen.findByText('Todavía no hay notas.')).toBeInTheDocument()
+  })
+
+  it('ignores stale notes loaded for a previously selected asset', async () => {
+    const firstAssetNotes = deferred<(typeof sampleNote)[]>()
+    const secondAssetNotes = deferred<(typeof sampleNote)[]>()
+    const notesByAsset = new Map([
+      ['asset-1', firstAssetNotes],
+      ['asset-2', secondAssetNotes],
+    ])
+
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-1',
+          itemId: 'item-1',
+          path: 'docs/primera.pdf',
+          type: 'pdf',
+          createdAt: 1,
+        },
+        {
+          id: 'asset-2',
+          itemId: 'item-1',
+          path: 'docs/segunda.pdf',
+          type: 'pdf',
+          createdAt: 2,
+        },
+      ],
+    })
+    storeRef.current.notes.findByAsset.mockImplementation(async (_itemId: string, assetId: string) => {
+      const pending = notesByAsset.get(assetId)
+      return pending ? pending.promise : []
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await waitFor(() => {
+      expect(storeRef.current.notes.findByAsset).toHaveBeenCalledWith('item-1', 'asset-1')
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: /Página siguiente|Next page/i }))
+
+    await waitFor(() => {
+      expect(storeRef.current.notes.findByAsset).toHaveBeenCalledWith('item-1', 'asset-2')
+    })
+
+    secondAssetNotes.resolve([{ ...sampleNote, id: 'note-2', content: '<p>Nota vigente</p>' }])
+    expect(await screen.findByRole('button', { name: /Nota vigente/i })).toBeInTheDocument()
+
+    firstAssetNotes.resolve([{ ...sampleNote, id: 'note-1', content: '<p>Nota vieja</p>' }])
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /Nota vigente/i })).toBeInTheDocument()
+      expect(screen.queryByRole('button', { name: /Nota vieja/i })).not.toBeInTheDocument()
+    })
   })
 
   it('notes store has update method for editing notes', async () => {
@@ -1181,6 +1562,8 @@ describe('ItemView image annotations', () => {
     vi.useFakeTimers()
     nlpEventHandlers.clear()
     embedAssetMock.mockReset().mockResolvedValue(undefined)
+    extractEntitiesForAssetMock.mockReset().mockResolvedValue(undefined)
+    indexFtsMock.mockReset().mockResolvedValue(undefined)
     extractTriplesMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesMock.mockReset().mockResolvedValue(undefined)
     llmExtractTriplesAssetMock.mockReset().mockResolvedValue(undefined)
@@ -1354,6 +1737,119 @@ describe('ItemView image annotations', () => {
     expect(storeRef.current.annotations.findByAsset).not.toHaveBeenCalled()
   })
 
+  it('persists fine image rotation through the rotate_image_degrees command', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'rotate_image_degrees') {
+        return {
+          path: 'docs/photo-a_v2.png',
+          width: 206,
+          height: 111,
+          format_changed: true,
+          previous_path: 'docs/photo-a.jpg',
+        }
+      }
+      if (command === 'llm_get_results') return []
+      if (command === 'llm_get_result') return null
+      if (command === 'llm_is_available') return true
+      if (command === 'db_select') return []
+      return null
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    await fireEvent.click(screen.getByRole('button', { name: /report image dimensions/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /commit fine rotation/i }))
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('rotate_image_degrees', {
+        path: 'docs/photo-a.jpg',
+        degrees: 3,
+      })
+    })
+    await waitFor(() => {
+      expect(storeRef.current.assets.updatePath).toHaveBeenCalledWith(
+        'asset-image-1',
+        'docs/photo-a_v2.png'
+      )
+    })
+  })
+
+  it('undo restores only the latest image edit per click', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'rotate_image_degrees') {
+        const path = (args as { path: string }).path
+        return {
+          path: path === 'docs/photo-a.jpg' ? 'docs/photo-a_v2.png' : 'docs/photo-a_v3.png',
+          width: 206,
+          height: 111,
+          format_changed: true,
+          previous_path: path,
+        }
+      }
+      if (command === 'llm_get_results') return []
+      if (command === 'llm_get_result') return null
+      if (command === 'llm_is_available') return true
+      if (command === 'db_select') return []
+      return null
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    await fireEvent.click(screen.getByRole('button', { name: /report image dimensions/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /commit fine rotation/i }))
+    await waitFor(() => {
+      expect(storeRef.current.assets.updatePath).toHaveBeenCalledWith(
+        'asset-image-1',
+        'docs/photo-a_v2.png'
+      )
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: /commit fine rotation/i }))
+    await waitFor(() => {
+      expect(storeRef.current.assets.updatePath).toHaveBeenCalledWith(
+        'asset-image-1',
+        'docs/photo-a_v3.png'
+      )
+    })
+
+    await fireEvent.click(screen.getByRole('button', { name: /undo edit/i }))
+
+    await waitFor(() => {
+      expect(storeRef.current.assets.updatePath).toHaveBeenLastCalledWith(
+        'asset-image-1',
+        'docs/photo-a_v2.png'
+      )
+    })
+    expect(storeRef.current.assets.updatePath).not.toHaveBeenLastCalledWith(
+      'asset-image-1',
+      'docs/photo-a.jpg'
+    )
+  })
+
   it('reloads persisted layout after ocr:complete for the current asset', async () => {
     getLayoutByAssetMock.mockResolvedValueOnce(null).mockResolvedValueOnce(layoutFixture)
     storeRef.current = createStore({
@@ -1391,7 +1887,260 @@ describe('ItemView image annotations', () => {
       expect(getLayoutByAssetMock).toHaveBeenCalledTimes(2)
       expect(layoutToggle).toBeEnabled()
     })
+    // Pro is local-first: the frontend auto-triggers NER for the freshly
+    // extracted asset. FTS/embed are NOT run yet (no persisted edit).
+    await waitFor(() => {
+      expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    })
+    expect(indexFtsMock).not.toHaveBeenCalled()
+    expect(embedAssetMock).not.toHaveBeenCalled()
     expect(screen.getByText(/paddle_vl · 5 bloques · 5 regiones/i)).toBeInTheDocument()
+  })
+
+  it('auto-triggers frontend NER (but not FTS/EMBED) for duplicate OCR completion events', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+
+    const completePayload = {
+      asset_id: 'asset-image-1',
+      method: 'paddle_vl',
+      text_length: 128,
+      text_content: 'OCR listo',
+    }
+    nlpEventHandlers.get('ocr:complete')?.({ payload: completePayload })
+    nlpEventHandlers.get('ocr:complete')?.({ payload: completePayload })
+
+    // Frontend NER fires per OCR completion for the selected asset; FTS/embed
+    // remain off until a manual edit is persisted.
+    await waitFor(() => {
+      expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    })
+    expect(embedAssetMock).not.toHaveBeenCalled()
+    expect(indexFtsMock).not.toHaveBeenCalled()
+  })
+
+  it('auto-triggers frontend NER (but not FTS/EMBED) after OCRH completion', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: {
+        asset_id: 'asset-image-1',
+        method: 'glm_ocr',
+        text_length: 128,
+        text_content: 'OCRH listo',
+      },
+    })
+
+    await waitFor(() => {
+      expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    })
+    expect(embedAssetMock).not.toHaveBeenCalled()
+    expect(indexFtsMock).not.toHaveBeenCalled()
+  })
+
+  it('auto-runs FTS, EMBED, and NER after OCRC completion is persisted', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: {
+        asset_id: 'asset-image-1',
+        method: 'glm_ocr',
+        text_length: 128,
+        text_content: 'Texto OCRH',
+      },
+    })
+    embedAssetMock.mockClear()
+    indexFtsMock.mockClear()
+    extractEntitiesForAssetMock.mockClear()
+
+    nlpEventHandlers.get('llm:complete')?.({
+      payload: { id: 'asset-image-1', job: 'correct_ocr', result: 'Texto OCRC' },
+    })
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(invokeMock).toHaveBeenCalledWith('update_extraction_text_cmd', {
+      assetId: 'asset-image-1',
+      textContent: 'Texto OCRC',
+    })
+    expect(indexFtsMock).toHaveBeenCalledWith('item-1')
+    expect(embedAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+  })
+
+  it('re-runs full local reanalysis when a manual edit follows an OCRC automation', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: {
+        asset_id: 'asset-image-1',
+        method: 'glm_ocr',
+        text_length: 128,
+        text_content: 'Texto OCRH',
+      },
+    })
+    embedAssetMock.mockClear()
+    indexFtsMock.mockClear()
+    extractEntitiesForAssetMock.mockClear()
+
+    nlpEventHandlers.get('llm:complete')?.({
+      payload: { id: 'asset-image-1', job: 'correct_ocr', result: 'Texto OCRC' },
+    })
+
+    await fireEvent.click(screen.getByRole('tab', { name: /^Texto$/i }))
+    const textarea = screen.getByDisplayValue('Texto OCRC') as HTMLTextAreaElement
+    await fireEvent.input(textarea, { target: { value: 'Texto OCRH/manual posterior' } })
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(invokeMock).toHaveBeenCalledWith('update_extraction_text_cmd', {
+      assetId: 'asset-image-1',
+      textContent: 'Texto OCRH/manual posterior',
+    })
+    // Pro is local-first: every persisted manual edit re-runs the full local
+    // pipeline (NER + FTS + embed) for the asset.
+    expect(indexFtsMock).toHaveBeenCalledWith('item-1')
+    expect(embedAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+  })
+
+  it('persists manual OCR edits and re-runs full local reanalysis', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-image-1',
+          itemId: 'item-1',
+          path: 'docs/photo-a.jpg',
+          type: 'image',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: {
+        asset_id: 'asset-image-1',
+        method: 'paddle_vl',
+        text_length: 128,
+        text_content: 'OCR listo',
+      },
+    })
+    embedAssetMock.mockClear()
+    extractEntitiesForAssetMock.mockClear()
+    indexFtsMock.mockClear()
+    await fireEvent.click(screen.getByRole('tab', { name: /^Texto$/i }))
+
+    const textarea = screen.getByDisplayValue('OCR listo') as HTMLTextAreaElement
+    await fireEvent.input(textarea, { target: { value: 'OCR editado manualmente' } })
+
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(invokeMock).toHaveBeenCalledWith('update_extraction_text_cmd', {
+      assetId: 'asset-image-1',
+      textContent: 'OCR editado manualmente',
+    })
+    // Local-first reanalysis runs NER + FTS + embed after the persisted edit.
+    expect(indexFtsMock).toHaveBeenCalledWith('item-1')
+    expect(embedAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+    expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-image-1')
+  })
+
+  it('persists manual transcription edits and re-runs full local reanalysis', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        {
+          id: 'asset-audio-1',
+          itemId: 'item-1',
+          path: 'docs/audio.mp3',
+          type: 'audio',
+          createdAt: 1,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    nlpEventHandlers.get('transcription:complete')?.({
+      payload: {
+        asset_id: 'asset-audio-1',
+        text: 'Transcripción lista',
+        language: 'es',
+        duration_ms: 12000,
+        segments_count: 1,
+      },
+    })
+    embedAssetMock.mockClear()
+    extractEntitiesForAssetMock.mockClear()
+    indexFtsMock.mockClear()
+    await fireEvent.click(screen.getByRole('tab', { name: /^Texto$/i }))
+
+    const textarea = screen.getByDisplayValue('Transcripción lista') as HTMLTextAreaElement
+    await fireEvent.input(textarea, { target: { value: 'Transcripción editada manualmente' } })
+
+    await vi.advanceTimersByTimeAsync(2100)
+
+    expect(invokeMock).toHaveBeenCalledWith('update_transcription_text_cmd', {
+      assetId: 'asset-audio-1',
+      textContent: 'Transcripción editada manualmente',
+    })
+    // Local-first reanalysis runs NER + FTS + embed after the persisted edit.
+    expect(indexFtsMock).toHaveBeenCalledWith('item-1')
+    expect(embedAssetMock).toHaveBeenCalledWith('item-1', 'asset-audio-1')
+    expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-audio-1')
   })
 
   it('syncs list hover/select with overlay state and keeps selection persistent', async () => {
@@ -1897,6 +2646,59 @@ describe('ItemView entity editing UX', () => {
       })
     )
   })
+
+  it('updates map marker labels from the current edited PLACE entity state', async () => {
+    const entityRows = [
+      {
+        id: 'place-1',
+        itemId: 'item-1',
+        entityType: 'place' as const,
+        value: 'Buenos Aires',
+        startOffset: 10,
+        endOffset: 22,
+        confidence: 0.95,
+        createdAt: 1,
+      },
+    ]
+    storeRef.current = createStore({ entitiesRows: entityRows })
+    storeRef.current.entities.findByAssetId.mockImplementation(async () => entityRows)
+    storeRef.current.entities.update.mockImplementation(async (id: string, data: { value?: string }) => {
+      const entity = entityRows.find((row) => row.id === id)
+      if (entity && data.value) entity.value = data.value
+      return entity
+    })
+    invokeMock.mockImplementation(async (command: string) => {
+      if (command === 'db_select') {
+        return [
+          {
+            id: 'place-1',
+            value: 'Buenos Aires',
+            latitude: -34.6037,
+            longitude: -58.3816,
+          },
+        ]
+      }
+      if (command === 'llm_get_results') return []
+      if (command === 'llm_get_result') return null
+      if (command === 'llm_is_available') return true
+      return null
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+    await fireEvent.click(await screen.findByRole('tab', { name: /Análisis/i }))
+
+    expect(await screen.findByTestId('mock-map-marker-place-1')).toHaveTextContent('Buenos Aires')
+
+    await fireEvent.click(await screen.findByTestId('mock-entity-place-1'))
+    const input = await screen.findByLabelText('Editar valor de entidad')
+    await fireEvent.input(input, { target: { value: 'La Plata' } })
+    await fireEvent.keyDown(input, { key: 'Enter' })
+
+    await waitFor(() => {
+      expect(screen.getByTestId('mock-map-marker-place-1')).toHaveTextContent('La Plata')
+    })
+    expect(screen.queryByText('Buenos Aires')).not.toBeInTheDocument()
+  })
 })
 
 describe('ItemView processing labels by asset type', () => {
@@ -1927,16 +2729,64 @@ describe('ItemView processing labels by asset type', () => {
     await fireEvent.click(await screen.findByRole('tab', { name: 'Texto' }))
   }
 
-  it('keeps OCR labels for image assets', async () => {
+  it('keeps Lite OCR labels for image assets', async () => {
     await renderTextTabForAsset('image')
 
-    expect(screen.getByRole('button', { name: 'OCRL' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'OCRL' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRH' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRC' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'OCRR' })).toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'PTT' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'PDFC' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'PDFR' })).not.toBeInTheDocument()
+  })
+
+  it('shows a visible error when summary generation fails', async () => {
+    llmSummarizeAssetMock.mockRejectedValueOnce(new Error('provider unavailable'))
+    await renderTextTabForAsset('image')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: { asset_id: 'asset-image-1', method: 'paddle_vl', text_content: 'Texto OCR' },
+    })
+
+    const summarizeButton = await screen.findByRole('button', { name: 'OCRR' })
+    await waitFor(() => expect(summarizeButton).toBeEnabled())
+    await fireEvent.click(summarizeButton)
+
+    expect(llmSummarizeAssetMock).toHaveBeenCalledWith('asset-image-1')
+    expect(await screen.findByText('No se pudo generar el resumen.')).toBeInTheDocument()
+  })
+
+  it('shows a visible error when OCR correction fails', async () => {
+    llmCorrectOcrAssetMock.mockRejectedValueOnce(new Error('provider unavailable'))
+    await renderTextTabForAsset('image')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: { asset_id: 'asset-image-1', method: 'paddle_vl', text_content: 'Texto OCR' },
+    })
+
+    const correctButton = await screen.findByRole('button', { name: 'OCRC' })
+    await waitFor(() => expect(correctButton).toBeEnabled())
+    await fireEvent.click(correctButton)
+
+    expect(llmCorrectOcrAssetMock).toHaveBeenCalledWith('asset-image-1')
+    expect(await screen.findByText('No se pudo corregir el texto con OCR.')).toBeInTheDocument()
+  })
+
+  it('keeps the OCRC button available after OCR correction completes', async () => {
+    await renderTextTabForAsset('image')
+    nlpEventHandlers.get('ocr:complete')?.({
+      payload: { asset_id: 'asset-image-1', method: 'paddle_vl', text_content: 'Texto OCR' },
+    })
+
+    const correctButton = await screen.findByRole('button', { name: 'OCRC' })
+    await waitFor(() => expect(correctButton).toBeEnabled())
+    await fireEvent.click(correctButton)
+
+    nlpEventHandlers.get('llm:complete')?.({
+      payload: { id: 'asset-image-1', job: 'correct_ocr', result: 'Texto corregido' },
+    })
+
+    expect(await screen.findByRole('button', { name: 'OCRC' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('button', { name: 'OCRC' })).toBeEnabled())
   })
 
   it('uses PDF-specific labels and hides OCR wording for pdf assets', async () => {
@@ -1960,5 +2810,183 @@ describe('ItemView processing labels by asset type', () => {
     expect(screen.queryByRole('button', { name: 'OCRH' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'OCRC' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: 'OCRR' })).not.toBeInTheDocument()
+  })
+
+  it('auto-triggers frontend NER (but not FTS/EMBED) when transcription completes', async () => {
+    await renderTextTabForAsset('audio')
+
+    const completePayload = {
+      asset_id: 'asset-audio-1',
+      text: 'Transcripción lista',
+      language: 'es',
+      duration_ms: 12000,
+      segments_count: 1,
+    }
+    nlpEventHandlers.get('transcription:complete')?.({
+      payload: {
+        ...completePayload,
+      },
+    })
+    nlpEventHandlers.get('transcription:complete')?.({ payload: completePayload })
+
+    await fireEvent.click(screen.getByRole('tab', { name: /^Texto$/i }))
+    expect(screen.getByDisplayValue('Transcripción lista')).toBeInTheDocument()
+    // Pro is local-first: transcription completion auto-triggers NER for the
+    // audio asset; FTS/embed stay off until a persisted manual edit.
+    await waitFor(() => {
+      expect(extractEntitiesForAssetMock).toHaveBeenCalledWith('item-1', 'asset-audio-1')
+    })
+    expect(embedAssetMock).not.toHaveBeenCalled()
+    expect(indexFtsMock).not.toHaveBeenCalled()
+  })
+})
+
+describe('ItemView right panel tab persistence', () => {
+  const imageAsset = {
+    id: 'asset-image-1',
+    itemId: 'item-1',
+    path: 'docs/photo-a.jpg',
+    type: 'image' as const,
+    createdAt: 1,
+  }
+
+  function mockRotateInvoke() {
+    invokeMock.mockImplementation(async (command: string, args?: unknown) => {
+      if (command === 'rotate_image_degrees') {
+        const path = (args as { path: string }).path
+        return {
+          path: path === 'docs/photo-a.jpg' ? 'docs/photo-a_v2.png' : 'docs/photo-a_v3.png',
+          width: 206,
+          height: 111,
+          format_changed: true,
+          previous_path: path,
+        }
+      }
+      if (command === 'llm_get_results') return []
+      if (command === 'llm_get_result') return null
+      if (command === 'llm_is_available') return true
+      if (command === 'db_select') return []
+      return null
+    })
+  }
+
+  it('keeps the active right panel tab after an image edit of the same asset', async () => {
+    storeRef.current = createStore({ assetsRows: [imageAsset] })
+    mockRotateInvoke()
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    await screen.findByTestId('mock-document-viewer')
+    await fireEvent.click(await screen.findByRole('tab', { name: /^Texto$/ }))
+    expect(screen.getByRole('tab', { name: /^Texto$/ })).toHaveAttribute('aria-selected', 'true')
+
+    await fireEvent.click(screen.getByRole('button', { name: /report image dimensions/i }))
+    await fireEvent.click(screen.getByRole('button', { name: /commit fine rotation/i }))
+
+    await waitFor(() => {
+      expect(storeRef.current.assets.updatePath).toHaveBeenCalledWith(
+        'asset-image-1',
+        'docs/photo-a_v2.png'
+      )
+    })
+
+    // The asset object was replaced (new versioned path) but its ID did not
+    // change, so the right panel tab must NOT reset to notes.
+    expect(screen.getByRole('tab', { name: /^Texto$/ })).toHaveAttribute('aria-selected', 'true')
+    expect(screen.getByRole('tab', { name: 'Notas' })).toHaveAttribute('aria-selected', 'false')
+  })
+
+  it('still resets the right panel tab to notes when switching to a different asset', async () => {
+    storeRef.current = createStore({
+      assetsRows: [
+        imageAsset,
+        {
+          id: 'asset-image-2',
+          itemId: 'item-1',
+          path: 'docs/photo-b.jpg',
+          type: 'image' as const,
+          createdAt: 2,
+        },
+      ],
+    })
+
+    render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+
+    expect(await screen.findByText(/1\s*\/\s*2/)).toBeInTheDocument()
+    await fireEvent.click(await screen.findByRole('tab', { name: /^Texto$/ }))
+    expect(screen.getByRole('tab', { name: /^Texto$/ })).toHaveAttribute('aria-selected', 'true')
+
+    await fireEvent.click(screen.getByRole('button', { name: /Página siguiente/i }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('tab', { name: 'Notas' })).toHaveAttribute('aria-selected', 'true')
+    })
+  })
+})
+
+describe('ItemView Escape behavior', () => {
+  const imageAsset = {
+    id: 'asset-image-1',
+    itemId: 'item-1',
+    path: 'docs/photo-a.jpg',
+    type: 'image' as const,
+    createdAt: 1,
+  }
+
+  function resetNavigationToItem() {
+    navigation.resetToPath([
+      { name: 'collections' },
+      { name: 'collection', id: 'col-1', collectionName: 'Colección 1' },
+      {
+        name: 'item',
+        collectionId: 'col-1',
+        collectionName: 'Colección 1',
+        itemId: 'item-1',
+        itemTitle: 'Acta histórica',
+      },
+    ])
+  }
+
+  it('Escape cancels an active crop mode and only navigates back once idle', async () => {
+    storeRef.current = createStore({ assetsRows: [imageAsset] })
+    resetNavigationToItem()
+    const cleanupKeyboard = setupKeyboardShortcuts()
+
+    try {
+      render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+      await screen.findByTestId('mock-document-viewer')
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Crop tool' }))
+      expect(screen.getByTestId('viewer-edit-tool')).toHaveTextContent('crop')
+
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.getByTestId('viewer-edit-tool')).toHaveTextContent('none')
+      expect(navigation.current.name).toBe('item')
+
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(navigation.current.name).toBe('collection')
+    } finally {
+      cleanupKeyboard()
+    }
+  })
+
+  it('Escape cancels annotation drawing mode without navigating', async () => {
+    storeRef.current = createStore({ assetsRows: [imageAsset] })
+    resetNavigationToItem()
+    const cleanupKeyboard = setupKeyboardShortcuts()
+
+    try {
+      render(ItemView, { itemId: 'item-1', collectionId: 'col-1' })
+      await screen.findByTestId('mock-document-viewer')
+
+      await fireEvent.click(screen.getByRole('button', { name: 'Rectangle tool' }))
+      expect(screen.getByTestId('viewer-annotation-tool')).toHaveTextContent('rectangle')
+
+      await fireEvent.keyDown(window, { key: 'Escape' })
+      expect(screen.getByTestId('viewer-annotation-tool')).toHaveTextContent('select')
+      expect(navigation.current.name).toBe('item')
+    } finally {
+      cleanupKeyboard()
+    }
   })
 })

@@ -106,7 +106,9 @@ impl GeoQueue {
         tauri::async_runtime::spawn(async move {
             let conn = match rusqlite::Connection::open(&db_path) {
                 Ok(c) => {
-                    let _ = c.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;");
+                    let _ = c.execute_batch(
+                        "PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;",
+                    );
                     c
                 }
                 Err(e) => {
@@ -115,10 +117,18 @@ impl GeoQueue {
                 }
             };
 
-            let client = reqwest::Client::builder()
+            let client = match reqwest::Client::builder()
                 .user_agent("EntropIA-Desktop/0.1 (historical-research-app)")
+                .timeout(Duration::from_secs(30))
+                .connect_timeout(Duration::from_secs(15))
                 .build()
-                .unwrap();
+            {
+                Ok(client) => client,
+                Err(e) => {
+                    eprintln!("[geo] Failed to build HTTP client: {e}");
+                    return;
+                }
+            };
 
             while let Some(job) = receiver.recv().await {
                 match job {

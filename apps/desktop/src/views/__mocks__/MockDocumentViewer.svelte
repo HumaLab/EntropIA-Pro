@@ -4,12 +4,13 @@
     currentPage = 1,
     annotations = [],
     layoutRegions = [],
-    labels,
     hoveredLayoutRegionId = null,
     selectedLayoutRegionId = null,
     selectedAnnotationId = null,
     annotationTool = 'select',
     annotationColor = 'var(--color-accent)',
+    editTool = 'none',
+    onEditToolChange = () => {},
     onPageChange = () => {},
     onAnnotationsChange = () => {},
     onLayoutRegionHoverChange = () => {},
@@ -17,6 +18,10 @@
     onSelectedAnnotationIdChange = () => {},
     onAnnotationToolChange = () => {},
     onAnnotationColorChange = () => {},
+    onDimensionsChange = () => {},
+    onFineRotateCommit = () => {},
+    onUndo = () => {},
+    canUndo = false,
   } = $props()
 
   function createDraftAnnotation() {
@@ -46,6 +51,7 @@
   <p data-testid="viewer-selected-annotation">{selectedAnnotationId ?? 'none'}</p>
   <p data-testid="viewer-annotation-tool">{annotationTool}</p>
   <p data-testid="viewer-annotation-color">{annotationColor}</p>
+  <p data-testid="viewer-edit-tool">{editTool}</p>
 
   <button
     type="button"
@@ -76,7 +82,17 @@
     Go to page 2
   </button>
   <button type="button" onclick={() => onAnnotationToolChange('rectangle')}>Rectangle tool</button>
+  <button type="button" onclick={() => onEditToolChange('crop')}>Crop tool</button>
   <button type="button" onclick={() => onAnnotationColorChange('var(--color-warning)')}>
     Warning color
+  </button>
+  <button type="button" onclick={() => onDimensionsChange({ width: 200, height: 100 })}>
+    Report image dimensions
+  </button>
+  <button type="button" onclick={() => onFineRotateCommit(3)}>
+    Commit fine rotation
+  </button>
+  <button type="button" disabled={!canUndo} onclick={() => onUndo()}>
+    Undo edit
   </button>
 </div>
