@@ -13,7 +13,13 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
-const DEFAULT_SPACY_MODEL: &str = "es_core_news_sm";
+const DEFAULT_SPACY_MODEL: &str = "es_core_news_md";
+
+// Flat confidence assigned to spaCy NER entities. spaCy's default pipeline does
+// not expose per-entity confidence, so this is a trust score for the local model.
+// It sits exactly at the UI's automatic-entity display floor (ItemView.svelte
+// shows confidence >= 0.85) so es_core_news_md entities are surfaced.
+const SPACY_ENTITY_CONFIDENCE: f32 = 0.85;
 
 #[derive(Debug, Deserialize)]
 struct RawSpacyEntity {
@@ -36,7 +42,7 @@ pub fn extract_entities_with_spacy(
     }
 
     let python_path = resolve_spacy_python(settings_db_path)
-        .ok_or_else(|| "spaCy Python no disponible con modelo es_core_news_sm".to_string())?;
+        .ok_or_else(|| "spaCy Python no disponible con modelo es_core_news_md".to_string())?;
     let script_path = resolve_spacy_script(app_handle)?;
 
     let mut cmd = Command::new(&python_path);
@@ -107,7 +113,10 @@ pub fn parse_spacy_entities(
             value,
             start_offset: raw.start_offset.unwrap_or(0),
             end_offset: raw.end_offset.unwrap_or(0),
-            confidence: raw.confidence.unwrap_or(0.85).clamp(0.0, 1.0),
+            confidence: raw
+                .confidence
+                .unwrap_or(SPACY_ENTITY_CONFIDENCE)
+                .clamp(0.0, 1.0),
             source: EntitySource::RuleBased,
             model_name: Some(DEFAULT_SPACY_MODEL.to_string()),
         };
@@ -133,8 +142,8 @@ fn resolve_spacy_python(settings_db_path: &Path) -> Option<PathBuf> {
     crate::python_discovery::which_python_for_module(
         "nlp/spacy",
         "spacy_ner_es",
-        "spaCy es_core_news_sm",
-        "import spacy; spacy.load('es_core_news_sm'); print('ok')",
+        "spaCy es_core_news_md",
+        "import spacy; spacy.load('es_core_news_md'); print('ok')",
         Some(settings_db_path),
     )
 }

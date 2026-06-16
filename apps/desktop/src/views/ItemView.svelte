@@ -1342,12 +1342,14 @@
       } else {
         allEntities = (await store.entities.findByItemId(itemId)) as Entity[]
       }
-      // Display filter: hide low-confidence automatic entities.
+      // Display filter: hide low-confidence automatic entities. The floor is 0.85
+      // (inclusive) so the local spaCy NER (which assigns a flat 0.85 trust score)
+      // is shown, while genuinely lower-confidence LLM entities stay hidden.
       const nextEntities = allEntities.filter(
-        (entity) => entity.confidence == null || entity.confidence > 0.89
+        (entity) => entity.confidence == null || entity.confidence >= 0.85
       )
       if (allEntities.length > 0 && nextEntities.length === 0) {
-        console.warn('[ItemView] Confidence display filter (> 0.89) hid all stored entities', {
+        console.warn('[ItemView] Confidence display filter (>= 0.85) hid all stored entities', {
           storedCount: allEntities.length,
           visibleCount: nextEntities.length,
         })

@@ -895,7 +895,7 @@ pub async fn install_package(
     sanitize_install_subprocess_env(&mut cmd);
     cmd.arg("pip").arg("install");
     // A spec may carry several space-separated packages: e.g. spaCy ships the
-    // engine plus the language model, and the es_core_news_sm 3.8 wheel no longer
+    // engine plus the language model, and the es_core_news_md 3.8 wheel no longer
     // declares spaCy as a dependency, so both must be installed together.
     for pkg in spec.split_whitespace() {
         cmd.arg(pkg);
@@ -975,8 +975,9 @@ fn managed_install_spec(dep: &DependencySpec, wheelhouse_dir: Option<&Path>) -> 
         }
         DependencyId::Spacy if wheelhouse_dir.is_some() => {
             // The es model wheel does not pull spaCy, so install both from the
-            // wheelhouse (spaCy 3.8.x ships cp39–cp313 wheels).
-            Some("spacy>=3.8.0,<3.9.0 es-core-news-sm==3.8.0".to_string())
+            // wheelhouse (spaCy 3.8.x ships cp39–cp313 wheels). es_core_news_md
+            // carries word vectors → better NER quality than the sm model.
+            Some("spacy>=3.8.0,<3.9.0 es-core-news-md==3.8.0".to_string())
         }
         _ => dep.pip_spec.map(str::to_owned),
     }
