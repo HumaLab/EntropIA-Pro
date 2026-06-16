@@ -18,7 +18,7 @@ SCRIPT_SOURCE_DIR = TAURI_ROOT / 'scripts'
 SUPPORTED_PLATFORMS = ('windows-x86_64', 'linux-x86_64')
 REQUIRED_SCRIPTS = ('paddle_vl.py', 'spacy_ner.py', 'transcribe.py')
 REQUIRED_WHEEL_PREFIXES = (
-    'es_core_news_sm',
+    'es_core_news_md',
     'paddleocr',
     'paddlepaddle',
     'faster_whisper',
@@ -27,8 +27,8 @@ REQUIRED_WHEEL_PREFIXES = (
 REQUIRED_CACHE_DIRS = ('hf', 'paddlex')
 REQUIRED_LAYOUT_DIRS = ('python', 'uv', 'scripts', 'wheelhouse', 'caches', 'resources/lib')
 OVERRIDES_FILENAME = 'manifest.overrides.json'
-SPACY_MODEL_WHEEL_URL = 'https://github.com/explosion/spacy-models/releases/download/es_core_news_sm-3.7.0/es_core_news_sm-3.7.0-py3-none-any.whl'
-SPACY_RUNTIME_SPEC = 'spacy>=3.7.0,<3.8.0'
+SPACY_MODEL_WHEEL_URL = 'https://github.com/explosion/spacy-models/releases/download/es_core_news_md-3.8.0/es_core_news_md-3.8.0-py3-none-any.whl'
+SPACY_RUNTIME_SPEC = 'spacy>=3.8.0,<3.9.0'
 
 
 def platform_python_relpath(platform: str) -> str:
@@ -101,8 +101,8 @@ def ensure_spacy_wheelhouse(platform: str, payload_root: Path) -> None:
     wheelhouse = payload_root / 'wheelhouse'
     wheelhouse.mkdir(parents=True, exist_ok=True)
     wheel_names = [normalized_name(path) for path in wheelhouse.iterdir() if path.is_file()]
-    if any(name.startswith('spacy_3.7') for name in wheel_names) and any(
-        name.startswith('es_core_news_sm') for name in wheel_names
+    if any(name.startswith('spacy_3.8') for name in wheel_names) and any(
+        name.startswith('es_core_news_md') for name in wheel_names
     ):
         return
 

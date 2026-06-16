@@ -2,7 +2,7 @@
 """EntropIA spaCy NER subprocess.
 
 Reads UTF-8 text from stdin and emits JSON entities between sentinel markers.
-Default model: es_core_news_sm.
+Default model: es_core_news_md (word vectors → better NER than es_core_news_sm).
 """
 
 from __future__ import annotations
@@ -27,13 +27,22 @@ LABEL_MAP = {
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Extract Spanish NER with spaCy")
-    parser.add_argument("--model", default="es_core_news_sm")
+    parser.add_argument("--model", default="es_core_news_md")
     return parser.parse_args()
 
 
 def main() -> int:
     args = parse_args()
-    text = sys.stdin.read()
+    # On Windows the default console encoding is cp1252, which decodes UTF-8 input
+    # into lone surrogates (e.g. '\udc9d') that break spaCy's tokenizer with
+    # "surrogates not allowed", and can fail to encode accented output. Read raw
+    # bytes and decode as UTF-8 explicitly, and force UTF-8 on stdout for the JSON
+    # payload. Keeps NER robust on any host regardless of locale.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:  # pragma: no cover - older interpreters
+        pass
+    text = sys.stdin.buffer.read().decode("utf-8", "replace")
     if not text.strip():
         print(BEGIN)
         print("[]")
@@ -70,6 +79,9 @@ def main() -> int:
                 "type": entity_type,
                 "start_offset": ent.start_char,
                 "end_offset": ent.end_char,
+                # Flat trust score for the local md NER, at the UI's display floor
+                # (ItemView.svelte shows confidence >= 0.85) so es_core_news_md
+                # entities are surfaced.
                 "confidence": 0.85,
             }
         )
