@@ -530,8 +530,17 @@ migrate_legacy_asset_paths(&db_path, &app_dir)
             sync::commands::sync_mark_notification_read,
             sync::commands::sync_delete_account,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|app_handle, event| {
+            // Signal the sync engine to tear down cleanly on app exit (DESIGN
+            // §3.1) instead of being killed mid-cycle.
+            if let tauri::RunEvent::Exit = event {
+                if let Some(engine) = app_handle.try_state::<sync::engine::SyncEngine>() {
+                    engine.shutdown();
+                }
+            }
+        });
 }
 
 fn migrate_legacy_app_dir(app_dir: &Path) -> Result<(), String> {
