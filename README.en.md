@@ -2,7 +2,7 @@
 
 **Español:** [README.md](./README.md)
 
-**Current release:** [v0.1.0](https://github.com/hlabrepo/EntropIA-Pro/releases/tag/v0.1.0)
+**Current release:** [v0.1.0](https://github.com/HumaLab/EntropIA-Pro/releases/tag/v0.1.0)
 
 EntropIA Pro is a desktop application for research with document corpora. It lets you organize collections, process images/PDFs/audio, and enrich results with OCR, transcription, search, embeddings, entities, and semantic triples.
 
@@ -12,7 +12,7 @@ The focus of `v0.1.0` is to provide a first functional Pro release for **Windows
 
 Published installers are available at:
 
-<https://github.com/hlabrepo/EntropIA-Pro/releases/tag/v0.1.0>
+<https://github.com/HumaLab/EntropIA-Pro/releases/tag/v0.1.0>
 
 | Operating system | Assets |
 | --- | --- |
@@ -58,7 +58,7 @@ The app prioritizes local/offline-first execution, but some advanced capabilitie
 ### Install
 
 ```bash
-git clone git@github.com:hlabrepo/EntropIA-Pro.git
+git clone git@github.com:HumaLab/EntropIA-Pro.git
 cd EntropIA-Pro
 pnpm install --frozen-lockfile
 ```

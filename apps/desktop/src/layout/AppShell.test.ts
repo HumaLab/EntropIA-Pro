@@ -99,8 +99,8 @@ describe('AppShell', () => {
 
     expect(screen.getByRole('navigation', { name: 'Breadcrumb' })).toBeInTheDocument()
     expect(screen.getByTestId('app-shell-child')).toHaveTextContent('Contenido de prueba')
-    // 'EntropIA Pro' renders in both the TopBar title and the footer status bar.
-    expect(within(screen.getByRole('contentinfo')).getByText('EntropIA Pro')).toBeInTheDocument()
+    // The footer status bar badge carries the 'β' beta marker (TopBar title stays 'EntropIA Pro').
+    expect(within(screen.getByRole('contentinfo')).getByText('EntropIA Pro β')).toBeInTheDocument()
     expect(screen.getByRole('link', { name: 'GitHub' })).toBeInTheDocument()
     expect(screen.getByText('Desarrollado por')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Colapsar panel (Ctrl+B)' })).toBeInTheDocument()
@@ -121,7 +121,7 @@ describe('AppShell', () => {
 
     await fireEvent.click(screen.getByRole('link', { name: 'GitHub' }))
     expect(invokeMock).toHaveBeenCalledWith('open_external_url', {
-      url: 'https://github.com/hlabrepo/EntropIA-Pro',
+      url: 'https://github.com/HumaLab/EntropIA-Pro',
     })
 
     await fireEvent.click(screen.getByRole('link', { name: 'HLab' }))

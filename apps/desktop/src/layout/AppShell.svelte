@@ -21,7 +21,7 @@
     shouldShowRuntimeRepairAction,
     type RuntimeStatus,
   } from '$lib/runtime'
-  import { ActionIcon, IconButton } from '@entropia/ui'
+  import { ActionIcon, IconButton, StatusBadge } from '@entropia/ui'
   import DocumentExplorer from './DocumentExplorer.svelte'
   import TopBar from './TopBar.svelte'
   import EntropicConstellation from './EntropicConstellation.svelte'
@@ -30,7 +30,7 @@
   import type { Snippet } from 'svelte'
 
   const HLAB_URL = 'https://hlab.com.ar/'
-  const GITHUB_REPO_URL = 'https://github.com/hlabrepo/EntropIA-Pro'
+  const GITHUB_REPO_URL = 'https://github.com/HumaLab/EntropIA-Pro'
 
   let { children }: { children: Snippet } = $props()
   const currentLocale = locale
@@ -378,7 +378,7 @@
   {#key activeLocale}
     <footer class="statusbar" data-locale={activeLocale}>
       <div class="statusbar__left">
-        <span>EntropIA Pro</span>
+        <StatusBadge variant="neutral" size="sm" class="statusbar__badge">EntropIA Pro β</StatusBadge>
         <span class="statusbar__sep">·</span>
         <span>{t('appshell.caption')}</span>
       </div>
@@ -681,5 +681,12 @@
 
   .statusbar__link b {
     font-weight: var(--font-weight-semibold);
+  }
+
+  :global(.statusbar__badge) {
+    min-height: 18px;
+    padding: 0 var(--space-2);
+    font-size: calc(0.58rem + 3px);
+    letter-spacing: 0.04em;
   }
 </style>

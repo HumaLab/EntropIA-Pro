@@ -1065,7 +1065,7 @@ mod tests {
 
     #[test]
     fn validate_external_url_accepts_http_and_https_urls() {
-        validate_external_url("https://github.com/hlabrepo/EntropIA-Pro?tab=readme").unwrap();
+        validate_external_url("https://github.com/HumaLab/EntropIA-Pro?tab=readme").unwrap();
         validate_external_url("https://example.com/search?q=one&lang=es#results").unwrap();
         validate_external_url("http://localhost:1420/docs").unwrap();
     }
