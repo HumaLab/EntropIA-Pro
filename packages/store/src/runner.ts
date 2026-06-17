@@ -393,6 +393,26 @@ UPDATE layouts SET id = 'lay-' || asset_id;
   `.trim(),
 }
 
+/**
+ * Canonical final shape of the `layouts` table on a fresh install. Exported so
+ * the schema-fixture export script can reproduce it without replaying the
+ * legacy-migration branches inside {@link applyLayoutsMigration}.
+ */
+export const LAYOUTS_DDL: string = `
+CREATE TABLE IF NOT EXISTS layouts (
+  id TEXT PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES assets(id) ON DELETE CASCADE,
+  regions TEXT NOT NULL,
+  blocks TEXT NOT NULL DEFAULT '[]',
+  model TEXT NOT NULL,
+  image_width INTEGER NOT NULL,
+  image_height INTEGER NOT NULL,
+  created_at INTEGER NOT NULL
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_layouts_asset_id_unique ON layouts(asset_id);
+CREATE INDEX IF NOT EXISTS idx_layouts_asset_id ON layouts(asset_id);
+`.trim()
+
 async function applyLayoutsMigration(client: DbClient): Promise<void> {
   const now = Date.now()
   await client.executeBatch(`
@@ -432,6 +452,42 @@ async function applyLayoutsMigration(client: DbClient): Promise<void> {
     SET created_at = ${now}
     WHERE created_at IS NULL OR created_at = 0
   `)
+}
+
+/**
+ * Builds the full application schema as a single SQL string, in migration order,
+ * for use as a fixture by the Rust sync tests. Reproduces what a FRESH install
+ * ends up with after `runMigrations`:
+ *
+ * - every registry migration's SQL, applied in sorted (lexicographic) order;
+ * - the `0020_layouts` registry entry (a no-op marker) is replaced by the
+ *   canonical programmatic {@link LAYOUTS_DDL}, mirroring how
+ *   {@link applyLayoutsMigration} runs imperatively at runtime.
+ *
+ * Deterministic so a checked-in artifact can be diffed against it (see
+ * `scripts/export-schema.mjs` and the matching vitest freshness test).
+ */
+export function buildSchemaFixture(): string {
+  const header = [
+    '-- AUTO-GENERATED schema fixture for the Rust sync tests. DO NOT EDIT BY HAND.',
+    '-- Regenerate with: pnpm --filter @entropia/store export-schema',
+    '-- Source of truth: packages/store/src/runner.ts (MIGRATIONS + LAYOUTS_DDL).',
+    '',
+  ].join('\n')
+
+  const sections = Object.keys(MIGRATIONS)
+    .sort()
+    .map((name) => {
+      const sql = (name === '0020_layouts' ? LAYOUTS_DDL : MIGRATIONS[name]!).trim()
+      // Several registry entries omit the trailing semicolon on their last
+      // statement (harmless at runtime — the runner splits per migration on
+      // ';'). The fixture is fed to one execute_batch, so each section must be
+      // self-terminated or the next migration's CREATE runs into it.
+      const terminated = sql.endsWith(';') ? sql : `${sql};`
+      return `-- ${name}\n${terminated}`
+    })
+
+  return `${header}\n${sections.join('\n\n')}\n`
 }
 
 /**
