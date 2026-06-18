@@ -25,11 +25,12 @@
 //! (mirrors the C1 `#[allow(dead_code)]` convention for forward-looking API).
 #![allow(dead_code)]
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
 use rusqlite::Connection;
 use serde_json::Value;
 
 use crate::db::util::{is_safe_identifier, quote_identifier};
-use crate::sync::capture::is_synced_table;
+use crate::sync::capture::{is_synced_table, pk_column};
 use crate::sync::http::{PullRow, PushChange, PushResult};
 use crate::sync::session::{meta_get_i64, meta_set, meta_set_i64};
 
@@ -157,9 +158,11 @@ pub fn read_row_payload(
         .map(|c| quote_identifier(c))
         .collect::<Vec<_>>()
         .join(", ");
+    let pk = pk_column(table);
     let sql = format!(
-        "SELECT {select_list} FROM {} WHERE id = ?1",
-        quote_identifier(table)
+        "SELECT {select_list} FROM {} WHERE {} = ?1",
+        quote_identifier(table),
+        quote_identifier(pk),
     );
 
     let mut stmt = conn
@@ -177,10 +180,18 @@ pub fn read_row_payload(
         return Ok(None);
     };
 
-    let mut obj = serde_json::Map::with_capacity(columns.len());
+    let mut obj = serde_json::Map::with_capacity(columns.len() + 1);
     for (idx, col) in columns.iter().enumerate() {
         let value = sql_value_to_json(row, idx)?;
         obj.insert(col.clone(), value);
+    }
+    // The server enforces `payload.id == row_id`. Tables keyed on a non-`id` PK
+    // (vec_assets → asset_id) carry a synthetic `id` mirroring the PK so the
+    // envelope validates; the receiver discards it (not a local column).
+    if pk != "id" {
+        if let Some(pk_value) = obj.get(pk).cloned() {
+            obj.insert("id".to_string(), pk_value);
+        }
     }
     Ok(Some(Value::Object(obj)))
 }
@@ -199,9 +210,9 @@ fn sql_value_to_json(row: &rusqlite::Row, idx: usize) -> Result<Value, String> {
             .unwrap_or(Value::Null),
         ValueRef::Text(bytes) => Value::String(String::from_utf8_lossy(bytes).into_owned()),
         ValueRef::Blob(bytes) => {
-            // Blobs are not expected in synced tables; encode defensively as a
-            // hex string rather than losing data.
-            Value::String(bytes.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            // Synced blobs (vec_assets.embedding, f32 LE) travel as standard
+            // base64 — ~33% smaller than hex. The receiver decodes back to BLOB.
+            Value::String(BASE64_STANDARD.encode(bytes))
         }
     })
 }

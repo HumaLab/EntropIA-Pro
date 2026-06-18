@@ -1,4 +1,4 @@
-//! Capture triggers (DESIGN §4.1, §6.1). 45 triggers (15 synced tables × 3 ops)
+//! Capture triggers (DESIGN §4.1, §6.1). 48 triggers (16 synced tables × 3 ops)
 //! mark dirty rows in `sync_oplog`. Capture is gated by session: each trigger
 //! only fires when `capture_enabled='1'` and `applying<>'1'` (echo suppression
 //! during pull apply). `ensure_capture` is self-healing across schema rebuilds.
@@ -10,9 +10,9 @@ use crate::sync::schema::ensure_sync_schema;
 /// Compiled version of the trigger template. Bump this whenever the trigger DDL
 /// in [`create_trigger_sql`] changes so `ensure_capture` performs a
 /// DROP-all-then-create upgrade (DESIGN §6.1.2).
-pub const TRIGGERS_VERSION: &str = "1";
+pub const TRIGGERS_VERSION: &str = "2";
 
-/// The 15 synced tables (DESIGN §5). Allowlist enforced on both ends.
+/// The 16 synced tables (DESIGN §5). Allowlist enforced on both ends.
 pub const SYNCED_TABLES: &[&str] = &[
     "collections",
     "items",
@@ -29,9 +29,10 @@ pub const SYNCED_TABLES: &[&str] = &[
     "llm_results",
     "rag_conversations",
     "rag_messages",
+    "vec_assets",
 ];
 
-/// The 15 synced tables ordered parents-before-children along the FK graph
+/// The 16 synced tables ordered parents-before-children along the FK graph
 /// (DESIGN §4.10), for use by the pull-apply path (upserts in this order,
 /// deletes in reverse). Same set as [`SYNCED_TABLES`], different order.
 /// Consumed by the apply slice (push/pull); only tests reference it in C1.
@@ -56,6 +57,7 @@ pub const SYNCED_TABLES_FK_ORDER: &[&str] = &[
     "extractions",
     "transcriptions",
     "layouts",
+    "vec_assets",
 ];
 
 /// Returns true when `table` is in the synced allowlist (DESIGN §5). Used by
@@ -63,6 +65,17 @@ pub const SYNCED_TABLES_FK_ORDER: &[&str] = &[
 #[allow(dead_code)]
 pub fn is_synced_table(table: &str) -> bool {
     SYNCED_TABLES.contains(&table)
+}
+
+/// The primary-key column of a synced table. Almost all key on `id`; `vec_assets`
+/// keys on `asset_id` (one embedding per asset, no `id` column). Centralizes the
+/// PK so the capture trigger, the push row read, and the apply delete handle a
+/// non-`id` PK uniformly.
+pub fn pk_column(table: &str) -> &'static str {
+    match table {
+        "vec_assets" => "asset_id",
+        _ => "id",
+    }
 }
 
 /// The three trigger names for a table: `(insert, update, delete)`.
@@ -79,13 +92,14 @@ fn trigger_names(table: &str) -> [String; 3] {
 /// matching SQL event (`INSERT`/`UPDATE`/`DELETE`); `row_ref` is `NEW`/`OLD`.
 fn create_trigger_sql(table: &str, op: char, event: &str, row_ref: &str) -> String {
     let suffix = op.to_ascii_lowercase();
+    let pk = pk_column(table);
     format!(
         "CREATE TRIGGER IF NOT EXISTS trg_sync_{table}_{suffix} AFTER {event} ON {table}\n\
          WHEN COALESCE((SELECT value FROM sync_meta WHERE key='applying'),'0') <> '1'\n\
          \x20AND COALESCE((SELECT value FROM sync_meta WHERE key='capture_enabled'),'0') = '1'\n\
          BEGIN\n\
          \x20\x20INSERT INTO sync_oplog(table_name, row_id, op, changed_at)\n\
-         \x20\x20VALUES ('{table}', {row_ref}.id, '{op}', CAST(unixepoch('subsec')*1000 AS INTEGER));\n\
+         \x20\x20VALUES ('{table}', {row_ref}.{pk}, '{op}', CAST(unixepoch('subsec')*1000 AS INTEGER));\n\
          END;"
     )
 }
@@ -171,9 +185,10 @@ fn drop_all_sync_triggers(conn: &Connection) -> Result<(), String> {
 /// active and the table's triggers had to be (re)created — covers the residual
 /// window where writes landed while triggers were missing after a rebuild.
 fn reseed_table_oplog(conn: &Connection, table: &str, now_ms: i64) -> Result<(), String> {
+    let pk = pk_column(table);
     let sql = format!(
         "INSERT INTO sync_oplog(table_name, row_id, op, changed_at)\n\
-         SELECT '{table}', id, 'U', ?1 FROM \"{table}\"",
+         SELECT '{table}', {pk}, 'U', ?1 FROM \"{table}\"",
     );
     conn.execute(&sql, rusqlite::params![now_ms])
         .map(|_| ())
@@ -187,10 +202,10 @@ fn now_ms() -> i64 {
         .unwrap_or(0)
 }
 
-/// Ensures the sync schema and all 45 capture triggers, with self-healing
+/// Ensures the sync schema and all 48 capture triggers, with self-healing
 /// semantics (DESIGN §6.1):
 ///
-/// 1. ALWAYS run 45 `CREATE TRIGGER IF NOT EXISTS` (auto-cure after `DROP+RENAME`
+/// 1. ALWAYS run 48 `CREATE TRIGGER IF NOT EXISTS` (auto-cure after `DROP+RENAME`
 ///    rebuilds that destroy triggers, e.g. migrations 0010/0019).
 /// 2. If `sync_meta['triggers_version']` differs from [`TRIGGERS_VERSION`]:
 ///    DROP every `trg_sync_*` then CREATE (template upgrade).
@@ -256,8 +271,8 @@ mod tests {
 
     #[test]
     fn synced_table_sets_match() {
-        assert_eq!(SYNCED_TABLES.len(), 15);
-        assert_eq!(SYNCED_TABLES_FK_ORDER.len(), 15);
+        assert_eq!(SYNCED_TABLES.len(), 16);
+        assert_eq!(SYNCED_TABLES_FK_ORDER.len(), 16);
         let mut a: Vec<&str> = SYNCED_TABLES.to_vec();
         let mut b: Vec<&str> = SYNCED_TABLES_FK_ORDER.to_vec();
         a.sort_unstable();
@@ -293,10 +308,10 @@ mod tests {
     }
 
     #[test]
-    fn ensure_capture_installs_exactly_45_triggers() {
+    fn ensure_capture_installs_exactly_48_triggers() {
         let conn = new_synced_test_db();
         ensure_capture(&conn).expect("ensure capture");
-        assert_eq!(trg_sync_count(&conn), 45);
+        assert_eq!(trg_sync_count(&conn), 48);
     }
 
     #[test]
@@ -362,12 +377,12 @@ mod tests {
              DROP TRIGGER trg_sync_collections_d;",
         )
         .expect("drop triggers");
-        assert_eq!(trg_sync_count(&conn), 42);
+        assert_eq!(trg_sync_count(&conn), 45);
 
         // Re-run with UNCHANGED version: IF NOT EXISTS restores the 3 triggers
         // and re-seeds the table's oplog ('U' for each row).
         ensure_capture(&conn).expect("self-heal ensure");
-        assert_eq!(trg_sync_count(&conn), 45, "triggers restored");
+        assert_eq!(trg_sync_count(&conn), 48, "triggers restored");
         assert_eq!(
             oplog_count_for(&conn, "collections"),
             1,
@@ -397,7 +412,7 @@ mod tests {
         meta_set(&conn, "triggers_version", "0").expect("set stale version");
         ensure_capture(&conn).expect("upgrade ensure");
 
-        assert_eq!(trg_sync_count(&conn), 45);
+        assert_eq!(trg_sync_count(&conn), 48);
         assert_eq!(oplog_count_for(&conn, "collections"), 1);
         assert_eq!(oplog_count_for(&conn, "topics"), 1);
         let version = meta_get(&conn, "triggers_version").unwrap();

@@ -945,3 +945,86 @@ fn drain_pending_fts_handles_missing_item_as_noop() {
     assert_eq!(reindexed, 1, "missing item still drained (no-op reindex)");
     assert_eq!(count(&conn, "SELECT COUNT(*) FROM sync_pending_fts"), 0);
 }
+
+// --------------------------------------------------------------------------
+// vec_assets: non-`id` PK (asset_id) + embedding BLOB round-trip (DESIGN §5)
+// --------------------------------------------------------------------------
+
+/// The embedding BLOB must survive push-serialization (base64) and apply
+/// (decode back to BLOB) byte-for-byte, or KNN would read a corrupt vector.
+#[test]
+fn vec_assets_embedding_round_trips_push_to_apply_as_blob() {
+    use crate::sync::push::read_row_payload;
+    use serde_json::Value;
+
+    let src = new_synced_test_db();
+    src.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vec_assets(\
+         asset_id TEXT PRIMARY KEY, item_id TEXT NOT NULL, embedding BLOB NOT NULL);",
+    )
+    .expect("create vec_assets (src)");
+    let original: Vec<f32> = vec![0.10, -0.20, 0.30, 0.40, -0.50, 0.0, 1.0];
+    let blob: Vec<u8> = original.iter().flat_map(|f| f.to_le_bytes()).collect();
+    src.execute(
+        "INSERT INTO vec_assets(asset_id, item_id, embedding) VALUES('a1','i1',?1)",
+        rusqlite::params![blob],
+    )
+    .expect("insert embedding");
+
+    // PUSH read: embedding leaves as a base64 string; a synthetic `id` mirrors
+    // asset_id so the server's payload.id == row_id check passes.
+    let payload = read_row_payload(&src, "vec_assets", "a1")
+        .expect("read ok")
+        .expect("row present");
+    let obj = payload.as_object().expect("payload is an object");
+    assert_eq!(obj.get("id"), Some(&json!("a1")), "synthetic id mirrors asset_id");
+    assert_eq!(obj.get("asset_id"), Some(&json!("a1")));
+    assert!(
+        matches!(obj.get("embedding"), Some(Value::String(_))),
+        "embedding travels as a string"
+    );
+
+    // APPLY into a fresh DB: embedding must reconstruct a byte-identical BLOB.
+    let dst = new_synced_test_db();
+    dst.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vec_assets(\
+         asset_id TEXT PRIMARY KEY, item_id TEXT NOT NULL, embedding BLOB NOT NULL);",
+    )
+    .expect("create vec_assets (dst)");
+    let dir = tmp_app_dir();
+    let mut ctx = ApplyContext::new(dir.path());
+    apply_upsert(&dst, &mut ctx, "vec_assets", obj).expect("apply upsert");
+
+    let got: Vec<u8> = dst
+        .query_row(
+            "SELECT embedding FROM vec_assets WHERE asset_id='a1'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("read back embedding");
+    assert_eq!(got, blob, "embedding BLOB round-trips byte-identical");
+
+    let decoded: Vec<f32> = got
+        .chunks_exact(4)
+        .map(|b| f32::from_le_bytes(b.try_into().unwrap()))
+        .collect();
+    assert_eq!(decoded, original, "f32 vector decodes identically");
+}
+
+/// A vec_assets tombstone must delete by `asset_id`, not `id` (no such column).
+#[test]
+fn vec_assets_delete_keys_on_asset_id_not_id() {
+    let dst = new_synced_test_db();
+    dst.execute_batch(
+        "CREATE TABLE IF NOT EXISTS vec_assets(\
+         asset_id TEXT PRIMARY KEY, item_id TEXT NOT NULL, embedding BLOB NOT NULL);\
+         INSERT INTO vec_assets(asset_id,item_id,embedding) VALUES('a1','i1',x'00010203');",
+    )
+    .expect("seed vec_assets");
+    apply_delete(&dst, "vec_assets", "a1").expect("delete by asset_id");
+    assert_eq!(
+        count(&dst, "SELECT COUNT(*) FROM vec_assets"),
+        0,
+        "delete keyed on asset_id removed the row"
+    );
+}

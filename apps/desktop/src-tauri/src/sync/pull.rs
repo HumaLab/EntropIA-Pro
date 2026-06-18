@@ -113,12 +113,13 @@ pub fn seed_account(conn: &Connection, account_id: &str) -> Result<(), String> {
 
     for table in SYNCED_TABLES {
         // Identifiers come from the compile-time allowlist — safe to interpolate.
+        let pk = crate::sync::capture::pk_column(table);
         let sql = format!(
             "INSERT INTO sync_oplog(table_name, row_id, op, changed_at)
-             SELECT '{table}', id, 'I', ?1 FROM \"{table}\"
+             SELECT '{table}', {pk}, 'I', ?1 FROM \"{table}\"
              WHERE NOT EXISTS (
                SELECT 1 FROM sync_row_versions v
-               WHERE v.table_name = '{table}' AND v.row_id = \"{table}\".id
+               WHERE v.table_name = '{table}' AND v.row_id = \"{table}\".{pk}
              )",
         );
         tx.execute(&sql, rusqlite::params![now])

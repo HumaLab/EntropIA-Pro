@@ -28,8 +28,10 @@ use std::path::{Path, PathBuf};
 use rusqlite::Connection;
 use serde_json::{Map, Value};
 
+use base64::{engine::general_purpose::STANDARD as BASE64_STANDARD, Engine as _};
+
 use crate::db::util::{is_safe_identifier, json_to_sql_param, quote_identifier};
-use crate::sync::capture::{is_synced_table, SYNCED_TABLES_FK_ORDER};
+use crate::sync::capture::{is_synced_table, pk_column, SYNCED_TABLES_FK_ORDER};
 use crate::sync::cascade::direct_cascade_edges;
 use crate::sync::http::PullRow;
 use crate::sync::session::{meta_get, meta_set, meta_set_i64};
@@ -37,7 +39,7 @@ use crate::sync::session::{meta_get, meta_set, meta_set_i64};
 /// Tables whose conflict target is `(asset_id)` rather than `(id)`, with
 /// `id = excluded.id` folded into the UPDATE so stray IDs converge (DESIGN §4.6,
 /// PROTOCOL "Semántica de apply" step 3).
-const ASSET_KEYED_TABLES: &[&str] = &["extractions", "transcriptions", "layouts"];
+const ASSET_KEYED_TABLES: &[&str] = &["extractions", "transcriptions", "layouts", "vec_assets"];
 
 /// Outcome of applying a single row within a page (before commit).
 #[derive(Debug, PartialEq, Eq)]
@@ -453,6 +455,20 @@ fn intersect_columns(
     Ok(pairs)
 }
 
+/// Binds a payload value for apply. `vec_assets.embedding` arrives as a base64
+/// string and must bind as a BLOB (the f32 LE vector) so KNN can decode it; every
+/// other value goes through the generic JSON→SQL mapping.
+fn sql_param_for_apply(table: &str, col: &str, v: &Value) -> Box<dyn rusqlite::ToSql> {
+    if table == "vec_assets" && col == "embedding" {
+        if let Value::String(s) = v {
+            if let Ok(bytes) = BASE64_STANDARD.decode(s) {
+                return Box::new(bytes);
+            }
+        }
+    }
+    json_to_sql_param(v)
+}
+
 /// Applies one upsert row inside the page transaction (within its own SAVEPOINT,
 /// managed by the caller). Performs the column intersection, builds an
 /// `INSERT ... ON CONFLICT DO UPDATE`, and binds all values as params. Returns
@@ -508,8 +524,10 @@ fn apply_upsert(
         vals = placeholders.join(", "),
     );
 
-    let params: Vec<Box<dyn rusqlite::ToSql>> =
-        pairs.iter().map(|(_, v)| json_to_sql_param(v)).collect();
+    let params: Vec<Box<dyn rusqlite::ToSql>> = pairs
+        .iter()
+        .map(|(col, v)| sql_param_for_apply(table, col, v))
+        .collect();
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     conn.execute(&sql, param_refs.as_slice())
@@ -521,7 +539,12 @@ fn apply_upsert(
 /// which triggers `ON DELETE CASCADE` as intended for the remote intent — the
 /// dirty-child guard runs BEFORE this is called.
 fn apply_delete(conn: &Connection, table: &str, row_id: &str) -> Result<(), String> {
-    let sql = format!("DELETE FROM {} WHERE id = ?1", quote_identifier(table));
+    let pk = pk_column(table);
+    let sql = format!(
+        "DELETE FROM {} WHERE {} = ?1",
+        quote_identifier(table),
+        quote_identifier(pk),
+    );
     conn.execute(&sql, [row_id])
         .map(|_| ())
         .map_err(|e| format!("[sync] delete from {table} failed: {e}"))
