@@ -192,11 +192,22 @@ jobs:
           path: .ci-evidence/pnpm-preinstall/rust-quality-report/
 
       - name: Run Rust quality Pester suites
-        shell: powershell
+        shell: pwsh
         run: |
-          Invoke-Pester -Script "apps/desktop/src-tauri/scripts/tests/rust-quality-contract.Tests.ps1"
-          Invoke-Pester -Script "apps/desktop/src-tauri/scripts/tests/rust-verify-gate.Tests.ps1"
-          Invoke-Pester -Script "apps/desktop/src-tauri/scripts/tests/ci-rust-quality-workflow.Tests.ps1"
+          $pester = Get-Module -ListAvailable -Name Pester |
+            Where-Object { $_.Version -ge [version]"5.0.0" }
+          if (-not $pester) {
+            Install-Module -Name Pester -MinimumVersion 5.5.0 -Force -SkipPublisherCheck -Scope CurrentUser
+          }
+          $suitesRoot = "apps/desktop/src-tauri/scripts/tests"
+          Invoke-Pester -Output Detailed -CI -Path @(
+            (Join-Path $suitesRoot "rust-quality-contract.Tests.ps1"),
+            (Join-Path $suitesRoot "rust-verify-gate.Tests.ps1"),
+            (Join-Path $suitesRoot "ci-rust-quality-workflow.Tests.ps1"),
+            (Join-Path $suitesRoot "ci-pnpm-preinstall-forensics.Tests.ps1"),
+            (Join-Path $suitesRoot "pnpm-preinstall-classification.Tests.ps1"),
+            (Join-Path $suitesRoot "pnpm-preinstall-forensics-script.Tests.ps1")
+          )
 
       - name: Run Rust quality report (non-blocking)
         shell: pwsh
@@ -288,7 +299,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 20
           package-manager-cache: false
 
       - name: Run pnpm post-setup-node forensics (lint-typecheck)
@@ -411,7 +422,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 20
           package-manager-cache: false
 
       - name: Run pnpm post-setup-node forensics (test)
@@ -541,7 +552,7 @@ jobs:
 
       - uses: actions/setup-node@v6
         with:
-          node-version: 22
+          node-version: 20
           package-manager-cache: false
 
       - name: Run pnpm post-setup-node forensics (build)
