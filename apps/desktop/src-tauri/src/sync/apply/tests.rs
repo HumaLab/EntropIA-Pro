@@ -1028,3 +1028,49 @@ fn vec_assets_delete_keys_on_asset_id_not_id() {
         "delete keyed on asset_id removed the row"
     );
 }
+
+/// A real inbound vec_assets row (through apply_row) carries the synthetic
+/// `id` = asset_id for the envelope/server checks; apply must drop it BEFORE the
+/// column intersection so it does NOT journal a spurious schema_drift, while the
+/// embedding (base64 → BLOB) still lands.
+#[test]
+fn vec_assets_synthetic_id_dropped_without_drift_through_apply_row() {
+    let conn = capturing_db();
+    let dir = tmp_app_dir();
+    let mut ctx = ApplyContext::new(dir.path());
+    // `embedding` is the base64 of the 4 bytes 0x00 0x01 0x02 0x03.
+    let row = upsert_row(
+        "vec_assets",
+        "a1",
+        10,
+        json!({"id":"a1","asset_id":"a1","item_id":"i1","embedding":"AAECAw=="}),
+    );
+    conn.execute_batch("BEGIN;").unwrap();
+    let outcome = apply_row(&conn, &mut ctx, &row).expect("apply");
+    conn.execute_batch("COMMIT;").unwrap();
+
+    assert_eq!(outcome, RowOutcome::Applied);
+    assert_eq!(
+        count(&conn, "SELECT COUNT(*) FROM vec_assets WHERE asset_id='a1'"),
+        1,
+        "embedding row applied"
+    );
+    // The synthetic `id` must NOT have produced a schema_drift conflict.
+    assert_eq!(
+        count(
+            &conn,
+            "SELECT COUNT(*) FROM sync_conflicts WHERE table_name='vec_assets' AND reason='schema_drift'"
+        ),
+        0,
+        "synthetic id is dropped before intersect — no drift"
+    );
+    // And the embedding decoded back to the exact bytes.
+    let blob: Vec<u8> = conn
+        .query_row(
+            "SELECT embedding FROM vec_assets WHERE asset_id='a1'",
+            [],
+            |r| r.get(0),
+        )
+        .expect("read embedding");
+    assert_eq!(blob, vec![0u8, 1, 2, 3], "embedding decodes byte-identical");
+}

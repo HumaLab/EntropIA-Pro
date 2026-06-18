@@ -174,8 +174,10 @@ fn child_rows_for_parent(
             "[sync] unsafe cascade identifier {child_table}.{fk_col}"
         ));
     }
+    let pk = crate::sync::capture::pk_column(child_table);
     let sql = format!(
-        "SELECT id FROM {} WHERE {} = ?1",
+        "SELECT {} FROM {} WHERE {} = ?1",
+        quote_identifier(pk),
         quote_identifier(child_table),
         quote_identifier(fk_col)
     );
@@ -458,15 +460,19 @@ fn intersect_columns(
 /// Binds a payload value for apply. `vec_assets.embedding` arrives as a base64
 /// string and must bind as a BLOB (the f32 LE vector) so KNN can decode it; every
 /// other value goes through the generic JSON→SQL mapping.
-fn sql_param_for_apply(table: &str, col: &str, v: &Value) -> Box<dyn rusqlite::ToSql> {
+fn sql_param_for_apply(table: &str, col: &str, v: &Value) -> Result<Box<dyn rusqlite::ToSql>, String> {
     if table == "vec_assets" && col == "embedding" {
         if let Value::String(s) = v {
-            if let Ok(bytes) = BASE64_STANDARD.decode(s) {
-                return Box::new(bytes);
-            }
+            // Propagate a decode failure as an error so apply_upsert parks/journals
+            // the row instead of silently binding the base64 string as TEXT — which
+            // would make the asset vanish from the KNN with no error and no retry.
+            let bytes = BASE64_STANDARD
+                .decode(s)
+                .map_err(|e| format!("[sync] vec_assets embedding base64 decode failed: {e}"))?;
+            return Ok(Box::new(bytes));
         }
     }
-    json_to_sql_param(v)
+    Ok(json_to_sql_param(v))
 }
 
 /// Applies one upsert row inside the page transaction (within its own SAVEPOINT,
@@ -527,7 +533,7 @@ fn apply_upsert(
     let params: Vec<Box<dyn rusqlite::ToSql>> = pairs
         .iter()
         .map(|(col, v)| sql_param_for_apply(table, col, v))
-        .collect();
+        .collect::<Result<Vec<_>, String>>()?;
     let param_refs: Vec<&dyn rusqlite::ToSql> = params.iter().map(|p| p.as_ref()).collect();
 
     conn.execute(&sql, param_refs.as_slice())
@@ -739,6 +745,14 @@ pub fn apply_row(
                 payload_obj.insert("topic_id".to_string(), Value::String(local_topic));
             }
         }
+    }
+
+    // vec_assets: drop the synthetic wire-only `id`. The sender injects `id`=asset_id
+    // so the server's `payload.id == row_id` check (and the receiver's envelope
+    // validation above) pass, but vec_assets has no local `id` column — leaving it
+    // would journal a spurious `schema_drift` on every apply.
+    if table == "vec_assets" {
+        payload_obj.remove("id");
     }
 
     // assets: validate rel_path, rewrite to local path, enqueue blob + fts.
@@ -1046,7 +1060,8 @@ fn collect_fk_violators(
             let id: Option<String> = conn
                 .query_row(
                     &format!(
-                        "SELECT id FROM {} WHERE rowid = ?1",
+                        "SELECT {} FROM {} WHERE rowid = ?1",
+                        quote_identifier(crate::sync::capture::pk_column(table)),
                         quote_identifier(table)
                     ),
                     [rowid],

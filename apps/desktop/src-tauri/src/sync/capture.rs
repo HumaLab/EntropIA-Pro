@@ -186,9 +186,15 @@ fn drop_all_sync_triggers(conn: &Connection) -> Result<(), String> {
 /// window where writes landed while triggers were missing after a rebuild.
 fn reseed_table_oplog(conn: &Connection, table: &str, now_ms: i64) -> Result<(), String> {
     let pk = pk_column(table);
+    // Only re-seed rows the server has NOT already versioned, so re-seeding a
+    // partially-synced table never mass-re-pushes rows that would lose to LWW.
     let sql = format!(
         "INSERT INTO sync_oplog(table_name, row_id, op, changed_at)\n\
-         SELECT '{table}', {pk}, 'U', ?1 FROM \"{table}\"",
+         SELECT '{table}', {pk}, 'U', ?1 FROM \"{table}\"\n\
+         WHERE NOT EXISTS (\n\
+           SELECT 1 FROM sync_row_versions v\n\
+           WHERE v.table_name = '{table}' AND v.row_id = \"{table}\".{pk}\n\
+         )",
     );
     conn.execute(&sql, rusqlite::params![now_ms])
         .map(|_| ())
@@ -231,7 +237,9 @@ pub fn ensure_capture(conn: &Connection) -> Result<(), String> {
     // need a re-seed.
     let was_capturing: Vec<bool> = SYNCED_TABLES
         .iter()
-        .map(|table| table_triggers_present(conn, table).unwrap_or(false))
+        // Conservative on error: assume the table WAS capturing (do NOT re-seed),
+        // so a transient sqlite_master read failure can't trigger a mass re-push.
+        .map(|table| table_triggers_present(conn, table).unwrap_or(true))
         .collect();
 
     // Step 2: template upgrade — drop all sync triggers so the IF NOT EXISTS
