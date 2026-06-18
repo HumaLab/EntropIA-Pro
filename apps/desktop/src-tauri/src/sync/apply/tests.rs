@@ -977,7 +977,11 @@ fn vec_assets_embedding_round_trips_push_to_apply_as_blob() {
         .expect("read ok")
         .expect("row present");
     let obj = payload.as_object().expect("payload is an object");
-    assert_eq!(obj.get("id"), Some(&json!("a1")), "synthetic id mirrors asset_id");
+    assert_eq!(
+        obj.get("id"),
+        Some(&json!("a1")),
+        "synthetic id mirrors asset_id"
+    );
     assert_eq!(obj.get("asset_id"), Some(&json!("a1")));
     assert!(
         matches!(obj.get("embedding"), Some(Value::String(_))),

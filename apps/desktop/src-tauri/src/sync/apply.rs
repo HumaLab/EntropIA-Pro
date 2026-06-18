@@ -460,7 +460,11 @@ fn intersect_columns(
 /// Binds a payload value for apply. `vec_assets.embedding` arrives as a base64
 /// string and must bind as a BLOB (the f32 LE vector) so KNN can decode it; every
 /// other value goes through the generic JSON→SQL mapping.
-fn sql_param_for_apply(table: &str, col: &str, v: &Value) -> Result<Box<dyn rusqlite::ToSql>, String> {
+fn sql_param_for_apply(
+    table: &str,
+    col: &str,
+    v: &Value,
+) -> Result<Box<dyn rusqlite::ToSql>, String> {
     if table == "vec_assets" && col == "embedding" {
         if let Value::String(s) = v {
             // Propagate a decode failure as an error so apply_upsert parks/journals

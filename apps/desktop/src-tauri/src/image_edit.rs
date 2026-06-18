@@ -251,7 +251,11 @@ fn rotate_image_degrees_file(path: String, degrees: f32) -> Result<ImageEditResu
     let alpha_capable = Path::new(&path)
         .extension()
         .and_then(|e| e.to_str())
-        .is_some_and(|ext| ["png", "webp", "gif"].iter().any(|f| ext.eq_ignore_ascii_case(f)));
+        .is_some_and(|ext| {
+            ["png", "webp", "gif"]
+                .iter()
+                .any(|f| ext.eq_ignore_ascii_case(f))
+        });
     let background = if alpha_capable {
         Rgba([255, 255, 255, 0]) // transparent
     } else {
