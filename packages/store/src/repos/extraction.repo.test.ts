@@ -196,4 +196,30 @@ describe('ExtractionRepo', () => {
       await expect(repo.delete('ext-1')).resolves.toBeUndefined()
     })
   })
+
+  describe('findTextByCollection', () => {
+    it('returns empty array when the collection has no extractions', async () => {
+      const selectResult = createChainMock([])
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const result = await repo.findTextByCollection('collection-1')
+      expect(result).toEqual([])
+      expect(db.db.select).toHaveBeenCalledTimes(1)
+    })
+
+    it('returns text rows for all assets in the collection', async () => {
+      const rows = [
+        { assetId: 'asset-1', textContent: 'Pescado del país', createdAt: 100 },
+        { assetId: 'asset-2', textContent: 'Obreros en huelga', createdAt: 200 },
+      ]
+
+      const selectResult = createChainMock(rows)
+      ;(db.db.select as ReturnType<typeof vi.fn>).mockReturnValue(selectResult.proxy)
+
+      const result = await repo.findTextByCollection('collection-1')
+      expect(result).toEqual(rows)
+      expect(result).toHaveLength(2)
+      expect(result[0]!.textContent).toBe('Pescado del país')
+    })
+  })
 })
