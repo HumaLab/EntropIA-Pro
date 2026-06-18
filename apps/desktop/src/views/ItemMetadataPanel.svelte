@@ -28,7 +28,7 @@
 
   <div class="metadata-sections">
     <section class="metadata-subsection" data-testid="item-file-metadata">
-      <h4>Metadatos del archivo</h4>
+      <h4>{translate('item.fileMetadata')}</h4>
 
       {#if fileMetadataEntries.length > 0}
         <dl class="metadata-list">
@@ -43,7 +43,7 @@
     </section>
 
     <section class="metadata-subsection" data-testid="item-custom-metadata">
-      <h4>Metadatos personalizados</h4>
+      <h4>{translate('item.customMetadata')}</h4>
       <MetadataEditor value={metadataValue} onchange={onMetadataChange} labels={metadataEditorLabels} />
     </section>
   </div>
