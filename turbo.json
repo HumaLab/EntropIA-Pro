@@ -19,10 +19,6 @@
     "test": {
       "dependsOn": ["^build"],
       "outputs": ["coverage/**"]
-    },
-    "rust:quality:report": {
-      "cache": false,
-      "outputs": ["apps/desktop/src-tauri/coverage-rust/**"]
     }
   }
 }
