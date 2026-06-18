@@ -99,7 +99,7 @@ When a Windows machine already has a working `managed_venv`, a reproducible rele
 ```powershell
 python apps/desktop/src-tauri/scripts/materialize_windows_runtime_payload.py `
   --pack-version 2026.05.0 `
-  --app-version 0.1.0 `
+  --app-version 0.1.1 `
   --output-dir apps/desktop/src-tauri/target/runtime-payloads
 
 python apps/desktop/src-tauri/scripts/build_runtime_pack.py `
