@@ -62,9 +62,6 @@ const es = {
   'settings.subtitle':
     'Ajustá cómo EntropIA Pro resuelve tareas locales y remotas de inteligencia artificial.',
   'settings.currentMode': 'Modo actual: {mode}',
-  'settings.remoteOnlyMeta': 'EntropIA Pro usa APIs remotas: OpenRouter, GLM-OCR y AssemblyAI.',
-  'settings.apiPrivacyNotice':
-    'Privacidad: EntropIA Pro opera mediante APIs remotas. El texto, las imágenes y el audio que proceses pueden enviarse a proveedores externos como OpenRouter, GLM-OCR y AssemblyAI.',
   'settings.tabsAria': 'Secciones de configuración',
   'settings.remoteApisTab': 'APIs remotas',
   'settings.logsTab': 'Logs',
@@ -1007,9 +1004,6 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.subtitle':
     'Adjust how EntropIA Pro resolves local and remote artificial intelligence tasks.',
   'settings.currentMode': 'Current mode: {mode}',
-  'settings.remoteOnlyMeta': 'EntropIA Pro uses remote APIs: OpenRouter, GLM-OCR, and AssemblyAI.',
-  'settings.apiPrivacyNotice':
-    'Privacy: EntropIA Pro runs through remote APIs. Text, images, and audio you process may be sent to external providers such as OpenRouter, GLM-OCR, and AssemblyAI.',
   'settings.tabsAria': 'Settings sections',
   'settings.remoteApisTab': 'Remote APIs',
   'settings.logsTab': 'Logs',
