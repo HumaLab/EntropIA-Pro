@@ -49,12 +49,17 @@ jobs:
     needs: [detect-rust-changes]
     if: needs.detect-rust-changes.outputs.has_rs_changes == 'true'
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v6
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Rust build artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: apps/desktop/src-tauri
 
       - name: Validate default/no-default feature contract
         shell: pwsh

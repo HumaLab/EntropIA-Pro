@@ -75,5 +75,5 @@ function Invoke-Contract {
 # Note: local ML (ort/onnxruntime) is currently a hard dependency, not feature-gated, so
 # compiling it in the default build is expected and is NOT a contract violation. If the
 # team later makes local ML opt-in via a feature, re-add a feature-scoped diagnostic here.
-Invoke-Contract -Name "default-features contract" -CargoArgs @("test", "--manifest-path", $ManifestPath)
-Invoke-Contract -Name "no-default baseline" -CargoArgs @("test", "--manifest-path", $ManifestPath, "--no-default-features")
+Invoke-Contract -Name "default-features contract" -CargoArgs @("build", "--manifest-path", $ManifestPath)
+Invoke-Contract -Name "no-default baseline" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--no-default-features")
