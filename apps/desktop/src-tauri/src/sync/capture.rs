@@ -211,14 +211,28 @@ fn now_ms() -> i64 {
 ///    DROP every `trg_sync_*` then CREATE (template upgrade).
 /// 3. If no session is configured (`device_id` absent): `DELETE FROM sync_oplog`
 ///    (always safe — the oplog carries no payload and is redundant with table state).
-/// 4. If a table's triggers had to be recreated while a session exists:
-///    re-seed that table's oplog with `'U'` entries.
+/// 4. If a table's triggers were ABSENT before this run (a new table or a rebuild
+///    that dropped them) and a session exists: re-seed that table's oplog with
+///    `'U'` entries. A pure template upgrade of an already-capturing table is NOT
+///    re-seeded — no writes were missed, so re-seeding would mass-re-push every
+///    row and lose them all to LWW against the server.
 pub fn ensure_capture(conn: &Connection) -> Result<(), String> {
     ensure_sync_schema(conn)?;
 
     let has_session = meta_get(conn, "device_id")?.is_some();
     let stored_version = meta_get(conn, "triggers_version")?;
     let version_mismatch = stored_version.as_deref() != Some(TRIGGERS_VERSION);
+
+    // Snapshot which tables were ALREADY capturing BEFORE any drop. A template
+    // upgrade drops and recreates every trigger, but a table whose triggers were
+    // already present never lost a write — re-seeding it would push its whole
+    // contents and lose every row to LWW against the server. Only tables whose
+    // triggers were genuinely absent (a new table, or a rebuild that dropped them)
+    // need a re-seed.
+    let was_capturing: Vec<bool> = SYNCED_TABLES
+        .iter()
+        .map(|table| table_triggers_present(conn, table).unwrap_or(false))
+        .collect();
 
     // Step 2: template upgrade — drop all sync triggers so the IF NOT EXISTS
     // pass recreates them from the current template.
@@ -228,16 +242,16 @@ pub fn ensure_capture(conn: &Connection) -> Result<(), String> {
 
     let now = now_ms();
 
-    // Steps 1 + 4: create missing triggers per table; if a table had missing
-    // triggers AND a session is active, re-seed its oplog (self-heal).
-    for table in SYNCED_TABLES {
+    // Steps 1 + 4: create missing triggers per table; re-seed its oplog only when
+    // the table was NOT already capturing (self-heal for a new or rebuilt table).
+    for (idx, table) in SYNCED_TABLES.iter().enumerate() {
         if !base_table_exists(conn, table) {
             // Table not migrated in yet (fresh install before JS migrations).
             continue;
         }
 
         // After a version-mismatch drop, every table's triggers are gone, so
-        // they are recreated below and must be re-seeded.
+        // they are recreated below.
         let needs_recreate = version_mismatch || !table_triggers_present(conn, table)?;
 
         if needs_recreate {
@@ -245,7 +259,10 @@ pub fn ensure_capture(conn: &Connection) -> Result<(), String> {
                 conn.execute_batch(&stmt)
                     .map_err(|e| format!("Failed to create triggers for {table}: {e}"))?;
             }
-            if has_session {
+            // Re-seed only if the table was not already capturing: a pure template
+            // upgrade of an already-captured table needs no re-seed (no writes were
+            // missed), which avoids a mass re-push that loses to LWW.
+            if has_session && !was_capturing[idx] {
                 reseed_table_oplog(conn, table, now)?;
             }
         }
@@ -391,7 +408,7 @@ mod tests {
     }
 
     #[test]
-    fn version_mismatch_drops_all_and_reseeds_when_session_active() {
+    fn version_mismatch_upgrades_template_without_reseeding_captured_tables() {
         let conn = new_synced_test_db();
         ensure_capture(&conn).expect("ensure capture");
         set_session(&conn);
@@ -408,15 +425,68 @@ mod tests {
         set_session_with_capture(&conn);
 
         // Force a template-version downgrade so the next ensure performs the
-        // DROP-all-then-create upgrade and re-seeds every populated table.
+        // DROP-all-then-create upgrade.
         meta_set(&conn, "triggers_version", "0").expect("set stale version");
         ensure_capture(&conn).expect("upgrade ensure");
 
+        // Triggers are recreated from the new template...
         assert_eq!(trg_sync_count(&conn), 48);
-        assert_eq!(oplog_count_for(&conn, "collections"), 1);
-        assert_eq!(oplog_count_for(&conn, "topics"), 1);
+        // ...but tables that were ALREADY capturing are NOT re-seeded: a template
+        // upgrade must not mass-re-push already-synced rows (which would lose them
+        // all to LWW). The oplog stays empty.
+        assert_eq!(
+            oplog_count_for(&conn, "collections"),
+            0,
+            "already-captured table must not be re-seeded on a template upgrade"
+        );
+        assert_eq!(oplog_count_for(&conn, "topics"), 0);
+        // The recreated triggers still capture fresh writes.
+        conn.execute("UPDATE collections SET name='C2' WHERE id='c1'", [])
+            .expect("update");
+        assert_eq!(
+            oplog_count_for(&conn, "collections"),
+            1,
+            "upgraded triggers still capture new writes"
+        );
         let version = meta_get(&conn, "triggers_version").unwrap();
         assert_eq!(version.as_deref(), Some(TRIGGERS_VERSION));
+    }
+
+    #[test]
+    fn version_mismatch_reseeds_only_tables_whose_triggers_were_absent() {
+        let conn = new_synced_test_db();
+        ensure_capture(&conn).expect("ensure capture");
+        set_session_with_capture(&conn);
+        // Two pre-existing rows; clear the oplog so we measure only the re-seed.
+        conn.execute_batch(
+            "INSERT INTO collections(id,name,created_at,updated_at) VALUES('c1','C',1,1);\
+             INSERT INTO vec_assets(asset_id,item_id,embedding) VALUES('a1','i1',x'00010203');\
+             DELETE FROM sync_oplog;",
+        )
+        .expect("seed rows and clear oplog");
+        // Simulate vec_assets being a NEW table (no triggers yet) by dropping only
+        // its triggers, then force a template upgrade.
+        conn.execute_batch(
+            "DROP TRIGGER trg_sync_vec_assets_i;\
+             DROP TRIGGER trg_sync_vec_assets_u;\
+             DROP TRIGGER trg_sync_vec_assets_d;",
+        )
+        .expect("drop vec_assets triggers");
+        meta_set(&conn, "triggers_version", "0").expect("set stale version");
+        ensure_capture(&conn).expect("upgrade ensure");
+
+        // vec_assets had NO triggers before → re-seeded (its rows must sync).
+        assert_eq!(
+            oplog_count_for(&conn, "vec_assets"),
+            1,
+            "table whose triggers were absent is re-seeded"
+        );
+        // collections was already capturing → NOT re-seeded.
+        assert_eq!(
+            oplog_count_for(&conn, "collections"),
+            0,
+            "already-captured table is not re-seeded on a template upgrade"
+        );
     }
 
     #[test]
