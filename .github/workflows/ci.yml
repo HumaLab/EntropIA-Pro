@@ -49,7 +49,9 @@ jobs:
     needs: [detect-rust-changes]
     if: needs.detect-rust-changes.outputs.has_rs_changes == 'true'
     runs-on: windows-latest
-    timeout-minutes: 30
+    # First (cold-cache) run compiles MNN from source twice (~35min); subsequent runs
+    # hit the rust-cache below and finish in a few minutes. Wide ceiling seeds the cache.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v6
 
