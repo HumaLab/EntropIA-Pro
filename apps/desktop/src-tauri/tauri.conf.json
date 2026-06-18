@@ -59,6 +59,8 @@
   "bundle": {
     "active": true,
     "targets": "all",
+    "shortDescription": "Desktop workspace for qualitative research: audio transcription, document OCR, text analysis and RAG chat over your collections, with local and remote AI models.",
+    "longDescription": "EntropIA Pro is a desktop research workspace for document and audio collections. It transcribes audio, extracts text from documents via OCR, runs NLP analysis (entities, triples, embeddings) and offers a RAG chat over the resulting knowledge base. ML features run on local models (Python runtime, on-device OCR) as well as remote providers.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
@@ -97,7 +99,9 @@
       "resources/runtime-pack/windows-x86_64/**/*",
       "resources/runtime-pack/linux-x86_64/**/*",
       "target/release/vc-runtime/*",
-      "scripts/*"
+      "scripts/paddle_vl.py",
+      "scripts/spacy_ner.py",
+      "scripts/transcribe.py"
     ]
   }
 }
