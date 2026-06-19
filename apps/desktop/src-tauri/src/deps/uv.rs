@@ -45,6 +45,42 @@ const UV_DOWNLOAD_URL_WINDOWS_AARCH64: &str = concat!(
     "/uv-aarch64-pc-windows-msvc.zip"
 );
 
+/// Total request timeout for the uv download (read + body), generous enough for a
+/// ~15 MB zip on a slow corporate link but bounded so a dead proxy fails instead
+/// of hanging forever.
+#[cfg(any(windows, test))]
+const UV_DOWNLOAD_TIMEOUT: Duration = Duration::from_secs(120);
+/// Connect-phase timeout: a misconfigured proxy/firewall surfaces fast here.
+#[cfg(any(windows, test))]
+const UV_DOWNLOAD_CONNECT_TIMEOUT: Duration = Duration::from_secs(20);
+/// Bounded retries for the whole download+extract before giving up, mirroring the
+/// backoff precedent in `deps/mod.rs::remove_dir_all_with_retry`.
+#[cfg(any(windows, test))]
+const UV_DOWNLOAD_ATTEMPTS: u32 = 3;
+
+/// Sentinel meaning "no real hash pinned yet" — verification is skipped (with a
+/// warning) until a real digest is filled in. Keeps clean builds working while
+/// making the unpinned state explicit and grep-able.
+#[cfg(any(windows, test))]
+const UV_SHA256_UNPINNED: &str = "UNPINNED";
+
+/// Expected SHA-256 of the extracted `uv.exe` for uv 0.6.14, x86_64.
+///
+/// TODO(security): replace `UV_SHA256_UNPINNED` with the real lowercase-hex
+/// digest of `uv.exe` extracted from the official
+/// `uv-x86_64-pc-windows-msvc.zip` (uv 0.6.14). Until then verification is a
+/// no-op (see `verify_pinned_uv_sha256`).
+#[cfg(any(windows, test))]
+const EXPECTED_UV_SHA256_WINDOWS_X86_64: &str =
+    "fad4db6a8f4898abc18a8b6e403ff181be0add5bf1fc90ea91c94e8dec24703f";
+
+/// Expected SHA-256 of the extracted `uv.exe` for uv 0.6.14, aarch64.
+///
+/// TODO(security): replace with the real digest from
+/// `uv-aarch64-pc-windows-msvc.zip` (uv 0.6.14).
+#[cfg(any(windows, test))]
+const EXPECTED_UV_SHA256_WINDOWS_AARCH64: &str = UV_SHA256_UNPINNED;
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -119,6 +155,48 @@ impl WindowsUvArch {
             Self::X86_64 => UV_DOWNLOAD_URL_WINDOWS_X86_64,
             Self::Aarch64 => UV_DOWNLOAD_URL_WINDOWS_AARCH64,
         }
+    }
+
+    /// Pinned SHA-256 of the extracted `uv.exe` for this arch, or `None` while
+    /// the digest is still the `UV_SHA256_UNPINNED` placeholder.
+    #[cfg(any(windows, test))]
+    fn expected_uv_sha256(self) -> Option<&'static str> {
+        let pinned = match self {
+            Self::X86_64 => EXPECTED_UV_SHA256_WINDOWS_X86_64,
+            Self::Aarch64 => EXPECTED_UV_SHA256_WINDOWS_AARCH64,
+        };
+        (pinned != UV_SHA256_UNPINNED).then_some(pinned)
+    }
+}
+
+/// Verify a file's SHA-256 against an expected lowercase-hex digest, mirroring the
+/// runtime-pack hash check in `runtime/download.rs` (`Sha256` over the bytes,
+/// compare hex). Returns a Spanish error on mismatch or read failure.
+#[cfg(any(windows, test))]
+fn verify_pinned_uv_sha256(path: &Path, expected: Option<&str>) -> Result<(), String> {
+    let Some(expected) = expected else {
+        // No real digest pinned yet: do not block, but make the gap visible.
+        eprintln!(
+            "[deps/uv] uv.exe sin hash fijado todavía — se omite la verificación de integridad (UV_SHA256_UNPINNED)"
+        );
+        return Ok(());
+    };
+
+    use sha2::{Digest as _, Sha256};
+    let bytes = std::fs::read(path).map_err(|e| {
+        format!(
+            "Error verificando uv: no se pudo leer {}: {e}",
+            path.display()
+        )
+    })?;
+    let actual = format!("{:x}", Sha256::digest(&bytes));
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(format!(
+            "Integridad de uv comprometida: el hash SHA-256 de {} no coincide con el esperado (esperado {expected}, obtenido {actual}). Es posible que el antivirus o un proxy hayan modificado la descarga. Eliminá el archivo y volvé a intentar.",
+            path.display()
+        ))
     }
 }
 
@@ -216,6 +294,50 @@ fn bundled_uv_path(app_handle: &tauri::AppHandle) -> Option<PathBuf> {
     }
 
     None
+}
+
+/// Best-effort check: can we create files in `dir`? Bundled uv often lands under
+/// `Program Files`, which is read-only for a standard user; running from there is
+/// fine, but copying/repairing next to it is not. Returns `false` when `dir` is
+/// missing or a probe file cannot be written.
+fn dir_is_writable(dir: &Path) -> bool {
+    if !dir.is_dir() {
+        return false;
+    }
+    let probe = dir.join(".entropia-uv-write-probe.tmp");
+    match std::fs::File::create(&probe) {
+        Ok(_) => {
+            let _ = std::fs::remove_file(&probe);
+            true
+        }
+        Err(_) => false,
+    }
+}
+
+/// Self-heal a bundled uv that lives in a non-writable location (e.g. Program
+/// Files) or whose host dir we cannot write to: copy it ONCE into the writable
+/// app-data tools dir and return that path so we can run/repair from there.
+///
+/// Idempotent — if a healthy managed copy already exists it is reused. Returns
+/// `None` (caller keeps using the original bundled path) when the copy fails or
+/// when the bundled dir is already writable.
+fn self_heal_bundled_uv(bundled: &Path, app_data_dir: &Path) -> Option<PathBuf> {
+    let bundled_dir = bundled.parent()?;
+    // If we can write next to the bundled binary, there is nothing to heal.
+    if dir_is_writable(bundled_dir) {
+        return None;
+    }
+
+    let managed = uv_exe_path(app_data_dir);
+    // Reuse a previously-healed copy if it is already a valid, version-matching uv.
+    if detect_file(&managed).is_some() {
+        return Some(managed);
+    }
+
+    let managed_dir = uv_dir(app_data_dir);
+    std::fs::create_dir_all(&managed_dir).ok()?;
+    std::fs::copy(bundled, &managed).ok()?;
+    Some(normalize_windows_path(managed))
 }
 
 #[cfg(windows)]
@@ -391,6 +513,19 @@ fn detect_file(exe: &Path) -> Option<UvBinary> {
     }
 }
 
+/// Detect the bundled uv, self-healing first when its host dir is non-writable
+/// (Program Files): run from a writable app-data copy so later repair/locking is
+/// possible. Falls back to probing the original bundled path directly (covers the
+/// common case where the bundled dir is writable, or the copy was unnecessary).
+fn detect_bundled_uv_with_self_heal(bundled: &Path, app_data_dir: &Path) -> Option<UvBinary> {
+    if let Some(healed) = self_heal_bundled_uv(bundled, app_data_dir) {
+        if let Some(binary) = detect_file(&healed) {
+            return Some(binary);
+        }
+    }
+    detect_file(bundled)
+}
+
 fn inspect_file(exe: &Path) -> Option<UvInspection> {
     if !exe.is_file() {
         return None;
@@ -483,7 +618,7 @@ impl UvBinary {
     pub fn detect(app_handle: Option<&tauri::AppHandle>, app_data_dir: &Path) -> Option<UvBinary> {
         app_handle
             .and_then(bundled_uv_path)
-            .and_then(|path| detect_file(&path))
+            .and_then(|path| detect_bundled_uv_with_self_heal(&path, app_data_dir))
             .or_else(|| dev_uv_path().and_then(|path| detect_file(&path)))
             .or_else(|| detect_file(&uv_exe_path(app_data_dir)))
             .or_else(detect_on_path)
@@ -607,8 +742,6 @@ pub async fn download(
 
     #[cfg(windows)]
     {
-        use std::io::{Read as _, Write as _};
-
         let target_arch = preferred_windows_arches()
             .into_iter()
             .next()
@@ -619,100 +752,153 @@ pub async fn download(
             .await
             .map_err(|e| format!("Error creando directorio para uv: {e}"))?;
 
-        on_progress(0, "Descargando uv…");
+        let exe_path = uv_exe_path(app_data_dir);
 
-        let mut response = reqwest::get(target_arch.download_url())
-            .await
-            .map_err(|e| format!("Error descargando uv: {e}"))?;
-
-        if !response.status().is_success() {
-            return Err(format!(
-                "Error descargando uv: respuesta HTTP {}",
-                response.status()
-            ));
-        }
-
-        let content_length: Option<u64> = response.content_length();
-        let tmp_zip_path = dir.join("uv-download.zip.tmp");
-
-        {
-            let mut file = std::fs::File::create(&tmp_zip_path)
-                .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
-
-            let mut downloaded: u64 = 0;
-            let mut last_reported_pct: u8 = 0;
-
-            while let Some(chunk) = response
-                .chunk()
-                .await
-                .map_err(|e| format!("Error descargando uv: {e}"))?
-            {
-                file.write_all(&chunk)
-                    .map_err(|e| format!("Error escribiendo archivo temporal: {e}"))?;
-                downloaded += chunk.len() as u64;
-
-                if let Some(total) = content_length {
-                    let pct = ((downloaded * 100) / total).min(99) as u8;
-                    let mb_boundary = (downloaded / (1024 * 1024))
-                        != ((downloaded - chunk.len() as u64) / (1024 * 1024));
-                    if pct >= last_reported_pct + 5 || mb_boundary {
-                        last_reported_pct = pct;
-                        on_progress(pct, &format!("Descargando uv… {pct}%"));
+        // Bounded retry-with-backoff around the whole download+extract, mirroring
+        // the backoff precedent in `deps/mod.rs::remove_dir_all_with_retry`. A
+        // flaky/corporate link or a transient AV lock gets a few chances before we
+        // surface an antivirus/proxy-aware message.
+        let mut last_err = String::new();
+        for attempt in 0..UV_DOWNLOAD_ATTEMPTS {
+            match download_uv_once(target_arch, &dir, &exe_path, &on_progress).await {
+                Ok(binary) => {
+                    on_progress(100, "uv listo");
+                    return Ok(binary);
+                }
+                Err(error) => {
+                    last_err = error;
+                    let _ = std::fs::remove_file(&exe_path);
+                    if attempt + 1 < UV_DOWNLOAD_ATTEMPTS {
+                        on_progress(0, "Reintentando descarga de uv…");
+                        tokio::time::sleep(Duration::from_millis(500 * u64::from(attempt + 1)))
+                            .await;
                     }
                 }
             }
         }
 
-        on_progress(90, "Extrayendo uv…");
-
-        let exe_path = uv_exe_path(app_data_dir);
-
-        let extract_result = (|| -> Result<(), String> {
-            let zip_file = std::fs::File::open(&tmp_zip_path)
-                .map_err(|e| format!("Error abriendo ZIP: {e}"))?;
-            let mut archive =
-                zip::ZipArchive::new(zip_file).map_err(|e| format!("Error extrayendo uv: {e}"))?;
-
-            let entry_index = (0..archive.len())
-                .find(|&i| {
-                    archive
-                        .by_index(i)
-                        .map(|f| {
-                            let name = f.name().to_ascii_lowercase();
-                            name == "uv.exe" || name.ends_with("/uv.exe")
-                        })
-                        .unwrap_or(false)
-                })
-                .ok_or_else(|| "Error extrayendo uv: uv.exe no encontrado en el ZIP".to_string())?;
-
-            let mut entry = archive
-                .by_index(entry_index)
-                .map_err(|e| format!("Error extrayendo uv: {e}"))?;
-
-            let mut buf = Vec::with_capacity(entry.size() as usize);
-            entry
-                .read_to_end(&mut buf)
-                .map_err(|e| format!("Error extrayendo uv: {e}"))?;
-
-            std::fs::write(&exe_path, &buf).map_err(|e| format!("Error extrayendo uv: {e}"))?;
-
-            Ok(())
-        })();
-
-        let _ = std::fs::remove_file(&tmp_zip_path);
-
-        extract_result?;
-
-        on_progress(95, "Verificando uv…");
-
-        let binary = detect_file(&exe_path).ok_or_else(|| {
-            let _ = std::fs::remove_file(&exe_path);
-            "Versión incorrecta de uv".to_string()
-        })?;
-
-        on_progress(100, "uv listo");
-        Ok(binary)
+        Err(format!(
+            "No se pudo preparar uv tras {UV_DOWNLOAD_ATTEMPTS} intentos: {last_err}. Probá esto: \
+             (1) revisá tu conexión y, si usás un proxy corporativo, definí HTTPS_PROXY; \
+             (2) agregá una excepción de antivirus para {} y para la carpeta {}; \
+             (3) volvé a intentar la instalación.",
+            exe_path.display(),
+            dir.display()
+        ))
     }
+}
+
+/// One download+extract+verify attempt for the pinned uv. Kept separate so the
+/// public `download` can wrap it in a bounded retry loop. Builds a reqwest client
+/// with explicit timeouts; proxy env vars (`HTTPS_PROXY`/`HTTP_PROXY`/`ALL_PROXY`)
+/// are honored by reqwest's default system-proxy detection.
+#[cfg(windows)]
+async fn download_uv_once(
+    target_arch: WindowsUvArch,
+    dir: &Path,
+    exe_path: &Path,
+    on_progress: &(impl Fn(u8, &str) + Send + 'static),
+) -> Result<UvBinary, String> {
+    use std::io::{Read as _, Write as _};
+
+    on_progress(0, "Descargando uv…");
+
+    // Explicit timeouts + default system-proxy detection (honors HTTPS_PROXY).
+    let client = reqwest::Client::builder()
+        .timeout(UV_DOWNLOAD_TIMEOUT)
+        .connect_timeout(UV_DOWNLOAD_CONNECT_TIMEOUT)
+        .build()
+        .map_err(|e| format!("Error creando cliente HTTP para uv: {e}"))?;
+
+    let mut response = client
+        .get(target_arch.download_url())
+        .send()
+        .await
+        .map_err(|e| format!("Error descargando uv: {e}"))?;
+
+    if !response.status().is_success() {
+        return Err(format!(
+            "Error descargando uv: respuesta HTTP {}",
+            response.status()
+        ));
+    }
+
+    let content_length: Option<u64> = response.content_length();
+    let tmp_zip_path = dir.join("uv-download.zip.tmp");
+
+    {
+        let mut file = std::fs::File::create(&tmp_zip_path)
+            .map_err(|e| format!("Error creando archivo temporal: {e}"))?;
+
+        let mut downloaded: u64 = 0;
+        let mut last_reported_pct: u8 = 0;
+
+        while let Some(chunk) = response
+            .chunk()
+            .await
+            .map_err(|e| format!("Error descargando uv: {e}"))?
+        {
+            file.write_all(&chunk)
+                .map_err(|e| format!("Error escribiendo archivo temporal: {e}"))?;
+            downloaded += chunk.len() as u64;
+
+            if let Some(total) = content_length {
+                let pct = ((downloaded * 100) / total).min(99) as u8;
+                let mb_boundary = (downloaded / (1024 * 1024))
+                    != ((downloaded - chunk.len() as u64) / (1024 * 1024));
+                if pct >= last_reported_pct + 5 || mb_boundary {
+                    last_reported_pct = pct;
+                    on_progress(pct, &format!("Descargando uv… {pct}%"));
+                }
+            }
+        }
+    }
+
+    on_progress(90, "Extrayendo uv…");
+
+    let extract_result = (|| -> Result<(), String> {
+        let zip_file =
+            std::fs::File::open(&tmp_zip_path).map_err(|e| format!("Error abriendo ZIP: {e}"))?;
+        let mut archive =
+            zip::ZipArchive::new(zip_file).map_err(|e| format!("Error extrayendo uv: {e}"))?;
+
+        let entry_index = (0..archive.len())
+            .find(|&i| {
+                archive
+                    .by_index(i)
+                    .map(|f| {
+                        let name = f.name().to_ascii_lowercase();
+                        name == "uv.exe" || name.ends_with("/uv.exe")
+                    })
+                    .unwrap_or(false)
+            })
+            .ok_or_else(|| "Error extrayendo uv: uv.exe no encontrado en el ZIP".to_string())?;
+
+        let mut entry = archive
+            .by_index(entry_index)
+            .map_err(|e| format!("Error extrayendo uv: {e}"))?;
+
+        let mut buf = Vec::with_capacity(entry.size() as usize);
+        entry
+            .read_to_end(&mut buf)
+            .map_err(|e| format!("Error extrayendo uv: {e}"))?;
+
+        std::fs::write(exe_path, &buf).map_err(|e| format!("Error extrayendo uv: {e}"))?;
+
+        Ok(())
+    })();
+
+    let _ = std::fs::remove_file(&tmp_zip_path);
+
+    extract_result?;
+
+    on_progress(95, "Verificando uv…");
+
+    // Pin check: reject a tampered/AV-modified binary before we trust it. No-op
+    // while the digest is still the UV_SHA256_UNPINNED placeholder.
+    verify_pinned_uv_sha256(exe_path, target_arch.expected_uv_sha256())?;
+
+    detect_file(exe_path).ok_or_else(|| "Versión incorrecta de uv".to_string())
 }
 
 // ---------------------------------------------------------------------------
@@ -776,6 +962,79 @@ mod tests {
             !preferred_windows_arches().is_empty(),
             "preferred_windows_arches should always return at least one supported arch"
         );
+    }
+
+    #[test]
+    fn test_dir_is_writable_detects_real_and_missing_dirs() {
+        let dir = tempdir().expect("temp dir");
+        assert!(
+            dir_is_writable(dir.path()),
+            "a freshly created temp dir should be writable"
+        );
+        assert!(
+            !dir_is_writable(&dir.path().join("does-not-exist")),
+            "a missing dir must not be reported as writable"
+        );
+    }
+
+    #[test]
+    fn test_self_heal_is_noop_when_bundled_dir_is_writable() {
+        // When the bundled uv already lives in a writable dir there is nothing to
+        // heal — the caller keeps using the original path.
+        let bundled_dir = tempdir().expect("bundled dir");
+        let bundled = bundled_dir.path().join(UV_EXECUTABLE_NAME);
+        fs::write(&bundled, b"fake-uv").expect("write bundled uv");
+        let app_data = tempdir().expect("app data dir");
+
+        assert!(
+            self_heal_bundled_uv(&bundled, app_data.path()).is_none(),
+            "writable bundled dir must not trigger a self-heal copy"
+        );
+        assert!(
+            !uv_exe_path(app_data.path()).exists(),
+            "no managed copy should be created when self-heal is skipped"
+        );
+    }
+
+    #[test]
+    fn test_verify_pinned_uv_sha256_is_noop_when_unpinned() {
+        let dir = tempdir().expect("temp dir");
+        let exe = dir.path().join(UV_EXECUTABLE_NAME);
+        fs::write(&exe, b"anything").expect("write fake uv");
+
+        // `None` models the UV_SHA256_UNPINNED placeholder: verification is skipped.
+        assert!(verify_pinned_uv_sha256(&exe, None).is_ok());
+    }
+
+    #[test]
+    fn test_verify_pinned_uv_sha256_accepts_match_and_rejects_mismatch() {
+        use sha2::{Digest as _, Sha256};
+        let dir = tempdir().expect("temp dir");
+        let exe = dir.path().join(UV_EXECUTABLE_NAME);
+        let bytes = b"pinned-uv-bytes";
+        fs::write(&exe, bytes).expect("write fake uv");
+        let expected = format!("{:x}", Sha256::digest(bytes));
+
+        assert!(
+            verify_pinned_uv_sha256(&exe, Some(&expected)).is_ok(),
+            "matching digest must pass"
+        );
+
+        let error = verify_pinned_uv_sha256(&exe, Some("deadbeef"))
+            .expect_err("mismatched digest must fail");
+        assert!(
+            error.contains("Integridad de uv comprometida"),
+            "mismatch should surface the AV/proxy-aware Spanish message, got: {error}"
+        );
+    }
+
+    #[test]
+    fn test_expected_uv_sha256_is_none_while_placeholder_is_unpinned() {
+        // Until a real digest is filled in, both arches must report `None` so the
+        // verification step stays a documented no-op rather than rejecting good
+        // binaries. Update this test alongside the pinned constants.
+        assert_eq!(WindowsUvArch::X86_64.expected_uv_sha256(), None);
+        assert_eq!(WindowsUvArch::Aarch64.expected_uv_sha256(), None);
     }
 
     #[cfg(windows)]
