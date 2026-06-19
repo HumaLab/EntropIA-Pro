@@ -875,6 +875,7 @@ pub async fn install_package(
     dep: &DependencySpec,
     venv_python: &Path,
     wheelhouse_dir: Option<&Path>,
+    reinstall: bool,
     on_output: impl Fn(&str) + Send + Sync + 'static,
 ) -> Result<(), String> {
     if dep.id == DependencyId::Python {
@@ -898,6 +899,18 @@ pub async fn install_package(
         }
     }
 
+    // Writability precheck: surface a read-only / AV-locked install dir up front
+    // with a clear message instead of a cryptic uv failure mid-install.
+    let install_dir = venv_python.parent().unwrap_or(venv_python);
+    let write_probe = install_dir.join(".entropia-write-probe");
+    if let Err(error) = std::fs::write(&write_probe, b"") {
+        return Err(format!(
+            "No se puede escribir en la carpeta de instalación {}: {error}. Revisá permisos o una posible exclusión de antivirus.",
+            install_dir.display()
+        ));
+    }
+    let _ = std::fs::remove_file(&write_probe);
+
     let (spec, extra_index_url) = if dep.id == DependencyId::PaddlePaddle {
         resolve_paddlepaddle_install_target(wheelhouse_dir)
     } else {
@@ -910,6 +923,11 @@ pub async fn install_package(
     let mut cmd = uv.command();
     sanitize_install_subprocess_env(&mut cmd);
     cmd.arg("pip").arg("install");
+    if reinstall {
+        // Retrying after a previous failure: overwrite a half-installed/corrupted
+        // package instead of reusing it (a plain install would keep the corruption).
+        cmd.arg("--reinstall");
+    }
     // A spec may carry several space-separated packages: e.g. spaCy ships the
     // engine plus the language model, and the es_core_news_md 3.8 wheel no longer
     // declares spaCy as a dependency, so both must be installed together.
@@ -953,6 +971,7 @@ pub async fn install_package(
     .await;
 
     if let Err(error) = install_result {
+        let error = annotate_install_os_error(error);
         if requires_binary_only(uses_online_indexes) {
             return Err(format!(
                 "{error}\nEntropIA instaló con --only-binary=:all: para evitar compilar paquetes Rust/PyO3 desde fuente. Si uv no encontró una rueda compatible, instalá una versión de Python/plataforma con wheels disponibles o usá el runtime/wheelhouse administrado."
@@ -962,6 +981,24 @@ pub async fn install_package(
     }
 
     Ok(())
+}
+
+/// Map raw Windows OS error codes inside an install failure to actionable Spanish
+/// hints. Leaves the message unchanged when no known code is present.
+fn annotate_install_os_error(error: String) -> String {
+    let hint = if error.contains("os error 5") {
+        Some("Acceso denegado: agregá una exclusión de antivirus para la carpeta de datos de la app o cerrá programas que la estén bloqueando.")
+    } else if error.contains("os error 32") {
+        Some("Archivo en uso: cerrá trabajos en curso (OCR/transcripción) que estén usando el entorno y reintentá.")
+    } else if error.contains("os error 112") {
+        Some("Disco lleno: liberá espacio en el disco de la aplicación y volvé a intentar.")
+    } else {
+        None
+    };
+    match hint {
+        Some(hint) => format!("{error}\n{hint}"),
+        None => error,
+    }
 }
 
 fn sanitize_install_subprocess_env(cmd: &mut Command) {
@@ -1019,9 +1056,16 @@ async fn ensure_managed_prerequisites_installed(
         }
 
         let display_name = prerequisite.display_name;
-        install_package(uv, prerequisite, venv_python, wheelhouse_dir, move |line| {
-            eprintln!("[deps/install] [{display_name}] {line}");
-        })
+        install_package(
+            uv,
+            prerequisite,
+            venv_python,
+            wheelhouse_dir,
+            false,
+            move |line| {
+                eprintln!("[deps/install] [{display_name}] {line}");
+            },
+        )
         .await?;
 
         let post_install_status = probe_one(prerequisite, venv_python).await;
@@ -1396,6 +1440,7 @@ pub async fn install_all(
             dep,
             &venv_python,
             runtime.wheelhouse_dir().as_deref(),
+            false,
             move |line| {
                 eprintln!("[deps/install] [{display_name}] {line}");
             },
@@ -1526,6 +1571,14 @@ pub async fn install_one(
 
     let install_plan = managed_install_plan(dep);
 
+    // Force --reinstall when retrying a dep that previously failed, so a corrupted
+    // half-install is overwritten cleanly instead of reused. Read the status before
+    // we overwrite it with Installing below.
+    let reinstall_target = matches!(
+        state.0.lock().await.statuses.get(id),
+        Some(DependencyStatus::Failed { .. })
+    );
+
     // Emit Installing.
     let installing = DependencyStatus::Installing { percent: 0 };
     update_dependency_status(app, state, id, installing).await;
@@ -1559,6 +1612,7 @@ pub async fn install_one(
             planned_dep,
             &venv_python,
             runtime.wheelhouse_dir().as_deref(),
+            false,
             move |line| {
                 eprintln!("[deps/install] [{display_name}] {line}");
             },
@@ -1594,6 +1648,7 @@ pub async fn install_one(
         dep,
         &venv_python,
         runtime.wheelhouse_dir().as_deref(),
+        reinstall_target,
         move |line| {
             eprintln!("[deps/install] [{display_name}] {line}");
         },
