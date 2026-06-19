@@ -84,15 +84,17 @@ cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
 pnpm build
 ```
 
-## Runtime-pack y release
+## Runtime-pack y release (instalador liviano)
 
-El repo incluye fixtures de `runtime-pack` para que el layout sea verificable en CI sin commitear payloads pesados. Las releases reales usan **release-time artifact injection**:
+El runtime de IA (~2.2GB) es demasiado grande para empaquetarlo dentro de un instalador Windows (NSIS y WiX fallan por encima de ~2GB). Por eso EntropIA Pro usa un **instalador liviano + descarga al primer uso**: el instalador ship el fixture chico de `runtime-pack` y NO incluye el runtime pesado; la app lo descarga al primer uso desde una fuente remota firmada (ed25519) y verifica firma + sha256 antes de confiar en él.
 
-1. Ejecutar el workflow **Runtime Payload** para producir `runtime-payloads`.
-2. Ejecutar el workflow **Release** manualmente con `runtime_payload_artifact=runtime-payloads` y `runtime_payload_run_id=<run id>`.
-3. El workflow arma el runtime-pack final, corre smoke checks y recién después construye los instaladores.
+Flujo de release:
 
-Los pushes directos de tags `v*` fallan cerrado si no existe payload de runtime real. Esto evita publicar instaladores con fixtures.
+1. Ejecutar el workflow **Build Runtime Pack** para armar el runtime-pack fresco y subir el artifact `runtime-archive`.
+2. Ejecutar **Publish Runtime Bootstrap** con ese `runtime_pack_run_id`: parte el archivo bajo el límite de 2 GiB por asset de GitHub, sube las partes al tag `runtime-bootstrap` y publica un `manifest.json` firmado.
+3. Pushear el tag `v*`: el workflow **Release** construye el instalador liviano (NSIS) con la URL del manifiesto + la clave pública de la fuente **horneadas** en el binario, sin inyectar el runtime.
+
+`build.rs` falla cerrado si un build de release embebe el fixture sin una fuente de bootstrap horneada, así que es imposible publicar un instalador que no pueda descargar el runtime en una máquina limpia.
 
 ## Documentación útil
 

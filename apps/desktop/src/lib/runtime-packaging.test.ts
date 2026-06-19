@@ -129,7 +129,7 @@ describe('runtime pack packaging', () => {
     expect(ciWorkflow).toContain('src/lib/runtime-packaging.test.ts')
   })
 
-  it('documents fixture scope and release-time artifact injection boundaries', () => {
+  it('documents fixture scope and the lean download-at-launch model', () => {
     const rootReadme = readRepoFile('README.md')
     const resourcesReadme = readRepoFile('apps/desktop/src-tauri/resources/README.md')
     const maintenanceDoc = readRepoFile('apps/desktop/src-tauri/resources/runtime-pack/MAINTENANCE.md')
@@ -141,9 +141,9 @@ describe('runtime pack packaging', () => {
     )
 
     expect(rootReadme).toContain('runtime-pack')
-    expect(rootReadme).toContain('release-time artifact injection')
+    expect(rootReadme).toContain('instalador liviano')
     expect(resourcesReadme).toContain('payload_profile: fixture')
-    expect(resourcesReadme).toContain('Self-contained ahora')
+    expect(resourcesReadme).toContain('instalador liviano')
     expect(maintenanceDoc).toContain('--payload-root')
     expect(maintenanceDoc).toContain('assembly-summary.json')
     expect(maintenanceDoc).toContain('windows-x86_64')

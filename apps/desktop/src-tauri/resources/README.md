@@ -24,15 +24,15 @@ Este directorio está reservado para recursos Tauri bundleados.
 - `runtime-pack/windows-x86_64/` y `runtime-pack/linux-x86_64/` existen en repo como **fixture packs mínimos viables**.
 - Cada pack incluye `manifest.json`, launchers placeholder de Python/uv, scripts administrados, placeholders de cache, notas de wheelhouse y rutas espejo para librerías nativas.
 - `payload_profile: fixture` significa que estos packs son estructuralmente reales y bundleables, pero NO son los payloads pesados finales de release.
-- `release_injection_required: true` significa que CI/release debe reemplazar placeholders fixture por artefactos redistribuibles auditados antes de afirmar que una release es realmente self-contained.
-- **Self-contained ahora**: layout de runtime-pack, contrato de manifest, bundle globs, wiring de assembly, smoke checks y límites explícitos de ownership offline están en repo.
-- **Todavía pendiente por release-time artifact injection**: runtimes Python relocatables, wheelhouse offline para OCR/transcripción, caches HuggingFace/PaddleX presembradas y librerías compartidas Linux auditadas. Embeddings/NER livianos usan OpenRouter y no requieren `scripts/embed.py` ni spaCy.
+- `release_injection_required: true` en el fixture indica que el pack en repo NO es el runtime pesado final: la app lo obtiene en runtime, no del instalador.
+- **Modelo de distribución: instalador liviano.** El instalador ship solo el fixture; el runtime de IA (~2.2GB) se hostea aparte (tag `runtime-bootstrap`, partido bajo 2 GiB/asset + firmado ed25519) y la app lo descarga y verifica (firma + sha256) al primer uso. No se inyecta el runtime en el instalador, porque NSIS/WiX no soportan bundles >2GB.
+- **En repo ahora**: layout de runtime-pack, contrato de manifest, bundle globs del fixture, wiring de assembly, smoke checks y límites explícitos de ownership offline.
 
-### Flujo de release payload
+### Flujo de release (lean)
 
-1. Ejecutar el workflow **Runtime Payload** para preparar `runtime-payloads` desde archivos fuente auditados.
-2. Ejecutar manualmente el workflow **Release** con `runtime_payload_artifact=runtime-payloads` y `runtime_payload_run_id=<run id>`; el job `runtime-pack` inyecta ese payload, regenera manifests y corre smoke checks de release antes de iniciar builds de instaladores.
-3. Los instaladores son self-contained solo cuando el release payload es real. Las releases por push de tag fallan cerrado si no se provee runtime payload. `runtime-payloads-fixture` es solo para CI/tests y nunca debe usarse para instaladores publicables.
+1. **Build Runtime Pack** → arma el runtime-pack fresco y sube el artifact `runtime-archive`.
+2. **Publish Runtime Bootstrap** con ese `runtime_pack_run_id` → parte el archivo bajo 2 GiB/asset, sube las partes al tag `runtime-bootstrap` y publica un `manifest.json` firmado.
+3. Pushear tag `v*` → **Release** construye el instalador liviano (NSIS) con la URL del manifiesto + la clave pública horneadas en el binario. `build.rs` falla cerrado si un build de release embebe el fixture sin fuente horneada, así que nunca se publica un instalador que no pueda descargar el runtime.
 
 Ver `scripts/prepare_runtime_payload.py`, `scripts/materialize_windows_runtime_payload.py`, `scripts/build_runtime_pack.py`, `scripts/runtime-pack-smoke.py` y cada `ASSEMBLY_NOTES.md` de plataforma para el contrato de handoff de release.
 
