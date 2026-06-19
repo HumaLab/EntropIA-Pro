@@ -821,7 +821,7 @@ fn inspect_runtime(
     // detected. This catches a same-size corrupt launcher or a same-size corrupt
     // native model lib that the size check above cannot. The multi-GB wheelhouse
     // and model caches are deliberately NOT re-hashed to keep inspection bounded.
-    invalid_entries.extend(critical_entry_integrity_failures(managed_root, manifest));
+    invalid_entries.extend(critical_entry_integrity_failures(&managed_root, manifest));
 
     if invalid_entries.is_empty() {
         return Ok(healthy_status(&manifest.pack_version));
