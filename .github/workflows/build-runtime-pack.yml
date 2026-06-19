@@ -139,6 +139,31 @@ jobs:
           python apps/desktop/src-tauri/scripts/runtime-pack-smoke.py \
             --platform windows-x86_64 --root "$ASSEMBLED_DIR" --release --install-probe
 
+      - name: Archive assembled runtime pack + report size
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="${{ github.workspace }}/.runtime-build/runtime-pack-windows-x86_64.zip"
+          # Zip the assembled platform dir CONTENTS (manifest.json at archive root) using 7z (handles >2GB).
+          ( cd "$ASSEMBLED_DIR/windows-x86_64" && 7z a -tzip -mx=3 "$ARCHIVE" "./*" >/dev/null )
+          SIZE=$(stat -c%s "$ARCHIVE")
+          SHA=$(sha256sum "$ARCHIVE" | cut -d' ' -f1)
+          GB=$(awk "BEGIN{printf \"%.2f\", $SIZE/1073741824}")
+          echo "================ RUNTIME ARCHIVE ================"
+          echo "archive_size_bytes=$SIZE"
+          echo "archive_size_gb=$GB  (GitHub asset limit: 2 GiB = 2147483648 bytes)"
+          echo "fits_single_github_asset=$([ "$SIZE" -le 2147483648 ] && echo YES || echo NO_NEEDS_SPLIT)"
+          echo "archive_sha256=$SHA"
+          echo "================================================"
+
+      - name: Upload runtime archive (for hosting)
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-archive
+          path: ${{ github.workspace }}/.runtime-build/runtime-pack-windows-x86_64.zip
+          retention-days: 7
+          if-no-files-found: error
+
       - name: Upload runtime-payloads artifact
         uses: actions/upload-artifact@v4
         with:
