@@ -6,8 +6,10 @@
 ///
 /// The Python process is isolated — if it crashes, we catch it as a
 /// `Result::Err` instead of a hard abort that kills the entire app.
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
 #[cfg(windows)]
 use std::os::windows::process::CommandExt;
@@ -15,11 +17,30 @@ use std::os::windows::process::CommandExt;
 #[cfg(windows)]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
+/// Wall-clock cap for the transcription subprocess. Generous enough for a first-run
+/// model download plus transcription on a slow CPU/network, but bounded so a stalled
+/// download (flaky network, captive portal) can't wedge the worker thread forever.
+const TRANSCRIPTION_TIMEOUT_SECS: u64 = 1800;
+
 fn apply_windows_no_window(_cmd: &mut Command) {
     #[cfg(windows)]
     {
         _cmd.creation_flags(CREATE_NO_WINDOW);
     }
+}
+
+/// Read a child stdout/stderr pipe to EOF on its own thread, so polling try_wait()
+/// never deadlocks against a full pipe buffer.
+fn drain_child_pipe(mut pipe: impl Read + Send + 'static) -> Vec<u8> {
+    let mut buffer = Vec::new();
+    let _ = pipe.read_to_end(&mut buffer);
+    buffer
+}
+
+fn join_child_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
+    handle
+        .and_then(|handle| handle.join().ok())
+        .unwrap_or_default()
 }
 
 /// Configuration for the transcription engine.
@@ -131,12 +152,60 @@ impl WhisperEngine {
         cmd.stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());
 
-        let output = cmd.output().map_err(|e| {
+        // Spawn and wait with a wall-clock timeout. The pipes are drained on
+        // background threads so a chatty child (e.g. faster-whisper download
+        // progress on stderr) can't fill the ~64 KB pipe buffer and deadlock.
+        // Without this, a stalled model download on a slow/flaky network or
+        // captive portal would block cmd.output() forever and wedge the
+        // transcription worker thread, queuing every later job behind it.
+        let mut child = cmd.spawn().map_err(|e| {
             format!(
                 "Failed to spawn Python process (python={}): {e}",
                 self.config.python_path.display()
             )
         })?;
+
+        let stdout_reader = child
+            .stdout
+            .take()
+            .map(|stdout| std::thread::spawn(move || drain_child_pipe(stdout)));
+        let stderr_reader = child
+            .stderr
+            .take()
+            .map(|stderr| std::thread::spawn(move || drain_child_pipe(stderr)));
+
+        let timeout = Duration::from_secs(TRANSCRIPTION_TIMEOUT_SECS);
+        let started_at = Instant::now();
+        let output = loop {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    let _ = child.wait();
+                    break Output {
+                        status,
+                        stdout: join_child_reader(stdout_reader),
+                        stderr: join_child_reader(stderr_reader),
+                    };
+                }
+                Ok(None) if started_at.elapsed() >= timeout => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "Transcription timed out after {}s (python={}). The model download or \
+                         transcription did not finish — check your network connection and try again.",
+                        timeout.as_secs(),
+                        self.config.python_path.display()
+                    ));
+                }
+                Ok(None) => std::thread::sleep(Duration::from_millis(100)),
+                Err(e) => {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Err(format!(
+                        "Failed while waiting for transcription process: {e}"
+                    ));
+                }
+            }
+        };
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
