@@ -208,10 +208,64 @@ describe('AppShell', () => {
       },
     })
 
-    expect(await screen.findByText('Dependencias de IA pendientes')).toBeInTheDocument()
+    // Critical-missing is announced through the single persistent banner channel.
     expect(
-      screen.getByText('Se necesitan Python y paquetes para OCR/transcripción; embeddings usan OpenRouter.'),
+      await screen.findByText('⚠ Algunas funciones de IA no están disponibles.'),
     ).toBeInTheDocument()
+    expect(
+      screen.getByRole('button', { name: 'Configurar dependencias →' }),
+    ).toBeInTheDocument()
+  })
+
+  it('announces critical-missing deps through the banner only, never a coexisting toast', async () => {
+    let depsCompleteHandler:
+      | ((event: { payload: { results: Array<{ id: string; status: { type: string } }> } }) => void)
+      | undefined
+
+    listenMock.mockImplementation((eventName: string, callback: EventListenerCallback) => {
+      if (eventName === 'deps://complete') {
+        depsCompleteHandler = callback as typeof depsCompleteHandler
+      }
+
+      return Promise.resolve(vi.fn())
+    })
+
+    render(AppShellHost)
+
+    await waitFor(() => {
+      expect(invokeMock).toHaveBeenCalledWith('deps_get_cached_statuses')
+    })
+
+    depsCompleteHandler?.({
+      payload: {
+        results: [
+          { id: 'Python', status: { type: 'missing' } },
+          { id: 'Fastembed', status: { type: 'installed' } },
+          { id: 'PaddlePaddle', status: { type: 'missing' } },
+          { id: 'PaddleOcr', status: { type: 'installed' } },
+        ],
+      },
+    })
+
+    // The actionable banner is the single critical-missing channel.
+    const banner = await screen.findByText('⚠ Algunas funciones de IA no están disponibles.')
+    expect(banner).toBeInTheDocument()
+
+    // The legacy toast must NOT coexist with the banner for this state (#27):
+    // its title, body copy, and dismiss control are all gone.
+    expect(screen.queryByText('Dependencias de IA pendientes')).not.toBeInTheDocument()
+    expect(
+      screen.queryByText(
+        'Se necesitan Python y paquetes para OCR/transcripción; embeddings usan OpenRouter.',
+      ),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Cerrar' })).not.toBeInTheDocument()
+
+    // Only one alert region carries the critical-missing message — no duplicate channel.
+    const criticalAlerts = screen
+      .getAllByRole('alert')
+      .filter((el) => el.textContent?.includes('Algunas funciones de IA no están disponibles'))
+    expect(criticalAlerts).toHaveLength(1)
   })
 
   it('shows runtime health alerts when the managed runtime is damaged', async () => {

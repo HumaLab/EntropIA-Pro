@@ -115,8 +115,6 @@
   let depsResults = $state<DepCheckResult[]>([])
   let runtimeStatus = $state<RuntimeStatus | null>(null)
   let uvStatus = $state<UvStatusResult | null>(null)
-  let showToast = $state(false)
-  let toastDismissed = $state(false)
 
   const hasCriticalMissing = $derived(
     depsResults.some(
@@ -147,24 +145,13 @@
     runtimeBlocksActiveCapabilities ? (runtimeStatus?.blockedCapabilities ?? []).join(', ') : '',
   )
 
-  // Sync shared state so TopBar can show the dot
+  // Critical-missing is announced through a single persistent channel: the
+  // actionable deps banner in <main> (see template below). The TopBar badge is
+  // kept as a discreet indicator via the shared state synced here. The legacy
+  // toast was removed so banner and toast never co-exist for this state (#27).
   $effect(() => {
     setCriticalMissing(hasCriticalMissing)
   })
-
-  // Show toast once when critical deps are missing
-  $effect(() => {
-    if (hasCriticalMissing && !toastDismissed) {
-      showToast = true
-      const timer = setTimeout(() => { showToast = false }, 8000)
-      return () => clearTimeout(timer)
-    }
-  })
-
-  function dismissToast() {
-    showToast = false
-    toastDismissed = true
-  }
 
   let unlistenDepsComplete: (() => void) | undefined
   let unlistenRuntimeStatus: (() => void) | undefined
@@ -359,19 +346,6 @@
 
       {@render children()}
     </main>
-
-    <!-- Toast notification (appears once, auto-dismisses) -->
-    {#if showToast}
-      <div class="toast" role="alert">
-        <span class="toast__icon">⚠</span>
-        <div class="toast__body">
-          <span class="toast__title">Dependencias de IA pendientes</span>
-          <span class="toast__text">Se necesitan Python y paquetes para OCR/transcripción; embeddings usan OpenRouter.</span>
-        </div>
-        <button class="toast__action" onclick={goToDepSettings}>Configurar →</button>
-        <button class="toast__close" onclick={dismissToast} aria-label="Cerrar">×</button>
-      </div>
-    {/if}
   </div>
 
   <!-- Status bar -->
@@ -553,86 +527,6 @@
 
   .deps-banner__btn:hover {
     background: rgba(245, 158, 11, 0.12);
-  }
-
-  /* ── Toast notification (Pro-only local subsystem) ── */
-  .toast {
-    position: fixed;
-    bottom: 36px;
-    right: var(--space-4);
-    display: flex;
-    align-items: center;
-    gap: var(--space-2);
-    padding: var(--space-2) var(--space-3);
-    background: var(--color-surface-elevated);
-    border: 1px solid var(--color-border);
-    border-radius: 4px;
-    font-size: var(--font-size-xs);
-    color: var(--color-text-secondary);
-    z-index: 1000;
-    animation: toast-in 0.3s ease;
-  }
-
-  @keyframes toast-in {
-    from { opacity: 0; transform: translateY(8px); }
-    to { opacity: 1; transform: translateY(0); }
-  }
-
-  .toast__icon {
-    font-size: var(--font-size-sm);
-    color: var(--color-warning);
-    align-self: flex-start;
-    margin-top: 2px;
-  }
-
-  .toast__body {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 1px;
-  }
-
-  .toast__title {
-    font-weight: 600;
-    color: var(--color-text-primary);
-  }
-
-  .toast__text {
-    color: var(--color-text-muted);
-  }
-
-  .toast__action {
-    padding: 2px var(--space-2);
-    border: 1px solid var(--color-accent);
-    border-radius: 2px;
-    background: transparent;
-    color: var(--color-accent);
-    font-size: var(--font-size-xs);
-    cursor: pointer;
-    transition: background-color var(--transition-base);
-  }
-
-  .toast__action:hover {
-    background: var(--color-accent-soft);
-  }
-
-  .toast__close {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 20px;
-    height: 20px;
-    border: none;
-    border-radius: 2px;
-    background: transparent;
-    color: var(--color-text-muted);
-    font-size: 14px;
-    cursor: pointer;
-    transition: color var(--transition-base);
-  }
-
-  .toast__close:hover {
-    color: var(--color-text-primary);
   }
 
   /* ── Status bar (compact, replaces footer) ── */
