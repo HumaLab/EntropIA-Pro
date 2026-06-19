@@ -1,7 +1,7 @@
 pub mod commands;
 
 use std::path::PathBuf;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
@@ -130,12 +130,19 @@ impl GeoQueue {
                 }
             };
 
+            let mut last_nominatim: Option<Instant> = None;
             while let Some(job) = receiver.recv().await {
                 match job {
                     GeoJob::GeocodeEntity { entity_id } => {
                         match fetch_geocode_candidate(&conn, &entity_id) {
                             Ok(Some(candidate)) => {
-                                match nominatim_search(&client, &candidate.value).await {
+                                match throttled_nominatim_search(
+                                    &client,
+                                    &candidate.value,
+                                    &mut last_nominatim,
+                                )
+                                .await
+                                {
                                     Ok(Some(result)) => {
                                         let lat: f64 = match result.lat.parse() {
                                             Ok(v) => v,
@@ -201,12 +208,14 @@ impl GeoQueue {
                         let mut geocoded_count = 0usize;
                         let mut not_found_count = 0usize;
 
-                        for (i, candidate) in candidates.iter().enumerate() {
-                            if i > 0 {
-                                tokio::time::sleep(Duration::from_millis(1100)).await;
-                            }
-
-                            match nominatim_search(&client, &candidate.value).await {
+                        for candidate in candidates.iter() {
+                            match throttled_nominatim_search(
+                                &client,
+                                &candidate.value,
+                                &mut last_nominatim,
+                            )
+                            .await
+                            {
                                 Ok(Some(result)) => {
                                     let lat: f64 = match result.lat.parse() {
                                         Ok(v) => v,
@@ -281,6 +290,37 @@ impl GeoQueue {
 // ---------------------------------------------------------------------------
 // Geocoding logic
 // ---------------------------------------------------------------------------
+
+/// Minimum spacing between Nominatim requests (their usage policy is 1 req/s).
+const NOMINATIM_MIN_INTERVAL: Duration = Duration::from_millis(1100);
+
+/// Delay to wait before the next Nominatim request: `min_interval` minus the time
+/// already elapsed since the last request, clamped to zero. Pure, testable core of
+/// the global throttle (#22).
+fn throttle_delay(last: Option<Instant>, now: Instant, min_interval: Duration) -> Duration {
+    match last {
+        Some(last) => min_interval.saturating_sub(now.duration_since(last)),
+        None => Duration::ZERO,
+    }
+}
+
+/// Calls `nominatim_search` after honouring the global 1 req/s throttle, then
+/// records the request time. Routing single + batch geocoding through one shared
+/// `last_request` clock spaces single calls, the first of a batch, AND cross-job
+/// bursts (#22).
+async fn throttled_nominatim_search(
+    client: &reqwest::Client,
+    query: &str,
+    last_request: &mut Option<Instant>,
+) -> Result<Option<NominatimResult>, String> {
+    let delay = throttle_delay(*last_request, Instant::now(), NOMINATIM_MIN_INTERVAL);
+    if !delay.is_zero() {
+        tokio::time::sleep(delay).await;
+    }
+    let result = nominatim_search(client, query).await;
+    *last_request = Some(Instant::now());
+    result
+}
 
 async fn nominatim_search(
     client: &reqwest::Client,
@@ -365,4 +405,27 @@ pub fn enqueue_geocoding_for_item(geo_queue: &GeoQueue, item_id: &str) -> Result
     geo_queue.submit(GeoJob::GeocodeItemEntities {
         item_id: item_id.to_string(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::throttle_delay;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn throttle_delay_waits_remaining_interval_and_clamps_to_zero() {
+        let min = Duration::from_millis(1100);
+        let now = Instant::now();
+        // No prior request -> no wait (#22).
+        assert_eq!(throttle_delay(None, now, min), Duration::ZERO);
+        // 400ms since the last request -> wait the remaining 700ms.
+        let recent = now - Duration::from_millis(400);
+        assert_eq!(
+            throttle_delay(Some(recent), now, min),
+            Duration::from_millis(700)
+        );
+        // More than the interval elapsed -> no wait.
+        let stale = now - Duration::from_millis(2000);
+        assert_eq!(throttle_delay(Some(stale), now, min), Duration::ZERO);
+    }
 }
