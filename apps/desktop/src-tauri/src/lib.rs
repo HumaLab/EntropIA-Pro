@@ -123,25 +123,69 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .setup(|app| {
-            let app_dir = app
-                .path()
-                .app_data_dir()
-                .expect("Failed to get app data dir");
-            migrate_legacy_app_dir(&app_dir).expect("Failed to migrate legacy app data dir");
-            std::fs::create_dir_all(&app_dir).expect("Failed to create app data dir");
+            use tauri_plugin_dialog::{DialogExt, MessageDialogKind};
+            // On a clean/varied Windows PC the data dir or DB can be unreachable
+            // (redirected/roaming AppData, read-only or full disk, AV locking the
+            // freshly-created folder). SetErrorMode above suppresses the OS crash
+            // dialog, so a panic here would vanish silently. Instead, write a
+            // diagnostic file to TEMP, show a clear error dialog, and exit cleanly.
+            let dialog_handle = app.handle().clone();
+            let fail = move |context: &str, detail: String| -> Box<dyn std::error::Error> {
+                let log_path = std::env::temp_dir().join("entropia-pro-startup-error.log");
+                let _ = std::fs::write(&log_path, format!("{context}\n{detail}\n"));
+                eprintln!("EntropIA Pro startup error: {context}: {detail}");
+                dialog_handle
+                    .dialog()
+                    .message(format!(
+                        "EntropIA Pro no pudo iniciar.\n\n{context}\n\nDetalle técnico: {detail}\n\nRevisá permisos y espacio libre en la carpeta de datos de la aplicación, y volvé a intentar.\nDiagnóstico guardado en: {}",
+                        log_path.display()
+                    ))
+                    .title("Error al iniciar EntropIA Pro")
+                    .kind(MessageDialogKind::Error)
+                    .blocking_show();
+                detail.into()
+            };
+
+            let app_dir = app.path().app_data_dir().map_err(|e| {
+                fail(
+                    "No se pudo resolver la carpeta de datos (AppData).",
+                    e.to_string(),
+                )
+            })?;
+            migrate_legacy_app_dir(&app_dir)
+                .map_err(|e| fail("No se pudo preparar la carpeta de datos heredada.", e))?;
+            std::fs::create_dir_all(&app_dir).map_err(|e| {
+                fail(
+                    &format!("No se pudo crear la carpeta de datos {}.", app_dir.display()),
+                    e.to_string(),
+                )
+            })?;
             app.manage(app_logs::AppLogsState::new(app_dir.join("logs")));
             app_logs::info(&app.handle().clone(), "setup", "Registro de diagnóstico inicializado");
             let db_path = app_dir.join("entropia.sqlite");
 
-migrate_legacy_asset_paths(&db_path, &app_dir)
-                .expect("Failed to migrate legacy asset paths in database");
+            migrate_legacy_asset_paths(&db_path, &app_dir).map_err(|e| {
+                fail(
+                    "No se pudieron migrar rutas heredadas en la base de datos.",
+                    e,
+                )
+            })?;
 
             // UI connection — used by Tauri IPC commands
-            let ui_conn =
-                rusqlite::Connection::open(&db_path).expect("Failed to open SQLite database (ui)");
+            let ui_conn = rusqlite::Connection::open(&db_path).map_err(|e| {
+                fail(
+                    &format!("No se pudo abrir la base de datos {}.", db_path.display()),
+                    e.to_string(),
+                )
+            })?;
             ui_conn
                 .execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
-                .expect("Failed to configure SQLite pragmas (ui)");
+                .map_err(|e| {
+                    fail(
+                        "No se pudieron configurar los PRAGMA de SQLite.",
+                        e.to_string(),
+                    )
+                })?;
 
             // Normalize legacy duplicates and enforce one-row-per-asset semantics
             // for extractions/transcriptions so Rust workers can use real UPSERT.
