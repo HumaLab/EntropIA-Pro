@@ -21,6 +21,8 @@
     shouldShowRuntimeRepairAction,
     type RuntimeStatus,
   } from '$lib/runtime'
+  import { LOCAL_ML } from '$lib/capabilities'
+  import { GITHUB_REPO_URL, PRODUCT_NAME_BADGE } from '$lib/product'
   import { ActionIcon, IconButton, StatusBadge } from '@entropia/ui'
   import DocumentExplorer from './DocumentExplorer.svelte'
   import TopBar from './TopBar.svelte'
@@ -30,7 +32,6 @@
   import type { Snippet } from 'svelte'
 
   const HLAB_URL = 'https://hlab.com.ar/'
-  const GITHUB_REPO_URL = 'https://github.com/HumaLab/EntropIA-Pro'
 
   let { children }: { children: Snippet } = $props()
   const currentLocale = locale
@@ -158,6 +159,11 @@
 
   onMount(async () => {
     document.addEventListener('keydown', handleKeydown)
+
+    // The local dependency manager and managed runtime only exist in the
+    // local-ML (Pro) build. Skip the dead deps/runtime wiring under the
+    // API-only variant — the kept-stubs return inert values anyway.
+    if (!LOCAL_ML) return
 
     unlistenDepsComplete = await onDepsComplete((event) => {
       depsResults = event.results ?? []
@@ -310,38 +316,40 @@
     </aside>
 
     <main class="content">
-      {#if runtimeBlocksActiveCapabilities}
-        <div class="deps-banner" role="alert">
-          <div class="deps-banner__copy">
-            <strong>{runtimeStatus?.summary}</strong>
-            {#if runtimeStatus?.state === 'fixture'}
-              <span>
-                La app no se cayó: estás viendo un runtime-pack de desarrollo que todavía requiere
-                payloads externos para habilitar OCR, NLP y transcripción.
-              </span>
-            {/if}
-            {#if blockedRuntimeCapabilities}
-              <span>Capacidades afectadas: {blockedRuntimeCapabilities}</span>
-            {/if}
-            {#if runtimeStatus?.guidance?.length}
-              <span>{runtimeStatus.guidance[0]}</span>
+      {#if LOCAL_ML}
+        {#if runtimeBlocksActiveCapabilities}
+          <div class="deps-banner" role="alert">
+            <div class="deps-banner__copy">
+              <strong>{runtimeStatus?.summary}</strong>
+              {#if runtimeStatus?.state === 'fixture'}
+                <span>
+                  La app no se cayó: estás viendo un runtime-pack de desarrollo que todavía requiere
+                  payloads externos para habilitar OCR, NLP y transcripción.
+                </span>
+              {/if}
+              {#if blockedRuntimeCapabilities}
+                <span>Capacidades afectadas: {blockedRuntimeCapabilities}</span>
+              {/if}
+              {#if runtimeStatus?.guidance?.length}
+                <span>{runtimeStatus.guidance[0]}</span>
+              {/if}
+            </div>
+            {#if shouldShowRuntimeRepairAction(runtimeStatus)}
+              <button class="deps-banner__btn" type="button" onclick={handleRuntimeRepair}
+                >Reparar runtime →</button
+              >
             {/if}
           </div>
-          {#if shouldShowRuntimeRepairAction(runtimeStatus)}
-            <button class="deps-banner__btn" type="button" onclick={handleRuntimeRepair}
-              >Reparar runtime →</button
-            >
-          {/if}
-        </div>
-      {/if}
+        {/if}
 
-      {#if criticalDepsStatusKnown && hasCriticalMissing}
-        <div class="deps-banner" role="alert">
-          <span>⚠ Algunas funciones de IA no están disponibles.</span>
-          <button class="deps-banner__btn" type="button" onclick={goToDepSettings}
-            >Configurar dependencias →</button
-          >
-        </div>
+        {#if criticalDepsStatusKnown && hasCriticalMissing}
+          <div class="deps-banner" role="alert">
+            <span>⚠ Algunas funciones de IA no están disponibles.</span>
+            <button class="deps-banner__btn" type="button" onclick={goToDepSettings}
+              >Configurar dependencias →</button
+            >
+          </div>
+        {/if}
       {/if}
 
       {@render children()}
@@ -352,7 +360,7 @@
   {#key activeLocale}
     <footer class="statusbar" data-locale={activeLocale}>
       <div class="statusbar__left">
-        <StatusBadge variant="neutral" size="sm" class="statusbar__badge">EntropIA Pro β</StatusBadge>
+        <StatusBadge variant="neutral" size="sm" class="statusbar__badge">{PRODUCT_NAME_BADGE}</StatusBadge>
         <span class="statusbar__sep">·</span>
         <span>{t('appshell.caption')}</span>
       </div>

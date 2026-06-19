@@ -5,6 +5,8 @@
   import { getStore } from '$lib/db'
   import { locale, t } from '$lib/i18n'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
+  import { LOCAL_ML } from '$lib/capabilities'
+  import { PRODUCT_NAME } from '$lib/product'
   import { ActionIcon, Button, IconButton, StatusBadge } from '@entropia/ui'
   import type { Collection, Item } from '@entropia/store'
 
@@ -317,7 +319,7 @@
           >{$currentLocale && t('topbar.back')}</Button
         >
       {:else}
-        <span class="topbar__app-title" data-tauri-drag-region>EntropIA Pro</span>
+        <span class="topbar__app-title" data-tauri-drag-region>{PRODUCT_NAME}</span>
       {/if}
     </div>
     <nav class="breadcrumb" aria-label={$currentLocale && t('topbar.breadcrumb')} data-tauri-drag-region>
@@ -438,7 +440,7 @@
   </div>
 
   <div class="topbar__actions">
-    {#if hasDepsWarning}
+    {#if LOCAL_ML && hasDepsWarning}
       <StatusBadge
         variant="warning"
         size="sm"
@@ -490,7 +492,7 @@
       title={settingsTitle}
     >
       <ActionIcon name="settings" size={16} />
-      {#if hasDepsWarning}
+      {#if LOCAL_ML && hasDepsWarning}
         <span class="topbar__badge" aria-label="Dependencias pendientes"></span>
       {/if}
     </IconButton>

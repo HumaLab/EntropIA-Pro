@@ -1,6 +1,12 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+// API-only (lite) variant: there is no managed local runtime. AppShell
+// static-imports this module, so it stays importable and every consumed symbol
+// stays exported — the local-only ones flip inert under OFF (healthy-shaped
+// status, no-op listeners, false predicates). Inline compare so it tree-shakes.
+const OFF = import.meta.env.VITE_LOCAL_ML !== '1'
+
 export type RuntimeState =
   | 'healthy'
   | 'repairing'
@@ -74,7 +80,22 @@ export interface RuntimeStatus {
   activeOperation: RuntimeOperation | null
 }
 
+const HEALTHY_RUNTIME_STATUS: RuntimeStatus = {
+  state: 'healthy',
+  packVersion: null,
+  repairNeeded: false,
+  repairAvailable: false,
+  summary: '',
+  blockedCapabilities: [],
+  details: [],
+  guidance: [],
+  bootstrapEligible: false,
+  bootstrapRequired: false,
+  activeOperation: null,
+}
+
 export function getRuntimeStatus(): Promise<RuntimeStatus> {
+  if (OFF) return Promise.resolve({ ...HEALTHY_RUNTIME_STATUS })
   return invoke<RuntimeStatus>('runtime_get_status')
 }
 
@@ -83,20 +104,24 @@ export function getRuntimeBootstrapPlan(): Promise<RuntimeBootstrapPlan> {
 }
 
 export function repairRuntime(): Promise<RuntimeStatus> {
+  if (OFF) return Promise.resolve({ ...HEALTHY_RUNTIME_STATUS })
   return invoke<RuntimeStatus>('runtime_repair')
 }
 
 export function onRuntimeStatus(callback: (status: RuntimeStatus) => void): Promise<UnlistenFn> {
+  if (OFF) return Promise.resolve((() => {}) as UnlistenFn)
   return listen<RuntimeStatus>('runtime://status', (event) => callback(event.payload))
 }
 
 export function onRuntimeProgress(
   callback: (operation: RuntimeOperation) => void,
 ): Promise<UnlistenFn> {
+  if (OFF) return Promise.resolve((() => {}) as UnlistenFn)
   return listen<RuntimeOperation>('runtime://progress', (event) => callback(event.payload))
 }
 
 export function runtimeNeedsAttention(status: RuntimeStatus | null | undefined): boolean {
+  if (OFF) return false
   return (
     status != null &&
     [
@@ -119,6 +144,7 @@ export function runtimeBlocksCurrentUse(
   localDepsReady: boolean,
   devFallbackAvailable = false,
 ): boolean {
+  if (OFF) return false
   if (status?.state === 'fixture' && localDepsReady) return false
   if (
     localDepsReady &&
@@ -131,6 +157,7 @@ export function runtimeBlocksCurrentUse(
 }
 
 export function shouldShowRuntimeRepairAction(status: RuntimeStatus | null | undefined): boolean {
+  if (OFF) return false
   return (
     status?.repairAvailable === true &&
     status.state !== 'repairing' &&
@@ -144,5 +171,6 @@ export function shouldShowRuntimeRepairAction(status: RuntimeStatus | null | und
 export function runtimeCanBootstrapAutomatically(
   status: RuntimeStatus | null | undefined,
 ): boolean {
+  if (OFF) return false
   return Boolean(status?.bootstrapEligible && status.state !== 'healthy')
 }

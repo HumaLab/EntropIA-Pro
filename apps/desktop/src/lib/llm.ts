@@ -7,6 +7,11 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+// This module stays LIVE in BOTH variants — ItemView statically needs LlmStore,
+// the llm* invoke wrappers and llmIsAvailable (they hit the unified backend).
+// Only the local-model/download surface flips inert under the API-only variant.
+const OFF = import.meta.env.VITE_LOCAL_ML !== '1'
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
@@ -267,11 +272,24 @@ export interface LocalModelInfo {
 
 /** Query whether the local model file exists, its resolved path, and size. */
 export function llmLocalModelInfo(): Promise<LocalModelInfo> {
+  if (OFF) {
+    return Promise.resolve({
+      exists: false,
+      available: false,
+      can_auto_download: false,
+      disabled_reason: 'API-only build',
+      path: '',
+      size_bytes: null,
+      filename: '',
+      source_url: '',
+    })
+  }
   return invoke<LocalModelInfo>('llm_local_model_info')
 }
 
 /** Open the models directory in the system file manager. */
 export function llmOpenModelsDir(): Promise<void> {
+  if (OFF) return Promise.resolve()
   return invoke<void>('llm_open_models_dir')
 }
 
@@ -295,5 +313,6 @@ export interface LlmDownloadErrorPayload {
 
 /** Start downloading the local model from the configured source URL. */
 export function llmDownloadModel(): Promise<string> {
+  if (OFF) return Promise.resolve('')
   return invoke<string>('llm_download_model')
 }

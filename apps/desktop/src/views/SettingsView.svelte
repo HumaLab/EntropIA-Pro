@@ -89,11 +89,17 @@
     type EmbeddingDownloadErrorPayload,
   } from '$lib/embeddings'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
+  import { LOCAL_ML } from '$lib/capabilities'
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import { ActionIcon, Button, Card, ConfirmDialog, Input, TabButton, TabList } from '@entropia/ui'
-  import DependenciasTab from './DependenciasTab.svelte'
   import LogsTab from './LogsTab.svelte'
   import SyncSettingsCard from './SyncSettingsCard.svelte'
+
+  // DependenciasTab is genuinely Pro-only — its static import graph (deps /
+  // runtime / llm / embeddings local-model surface) is heavy and must NOT enter
+  // the API-only bundle. Load it lazily behind the compile-time LOCAL_ML literal
+  // so Vite drops the dynamic import() entirely under OFF.
+  let DependenciasTab = $state<typeof import('./DependenciasTab.svelte')['default'] | null>(null)
 
   // Tab state — auto-open deps tab if critical deps are missing (Pro-only behaviour).
   let hasDepsWarning = $state(isCriticalMissing())
@@ -346,6 +352,14 @@
   onMount(() => {
     void loadInitialSettings()
     void registerDownloadListeners()
+    // Lazy-load the Pro-only DependenciasTab. The `if (LOCAL_ML)` body is dead
+    // code under the API-only build (LOCAL_ML folds to false), so the dynamic
+    // import() — and DependenciasTab's whole transitive graph — is dropped.
+    if (LOCAL_ML) {
+      void import('./DependenciasTab.svelte').then((m) => {
+        DependenciasTab = m.default
+      })
+    }
     // Escape must not silently discard unsaved edits: when dirty, ask for
     // confirmation instead of navigating back.
     return registerEscapeInterceptor(() => {
@@ -465,6 +479,8 @@
 
   async function registerDownloadListeners() {
     // Listen to local model download events (Pro-only local inference wiring).
+    // These events never fire under the API-only build — skip the dead listeners.
+    if (!LOCAL_ML) return
     downloadUnlisteners.push(
       await listen<LlmDownloadProgressPayload>('llm:download_progress', (event) => {
         downloading = true
@@ -1004,9 +1020,11 @@
       <TabButton active={activeTab === 'sync'} onclick={() => (activeTab = 'sync')}>
         {t('settings.syncTab')}
       </TabButton>
-      <TabButton active={activeTab === 'dependencias'} onclick={() => (activeTab = 'dependencias')}>
-        {t('settings.dependenciesTab')}{#if hasDepsWarning}<span class="settings-tab__badge"></span>{/if}
-      </TabButton>
+      {#if LOCAL_ML}
+        <TabButton active={activeTab === 'dependencias'} onclick={() => (activeTab = 'dependencias')}>
+          {t('settings.dependenciesTab')}{#if hasDepsWarning}<span class="settings-tab__badge"></span>{/if}
+        </TabButton>
+      {/if}
       <TabButton active={activeTab === 'logs'} onclick={() => (activeTab = 'logs')}>
         {t('settings.logsTab')}
       </TabButton>
@@ -1062,22 +1080,24 @@
         </div>
 
         <div class="settings__mode-options">
-          <label class="settings__radio" class:active={llmMode === 'local'}>
-            <input type="radio" name="llm_mode" value="local" bind:group={llmMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.llmMode.local.label')}</strong>
-              <span class="settings__radio-desc">
-                {t('settings.llmMode.local.description')}
-                {#if localModel?.exists}
-                  <span class="settings__badge settings__badge--ok">{t('settings.badge.available')}</span>
-                {:else if localModel?.can_auto_download || localAvailable}
-                  <span class="settings__badge settings__badge--warn">{t('settings.badge.downloadable')}</span>
-                {:else}
-                  <span class="settings__badge settings__badge--warn">{t('settings.badge.notFound')}</span>
-                {/if}
-              </span>
-            </div>
-          </label>
+          {#if LOCAL_ML}
+            <label class="settings__radio" class:active={llmMode === 'local'}>
+              <input type="radio" name="llm_mode" value="local" bind:group={llmMode} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.llmMode.local.label')}</strong>
+                <span class="settings__radio-desc">
+                  {t('settings.llmMode.local.description')}
+                  {#if localModel?.exists}
+                    <span class="settings__badge settings__badge--ok">{t('settings.badge.available')}</span>
+                  {:else if localModel?.can_auto_download || localAvailable}
+                    <span class="settings__badge settings__badge--warn">{t('settings.badge.downloadable')}</span>
+                  {:else}
+                    <span class="settings__badge settings__badge--warn">{t('settings.badge.notFound')}</span>
+                  {/if}
+                </span>
+              </div>
+            </label>
+          {/if}
 
           <label class="settings__radio" class:active={llmMode === 'openrouter'}>
             <input type="radio" name="llm_mode" value="openrouter" bind:group={llmMode} />
@@ -1098,6 +1118,7 @@
       </section>
     </Card>
 
+    {#if LOCAL_ML}
     <Card>
       <section class="settings-card-section">
         <div class="settings-card-section__copy">
@@ -1182,6 +1203,7 @@
         {/if}
       </section>
     </Card>
+    {/if}
 
     <Card>
       <section class="settings-card-section">
@@ -1199,16 +1221,18 @@
             </div>
           </label>
 
-          <label class="settings__radio" class:active={embeddingProvider === 'local'}>
-            <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.embeddingProvider.local.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.embeddingProvider.local.description')}</span>
-            </div>
-          </label>
+          {#if LOCAL_ML}
+            <label class="settings__radio" class:active={embeddingProvider === 'local'}>
+              <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.embeddingProvider.local.label')}</strong>
+                <span class="settings__radio-desc">{t('settings.embeddingProvider.local.description')}</span>
+              </div>
+            </label>
+          {/if}
         </div>
 
-        {#if embeddingProvider === 'local'}
+        {#if LOCAL_ML && embeddingProvider === 'local'}
           <div class="settings__field settings__field--stacked">
             <label class="settings__label" for="local-embedding-model-dir">
               {t('settings.embeddingProvider.localPath')}
@@ -1760,7 +1784,9 @@
       </Card>
 
     {:else if activeTab === 'dependencias'}
-      <DependenciasTab />
+      {#if LOCAL_ML && DependenciasTab}
+        <DependenciasTab />
+      {/if}
 
     {:else if activeTab === 'sync'}
       <SyncSettingsCard />

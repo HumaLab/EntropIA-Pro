@@ -6,6 +6,13 @@
 import { invoke } from '@tauri-apps/api/core'
 import { listen, type UnlistenFn } from '@tauri-apps/api/event'
 
+// In the API-only (lite) variant, the local dependency manager does not exist.
+// This module stays statically importable (TopBar/AppShell/SettingsView pull it
+// at module-load regardless of `{#if LOCAL_ML}` template guards), so every
+// consumed symbol is kept exported; the local-only ones flip inert under OFF.
+// The comparison is inline so the define()'d literal constant-folds.
+const OFF = import.meta.env.VITE_LOCAL_ML !== '1'
+
 // ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
@@ -74,10 +81,12 @@ function normalizeDepResults(results: DepCheckResult[] | null | undefined): DepC
 // ---------------------------------------------------------------------------
 
 export function checkAllDeps(): Promise<DepCheckResult[]> {
+  if (OFF) return Promise.resolve([])
   return invoke<DepCheckResult[]>('deps_check_all').then(normalizeDepResults)
 }
 
 export function getCachedDepsStatuses(): Promise<DepCheckResult[]> {
+  if (OFF) return Promise.resolve([])
   return invoke<DepCheckResult[]>('deps_get_cached_statuses').then(normalizeDepResults)
 }
 
@@ -90,6 +99,22 @@ export function installOneDep(id: DependencyId): Promise<DepCheckResult> {
 }
 
 export function getUvStatus(): Promise<UvStatusResult> {
+  if (OFF) {
+    return Promise.resolve({
+      uv_ready: false,
+      uv_path: null,
+      uv_version: null,
+      uv_source: null,
+      uv_compatible_for_dev: false,
+      venv_exists: false,
+      venv_path: null,
+      uv_warning: null,
+      release_runtime_ready: false,
+      release_runtime_state: null,
+      dev_fallback_available: false,
+      dev_fallback_reason: null,
+    })
+  }
   return invoke<UvStatusResult>('deps_get_uv_status')
 }
 
@@ -111,7 +136,7 @@ export const DEP_DISPLAY_NAMES: Record<DependencyId, string> = {
   SpacyModelEs: 'Modelo spaCy español',
 }
 
-export const CRITICAL_DEPS: DependencyId[] = ['Python', 'PaddlePaddle', 'PaddleOcr']
+export const CRITICAL_DEPS: DependencyId[] = OFF ? [] : ['Python', 'PaddlePaddle', 'PaddleOcr']
 
 export const DEP_DESCRIPTIONS: Record<DependencyId, string> = {
   Python: 'Intérprete Python requerido para todas las funciones de IA',
@@ -147,15 +172,18 @@ let _criticalMissing = false
 const _listeners = new Set<(value: boolean) => void>()
 
 export function setCriticalMissing(value: boolean) {
+  if (OFF) return
   _criticalMissing = value
   _listeners.forEach((fn) => fn(value))
 }
 
 export function isCriticalMissing(): boolean {
+  if (OFF) return false
   return _criticalMissing
 }
 
 export function onCriticalMissingChange(fn: (value: boolean) => void): () => void {
+  if (OFF) return () => {}
   _listeners.add(fn)
   return () => _listeners.delete(fn)
 }

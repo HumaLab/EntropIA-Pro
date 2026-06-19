@@ -134,10 +134,16 @@ export type OcrhMode = 'local' | 'glm_ocr' | 'auto'
 
 export const DEFAULT_OPENROUTER_MODEL = 'google/gemma-4-26b-a4b-it'
 export const DEFAULT_OPENROUTER_EMBEDDING_MODEL = 'baai/bge-m3'
-export const DEFAULT_LLM_MODE: LlmMode = 'local'
-export const DEFAULT_EMBEDDING_PROVIDER: EmbeddingProvider = 'local'
-export const DEFAULT_STT_MODE: SttMode = 'local'
-export const DEFAULT_OCRH_MODE: OcrhMode = 'local'
+
+// Default operating modes flip with the build variant. The Pro (local-ML) build
+// lands on the local engines; the API-only build lands on the remote providers
+// (the exact values a fresh lite install ships). Inline compare so the
+// define()'d VITE_LOCAL_ML literal tree-shakes the dead arm per build.
+const _pro = import.meta.env.VITE_LOCAL_ML === '1'
+export const DEFAULT_LLM_MODE: LlmMode = _pro ? 'local' : 'openrouter'
+export const DEFAULT_EMBEDDING_PROVIDER: EmbeddingProvider = _pro ? 'local' : 'api'
+export const DEFAULT_STT_MODE: SttMode = _pro ? 'local' : 'assemblyai'
+export const DEFAULT_OCRH_MODE: OcrhMode = _pro ? 'local' : 'glm_ocr'
 
 export const DEFAULT_PROMPTS = {
   ocrCorrectionPrompt: `Usa la imagen adjunta como referencia principal y el OCR como borrador inicial. Corrige errores, verifica coincidencia con la imagen y completa texto omitido si es claramente visible. Conserva idioma y estructura. No inventes contenido no visible. Devuelve sólo el texto final corregido.
