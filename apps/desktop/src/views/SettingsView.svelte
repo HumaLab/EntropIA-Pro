@@ -2090,10 +2090,10 @@
     display: block;
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
-    color: color-mix(in srgb, var(--color-text-secondary) 86%, white 14%);
+    color: var(--color-text-muted);
     margin-bottom: var(--space-1);
     text-transform: uppercase;
-    letter-spacing: 0.08em;
+    letter-spacing: 0.075em;
   }
 
   .settings__input-row {
@@ -2108,7 +2108,7 @@
     min-height: var(--control-height-md);
     padding: 0 var(--space-3);
     border: 1px solid color-mix(in srgb, var(--color-hairline) 78%, transparent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-input);
     background: color-mix(in srgb, var(--color-surface-glass) 78%, transparent);
     color: var(--color-text-primary);
     font-family: var(--font-mono, monospace);
@@ -2134,7 +2134,7 @@
     width: var(--control-height-md);
     height: var(--control-height-md);
     border: 1px solid color-mix(in srgb, var(--color-hairline) 78%, transparent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-control);
     background: color-mix(in srgb, var(--color-surface-glass) 78%, transparent);
     color: var(--color-text-secondary);
     cursor: pointer;
@@ -2196,7 +2196,7 @@
     margin: 0;
     padding: var(--space-3);
     border: 1px solid color-mix(in srgb, var(--color-warning) 35%, transparent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-surface);
     background: color-mix(in srgb, var(--color-warning) 10%, var(--color-surface-glass));
   }
 
@@ -2204,7 +2204,7 @@
     max-height: 240px;
     overflow-y: auto;
     border: 1px solid color-mix(in srgb, var(--color-hairline) 78%, transparent);
-    border-radius: var(--radius-md);
+    border-radius: var(--radius-surface);
     background: color-mix(in srgb, var(--color-surface-glass) 72%, transparent);
   }
 
