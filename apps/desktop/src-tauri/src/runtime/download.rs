@@ -99,11 +99,11 @@ pub fn download_and_activate_remote_runtime_with_fetch<F, R>(
     release: &BootstrapReleaseManifest,
     app_data_dir: &Path,
     public_key_base64: &str,
-    fetch_archive: F,
+    mut fetch_archive: F,
     on_progress: &mut (impl FnMut(RuntimeOperation) + ?Sized),
 ) -> Result<BootstrapDownloadOutcome, String>
 where
-    F: FnOnce(&str) -> Result<R, String>,
+    F: FnMut(&str) -> Result<R, String>,
     R: Read,
 {
     release.verify_signature(public_key_base64)?;
@@ -138,7 +138,6 @@ where
         true,
     );
 
-    let mut archive_reader = fetch_archive(&release.archive_url)?;
     let tmp_archive_path = paths.archive_path.with_extension("download.tmp");
     let mut archive_file = fs::File::create(&tmp_archive_path).map_err(|error| {
         format!(
@@ -151,33 +150,45 @@ where
     let mut buffer = vec![0u8; DEFAULT_DOWNLOAD_CHUNK_SIZE];
     let mut last_reported_progress = 0u8;
 
-    loop {
-        let read = archive_reader
-            .read(&mut buffer)
-            .map_err(|error| format!("Failed while reading remote runtime archive: {error}"))?;
-        if read == 0 {
-            break;
-        }
-        archive_file
-            .write_all(&buffer[..read])
-            .map_err(|error| format!("Failed while writing runtime archive: {error}"))?;
-        hasher.update(&buffer[..read]);
-        downloaded_bytes += read as u64;
+    // Part 1 is `archive_url`; any `additional_part_urls` are parts 2..N. They are
+    // fetched and concatenated in order, so the running hash/size cover the whole
+    // archive regardless of how many parts the host had to split it into (e.g. to
+    // stay under GitHub's 2 GiB per-asset limit). A single part behaves exactly as
+    // the original single-archive download.
+    let part_urls: Vec<&str> = std::iter::once(release.archive_url.as_str())
+        .chain(release.additional_part_urls.iter().map(String::as_str))
+        .collect();
 
-        let progress = progress_percent(downloaded_bytes, release.archive_size).unwrap_or(99);
-        if progress >= last_reported_progress.saturating_add(5)
-            || downloaded_bytes == release.archive_size
-        {
-            last_reported_progress = progress;
-            emit_progress(
-                on_progress,
-                RuntimeOperationStage::Downloading,
-                "Descargando runtime remoto confiable",
-                Some(progress.min(99)),
-                Some(downloaded_bytes),
-                Some(release.archive_size),
-                true,
-            );
+    for part_url in part_urls {
+        let mut archive_reader = fetch_archive(part_url)?;
+        loop {
+            let read = archive_reader
+                .read(&mut buffer)
+                .map_err(|error| format!("Failed while reading remote runtime archive: {error}"))?;
+            if read == 0 {
+                break;
+            }
+            archive_file
+                .write_all(&buffer[..read])
+                .map_err(|error| format!("Failed while writing runtime archive: {error}"))?;
+            hasher.update(&buffer[..read]);
+            downloaded_bytes += read as u64;
+
+            let progress = progress_percent(downloaded_bytes, release.archive_size).unwrap_or(99);
+            if progress >= last_reported_progress.saturating_add(5)
+                || downloaded_bytes == release.archive_size
+            {
+                last_reported_progress = progress;
+                emit_progress(
+                    on_progress,
+                    RuntimeOperationStage::Downloading,
+                    "Descargando runtime remoto confiable",
+                    Some(progress.min(99)),
+                    Some(downloaded_bytes),
+                    Some(release.archive_size),
+                    true,
+                );
+            }
         }
     }
 
@@ -577,6 +588,7 @@ pub(crate) mod test_support {
             platform: crate::runtime::paths::current_runtime_platform(),
             pack_version: "2026.05.1".to_string(),
             archive_url: "https://example.com/runtime-pack.zip".to_string(),
+            additional_part_urls: Vec::new(),
             archive_sha256,
             archive_size,
             signature,
@@ -730,6 +742,64 @@ mod tests {
             .any(|item| item.stage == RuntimeOperationStage::Activating));
         assert!(!outcome.staging_path.exists());
         assert!(!stage_marker_path(app_data_dir.path(), &release.pack_version).exists());
+    }
+
+    #[test]
+    fn downloads_and_concatenates_multi_part_remote_runtime_archive() {
+        let app_data_dir = tempfile::tempdir().expect("app data dir");
+        let archive_bytes = runtime_archive_bytes();
+        let mid = archive_bytes.len() / 2;
+        let part1 = archive_bytes[..mid].to_vec();
+        let part2 = archive_bytes[mid..].to_vec();
+
+        let signing_key = SigningKey::from_bytes(&[11u8; 32]);
+        let unsigned = BootstrapReleaseManifest {
+            app_version: env!("CARGO_PKG_VERSION").to_string(),
+            platform: crate::runtime::paths::current_runtime_platform(),
+            pack_version: "2026.05.1".to_string(),
+            archive_url: "https://example.com/runtime-pack.zip.part1".to_string(),
+            additional_part_urls: vec!["https://example.com/runtime-pack.zip.part2".to_string()],
+            archive_sha256: format!("{:x}", Sha256::digest(&archive_bytes)),
+            archive_size: archive_bytes.len() as u64,
+            signature: String::new(),
+        };
+        let signature = signing_key.sign(unsigned.signature_payload().as_bytes());
+        let release = BootstrapReleaseManifest {
+            signature: base64::engine::general_purpose::STANDARD.encode(signature.to_bytes()),
+            ..unsigned
+        };
+        let public_key = base64::engine::general_purpose::STANDARD
+            .encode(signing_key.verifying_key().to_bytes());
+
+        let mut fetched_urls = Vec::new();
+        let outcome = download_and_activate_remote_runtime_with_fetch(
+            "https://example.com/runtime/bootstrap.json",
+            &release,
+            app_data_dir.path(),
+            &public_key,
+            |url| {
+                fetched_urls.push(url.to_string());
+                if url.ends_with("part2") {
+                    Ok(Cursor::new(part2.clone()))
+                } else {
+                    Ok(Cursor::new(part1.clone()))
+                }
+            },
+            &mut |_| {},
+        )
+        .expect("multi-part remote runtime bootstrap should succeed");
+
+        // Parts are fetched in order, concatenated, then verified against the
+        // whole-archive sha256 before extraction.
+        assert_eq!(
+            fetched_urls,
+            vec![
+                "https://example.com/runtime-pack.zip.part1".to_string(),
+                "https://example.com/runtime-pack.zip.part2".to_string(),
+            ]
+        );
+        assert!(outcome.managed_root.join("manifest.json").is_file());
+        assert!(outcome.managed_root.join("python/bin/python3").is_file());
     }
 
     #[test]

@@ -47,6 +47,13 @@ pub struct BootstrapReleaseManifest {
     pub platform: String,
     pub pack_version: String,
     pub archive_url: String,
+    /// Extra archive part URLs for multi-part hosting (e.g. GitHub's 2 GiB asset
+    /// limit). `archive_url` is part 1; these are parts 2..N, fetched and
+    /// concatenated in order. `archive_sha256`/`archive_size` cover the whole.
+    /// Empty (the default) means a single-archive download — schema-compatible
+    /// with older manifests.
+    #[serde(default)]
+    pub additional_part_urls: Vec<String>,
     pub archive_sha256: String,
     pub archive_size: u64,
     pub signature: String,
@@ -110,7 +117,7 @@ impl BootstrapManifestIndex {
 
 impl BootstrapReleaseManifest {
     pub fn signature_payload(&self) -> String {
-        format!(
+        let mut payload = format!(
             "{}\n{}\n{}\n{}\n{}\n{}",
             self.app_version,
             self.platform,
@@ -118,7 +125,14 @@ impl BootstrapReleaseManifest {
             self.archive_url,
             self.archive_sha256,
             self.archive_size
-        )
+        );
+        // Extra parts are appended so they are covered by the signature too.
+        // When empty this is byte-identical to the single-archive payload.
+        for url in &self.additional_part_urls {
+            payload.push('\n');
+            payload.push_str(url);
+        }
+        payload
     }
 
     pub fn verify_signature(&self, public_key_base64: &str) -> Result<(), String> {
@@ -231,6 +245,7 @@ mod tests {
                     platform: "windows-x86_64".to_string(),
                     pack_version: "2026.05.0".to_string(),
                     archive_url: "https://example.com/windows.zip".to_string(),
+                    additional_part_urls: Vec::new(),
                     archive_sha256: "win-sha".to_string(),
                     archive_size: 42,
                     signature: "sig-win".to_string(),
@@ -240,6 +255,7 @@ mod tests {
                     platform: "linux-x86_64".to_string(),
                     pack_version: "2026.05.1".to_string(),
                     archive_url: "https://example.com/linux.zip".to_string(),
+                    additional_part_urls: Vec::new(),
                     archive_sha256: "linux-sha".to_string(),
                     archive_size: 84,
                     signature: "sig-linux".to_string(),
@@ -265,6 +281,7 @@ mod tests {
                 platform: "windows-x86_64".to_string(),
                 pack_version: "2026.05.9".to_string(),
                 archive_url: "https://example.com/windows.zip".to_string(),
+                additional_part_urls: Vec::new(),
                 archive_sha256: "sha".to_string(),
                 archive_size: 42,
                 signature: "sig".to_string(),
@@ -281,6 +298,7 @@ mod tests {
             platform: "linux-x86_64".to_string(),
             pack_version: "2026.05.1".to_string(),
             archive_url: "https://example.com/runtime-pack.zip".to_string(),
+            additional_part_urls: Vec::new(),
             archive_sha256: "archive-sha".to_string(),
             archive_size: 1024,
             signature: "sig".to_string(),
@@ -293,6 +311,30 @@ mod tests {
     }
 
     #[test]
+    fn bootstrap_release_signature_payload_appends_additional_parts() {
+        let release = BootstrapReleaseManifest {
+            app_version: "0.0.10".to_string(),
+            platform: "linux-x86_64".to_string(),
+            pack_version: "2026.05.1".to_string(),
+            archive_url: "https://example.com/part1".to_string(),
+            additional_part_urls: vec![
+                "https://example.com/part2".to_string(),
+                "https://example.com/part3".to_string(),
+            ],
+            archive_sha256: "archive-sha".to_string(),
+            archive_size: 1024,
+            signature: "sig".to_string(),
+        };
+
+        // Extra parts are appended after archive_size, each on its own line, so the
+        // signature covers exactly where every byte of the archive comes from.
+        assert_eq!(
+            release.signature_payload(),
+            "0.0.10\nlinux-x86_64\n2026.05.1\nhttps://example.com/part1\narchive-sha\n1024\nhttps://example.com/part2\nhttps://example.com/part3"
+        );
+    }
+
+    #[test]
     fn verifies_valid_bootstrap_release_signature() {
         let signing_key = SigningKey::from_bytes(&[7u8; 32]);
         let release_without_signature = BootstrapReleaseManifest {
@@ -300,6 +342,7 @@ mod tests {
             platform: "linux-x86_64".to_string(),
             pack_version: "2026.05.1".to_string(),
             archive_url: "https://example.com/runtime-pack.zip".to_string(),
+            additional_part_urls: Vec::new(),
             archive_sha256: "archive-sha".to_string(),
             archive_size: 1024,
             signature: String::new(),
@@ -322,6 +365,7 @@ mod tests {
             platform: "linux-x86_64".to_string(),
             pack_version: "2026.05.1".to_string(),
             archive_url: "https://example.com/runtime-pack.zip".to_string(),
+            additional_part_urls: Vec::new(),
             archive_sha256: "archive-sha".to_string(),
             archive_size: 1024,
             signature: base64::engine::general_purpose::STANDARD.encode([9u8; 64]),

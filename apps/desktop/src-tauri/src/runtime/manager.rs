@@ -506,6 +506,11 @@ impl RuntimeManager {
                         .ok_or_else(|| {
                             "Trusted remote bootstrap plan is missing download metadata".to_string()
                         })?,
+                    additional_part_urls: plan
+                        .download
+                        .as_ref()
+                        .map(|download| download.additional_part_urls.clone())
+                        .unwrap_or_default(),
                     archive_sha256: plan
                         .download
                         .as_ref()
@@ -1792,6 +1797,7 @@ mod tests {
                             platform: crate::runtime::paths::current_runtime_platform(),
                             pack_version: "2026.05.1".to_string(),
                             archive_url: "https://example.com/runtime-pack.archive".to_string(),
+                            additional_part_urls: Vec::new(),
                             archive_sha256: "remote-sha".to_string(),
                             archive_size: 1024,
                             signature: "signed".to_string(),

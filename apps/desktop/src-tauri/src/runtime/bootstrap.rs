@@ -41,6 +41,9 @@ pub enum BootstrapRemoteCatalog {
 #[serde(rename_all = "camelCase")]
 pub struct BootstrapDownloadPlan {
     pub archive_url: String,
+    /// Extra archive part URLs (parts 2..N) for multi-part hosting. Empty = single archive.
+    #[serde(default)]
+    pub additional_part_urls: Vec<String>,
     pub archive_sha256: String,
     pub archive_size: u64,
     pub signature: String,
@@ -240,6 +243,7 @@ fn download_plan_from_release(
 ) -> BootstrapDownloadPlan {
     BootstrapDownloadPlan {
         archive_url: release.archive_url.clone(),
+        additional_part_urls: release.additional_part_urls.clone(),
         archive_sha256: release.archive_sha256.clone(),
         archive_size: release.archive_size,
         signature: release.signature.clone(),
@@ -319,6 +323,7 @@ mod tests {
                         platform: crate::runtime::paths::current_runtime_platform(),
                         pack_version: "2026.05.1".to_string(),
                         archive_url: "https://example.com/runtime-pack.zip".to_string(),
+                        additional_part_urls: Vec::new(),
                         archive_sha256: "sha".to_string(),
                         archive_size: 99,
                         signature: "sig".to_string(),
