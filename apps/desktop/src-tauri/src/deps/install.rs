@@ -882,6 +882,22 @@ pub async fn install_package(
         return Ok(());
     }
 
+    // Best-effort free-disk precheck before the heavy ML wheel/model install: fail
+    // fast with a clear Spanish message instead of dying mid-install (os error 112)
+    // on a low-disk PC. If free space can't be read, proceed rather than block.
+    const INSTALL_REQUIRED_FREE_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+    let disk_probe_dir = venv_python.parent().unwrap_or(venv_python);
+    if let Some(free) = crate::runtime::download::available_disk_space(disk_probe_dir) {
+        if free < INSTALL_REQUIRED_FREE_BYTES {
+            return Err(format!(
+                "Espacio en disco insuficiente para instalar {}: se requieren ~{:.1} GB libres y hay {:.1} GB. Liberá espacio y volvé a intentar.",
+                dep.display_name,
+                INSTALL_REQUIRED_FREE_BYTES as f64 / 1_000_000_000.0,
+                free as f64 / 1_000_000_000.0
+            ));
+        }
+    }
+
     let (spec, extra_index_url) = if dep.id == DependencyId::PaddlePaddle {
         resolve_paddlepaddle_install_target(wheelhouse_dir)
     } else {

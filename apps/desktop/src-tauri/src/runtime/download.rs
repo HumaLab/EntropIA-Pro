@@ -25,7 +25,7 @@ fn required_free_bytes(archive_size: u64) -> u64 {
 /// Best-effort free space on the volume containing `path`. Returns `None` when it
 /// cannot be determined (then the precheck is skipped rather than blocking install).
 #[cfg(windows)]
-fn available_disk_space(path: &Path) -> Option<u64> {
+pub(crate) fn available_disk_space(path: &Path) -> Option<u64> {
     use std::os::windows::ffi::OsStrExt;
     extern "system" {
         fn GetDiskFreeSpaceExW(
@@ -53,7 +53,7 @@ fn available_disk_space(path: &Path) -> Option<u64> {
 }
 
 #[cfg(not(windows))]
-fn available_disk_space(_path: &Path) -> Option<u64> {
+pub(crate) fn available_disk_space(_path: &Path) -> Option<u64> {
     None
 }
 
