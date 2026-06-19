@@ -27,6 +27,7 @@
 //! handler) to cache the resolved path. If never called, falls back to current
 //! directory + system library (original pdfium-render behavior).
 
+#[cfg(feature = "local-ml")]
 use crate::runtime::{managed_resource_path, RuntimeManager};
 use pdfium_render::prelude::*;
 use std::io::Cursor;
@@ -51,7 +52,15 @@ static PDFIUM_PATH: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
 /// 2. CARGO_MANIFEST_DIR fallback: `<manifest>/resources/lib/`
 /// 3. No bundled path found → falls back to system library at runtime
 pub fn init_pdfium_path(app_handle: &tauri::AppHandle) {
+    // The managed runtime root only exists when local inference is compiled in.
+    // Without `local-ml`, fall through to the dev/system-library lookup below.
+    #[cfg(feature = "local-ml")]
     let runtime_root = managed_runtime_root_for_pdfium(app_handle).ok().flatten();
+    #[cfg(not(feature = "local-ml"))]
+    let runtime_root: Option<PathBuf> = {
+        let _ = app_handle;
+        None
+    };
     let resolved = resolve_pdfium_dll_path_from_roots(
         runtime_root.as_deref(),
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")),
@@ -83,6 +92,7 @@ pub fn init_pdfium_path(app_handle: &tauri::AppHandle) {
     }
 }
 
+#[cfg(feature = "local-ml")]
 fn managed_runtime_root_for_pdfium(
     app_handle: &tauri::AppHandle,
 ) -> Result<Option<PathBuf>, String> {
@@ -115,7 +125,13 @@ fn resolve_pdfium_dll_path_from_roots(
     let dll_name = Pdfium::pdfium_platform_library_name();
 
     if let Some(root) = managed_root {
+        // `managed_resource_path` lives in the local-ml-gated runtime module, but
+        // its layout (`<root>/resources/<rel>`) is stable. Inline the same join in
+        // the lean build so the bundled-pdfium lookup still resolves there.
+        #[cfg(feature = "local-ml")]
         let managed = managed_resource_path(root, "lib").join(&dll_name);
+        #[cfg(not(feature = "local-ml"))]
+        let managed = root.join("resources").join("lib").join(&dll_name);
         if managed.exists() {
             return Some(managed);
         }

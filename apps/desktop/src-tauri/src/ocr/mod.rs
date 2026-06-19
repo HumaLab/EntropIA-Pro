@@ -6,7 +6,10 @@ pub mod provider;
 #[cfg(feature = "paddle-ocr")]
 pub mod paddle;
 
+#[cfg(feature = "local-ml")]
 pub mod layout_onnx;
+pub mod paddle_vl_types;
+#[cfg(feature = "paddle-ocr")]
 pub mod paddle_vl;
 mod pdf;
 pub mod pdf_probe;
@@ -22,7 +25,9 @@ use crate::nlp::{lookup_item_id_for_asset, NlpJob, NlpQueue};
 use crate::runtime::{managed_resource_path, RuntimeManager};
 use base64::Engine;
 use glm_ocr::{GlmOcrLayoutDetail, GlmOcrResponse};
-use paddle_vl::{create_paddle_vl_engine_result, PaddleVlEngine, PaddleVlOutput};
+use paddle_vl_types::PaddleVlOutput;
+#[cfg(feature = "paddle-ocr")]
+use paddle_vl::{create_paddle_vl_engine_result, PaddleVlEngine};
 use pdf::{extract_pdf_text, init_pdfium_path, is_quality_text, pdf_page_count};
 use provider::{LayoutCategory, OcrProvider};
 use serde::Serialize;
@@ -107,7 +112,7 @@ struct PersistedLayoutRegion {
     image_width: u32,
     image_height: u32,
     category: String,
-    bbox: paddle_vl::PaddleVlBbox,
+    bbox: paddle_vl_types::PaddleVlBbox,
     confidence: f32,
 }
 
@@ -118,7 +123,7 @@ struct PersistedLayoutBlock {
     image_height: u32,
     label: String,
     content: String,
-    bbox: paddle_vl::PaddleVlBbox,
+    bbox: paddle_vl_types::PaddleVlBbox,
     order: i32,
     group_id: i32,
 }
@@ -331,7 +336,7 @@ fn normalized_bbox_to_pixels(
     detail: &GlmOcrLayoutDetail,
     fallback_width: u32,
     fallback_height: u32,
-) -> Option<paddle_vl::PaddleVlBbox> {
+) -> Option<paddle_vl_types::PaddleVlBbox> {
     if detail.bbox_2d.len() != 4 {
         return None;
     }
@@ -391,7 +396,7 @@ fn normalized_bbox_to_pixels(
         }
     };
 
-    Some(paddle_vl::PaddleVlBbox {
+    Some(paddle_vl_types::PaddleVlBbox {
         x: x1,
         y: y1,
         width: (x2 - x1).max(0),
@@ -595,7 +600,7 @@ fn detect_image_dimensions(bytes: &[u8]) -> Option<(u32, u32)> {
         .ok()
 }
 
-fn rescale_paddlevl_bbox(bbox: &mut paddle_vl::PaddleVlBbox, scale_x: f64, scale_y: f64) {
+fn rescale_paddlevl_bbox(bbox: &mut paddle_vl_types::PaddleVlBbox, scale_x: f64, scale_y: f64) {
     bbox.x = ((bbox.x as f64) * scale_x).round() as i32;
     bbox.y = ((bbox.y as f64) * scale_y).round() as i32;
     bbox.width = ((bbox.width as f64) * scale_x).round() as i32;
@@ -1329,6 +1334,7 @@ fn crop_region(
 ///
 /// Layout engine parameter removed — layout-aware Light mode is not used in
 /// production. PaddleVL handles layout in High mode.
+#[cfg(feature = "paddle-ocr")]
 async fn process_job(
     provider: &Arc<dyn OcrProvider>,
     conn: &rusqlite::Connection,
@@ -1378,6 +1384,7 @@ async fn process_job(
 /// For text-based PDFs, the native text layer is extracted and quality-checked.
 /// If it's insufficient (scanned PDFs, images), every page is rendered and OCR'd,
 /// then the results are concatenated with page separators.
+#[cfg(feature = "paddle-ocr")]
 async fn process_pdf(
     provider: &Arc<dyn OcrProvider>,
     conn: &rusqlite::Connection,
@@ -1646,6 +1653,7 @@ async fn process_pdf(
 /// Fast and simple.
 ///
 /// **High mode** (OCRH): PaddleVL Python subprocess with 900s timeout, then fallback to PaddleOCR.
+#[cfg(feature = "paddle-ocr")]
 async fn process_image(
     provider: &Arc<dyn OcrProvider>,
     conn: &rusqlite::Connection,
@@ -1734,6 +1742,7 @@ async fn process_image_light(
 ///
 /// Runs PaddleOCR-VL (layout + OCR in one pass) via Python subprocess.
 /// Falls back to PaddleOCR light if PaddleVL is unavailable, fails, or times out.
+#[cfg(feature = "paddle-ocr")]
 async fn process_image_high(
     provider: &Arc<dyn OcrProvider>,
     conn: &rusqlite::Connection,
@@ -1898,7 +1907,7 @@ fn emit_progress(app_handle: &AppHandle, asset_id: &str, pct: u8, stage: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ocr::paddle_vl::{PaddleVlBbox, PaddleVlBlock, PaddleVlOutput, PaddleVlRegion};
+    use crate::ocr::paddle_vl_types::{PaddleVlBbox, PaddleVlBlock, PaddleVlOutput, PaddleVlRegion};
     use crate::ocr::provider::{BoundingBox, LayoutCategory};
     use crate::runtime::status::{RuntimeCapability, RuntimeState, RuntimeStatus};
     use std::cell::RefCell;
