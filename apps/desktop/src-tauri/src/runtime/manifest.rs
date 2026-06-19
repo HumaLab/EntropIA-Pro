@@ -101,6 +101,22 @@ impl RuntimeManifest {
             .chain(self.native_assets.iter())
             .collect()
     }
+
+    /// Entries whose integrity is critical enough to re-hash on every health
+    /// inspection: the python and uv launchers plus every native asset (native
+    /// model libs / DLLs). The multi-GB wheelhouse and model caches are
+    /// deliberately excluded so inspection stays bounded — only these few small
+    /// executables/native libs are recomputed.
+    pub fn critical_entries(&self) -> Vec<&ManifestEntry> {
+        let mut entries: Vec<&ManifestEntry> = Vec::new();
+        for entry in self.python_files.iter().chain(self.uv_files.iter()) {
+            if entry.path == self.python_relpath || entry.path == self.uv_relpath {
+                entries.push(entry);
+            }
+        }
+        entries.extend(self.native_assets.iter());
+        entries
+    }
 }
 
 impl BootstrapManifestIndex {
@@ -232,6 +248,64 @@ mod tests {
         assert_eq!(manifest.python_relpath, "python/bin/python3");
         assert_eq!(manifest.uv_relpath, "uv/bin/uv");
         assert_eq!(manifest.all_entries().len(), 4);
+    }
+
+    #[test]
+    fn critical_entries_cover_launchers_and_native_assets_only() {
+        let dir = tempdir().expect("temp dir");
+        let manifest_path = dir.path().join("manifest.json");
+
+        fs::write(
+            &manifest_path,
+            r#"{
+  "pack_version": "2026.05.0",
+  "app_version": "0.0.10",
+  "platform": "linux-x86_64",
+  "payload_profile": "release",
+  "python_relpath": "python/bin/python3",
+  "uv_relpath": "uv/bin/uv",
+  "python_files": [
+    { "path": "python/bin/python3", "sha256": "py", "size": 3, "executable": true },
+    { "path": "python/lib/extra.so", "sha256": "lib", "size": 9, "executable": false }
+  ],
+  "uv_files": [
+    { "path": "uv/bin/uv", "sha256": "uv", "size": 2, "executable": true }
+  ],
+  "script_files": [
+    { "path": "scripts/transcribe.py", "sha256": "sc", "size": 5, "executable": false }
+  ],
+  "wheelhouse": [
+    { "path": "wheelhouse/big.whl", "sha256": "wh", "size": 999, "executable": false }
+  ],
+  "caches": [
+    { "path": "caches/hf/model.bin", "sha256": "mb", "size": 4096, "executable": false }
+  ],
+  "native_assets": [
+    { "path": "resources/lib/libpdfium.so", "sha256": "nat", "size": 4, "executable": false }
+  ]
+}"#,
+        )
+        .expect("write manifest");
+
+        let manifest = RuntimeManifest::load_from_path(&manifest_path).expect("manifest loads");
+
+        let critical: Vec<&str> = manifest
+            .critical_entries()
+            .iter()
+            .map(|entry| entry.path.as_str())
+            .collect();
+
+        // Only the declared python/uv launchers and native assets are critical.
+        // The bulky wheelhouse + model caches and incidental python libs are NOT
+        // re-hashed on every inspection.
+        assert_eq!(
+            critical,
+            vec![
+                "python/bin/python3",
+                "uv/bin/uv",
+                "resources/lib/libpdfium.so"
+            ]
+        );
     }
 
     #[test]

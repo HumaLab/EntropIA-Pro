@@ -800,6 +800,11 @@ fn inspect_runtime(
                 continue;
             }
         };
+        // STEP 13: presence alone is not enough to call a model/cache "ready".
+        // A truncated or empty download keeps the path but changes its length, so
+        // requiring the declared size to match rejects those corrupt files. (A
+        // declared-non-empty file that is now zero bytes is covered here too,
+        // since 0 != size.)
         if metadata.len() != entry.size {
             invalid_entries.push(format!(
                 "Tamaño inválido en {} (esperado {}, detectado {})",
@@ -809,6 +814,14 @@ fn inspect_runtime(
             ));
         }
     }
+
+    // STEP 12 / STEP 13: for the few CRITICAL entries (python/uv launchers +
+    // native model libs) recompute the SHA-256 and compare it to the manifest,
+    // so a file that is present with the right size but corrupt content is
+    // detected. This catches a same-size corrupt launcher or a same-size corrupt
+    // native model lib that the size check above cannot. The multi-GB wheelhouse
+    // and model caches are deliberately NOT re-hashed to keep inspection bounded.
+    invalid_entries.extend(critical_entry_integrity_failures(managed_root, manifest));
 
     if invalid_entries.is_empty() {
         return Ok(healthy_status(&manifest.pack_version));
@@ -1255,6 +1268,42 @@ fn file_sha256(path: &Path) -> Result<String, String> {
     let bytes = fs::read(path)
         .map_err(|error| format!("Failed to read {} for checksum: {error}", path.display()))?;
     Ok(format!("{:x}", Sha256::digest(bytes)))
+}
+
+/// Recompute the SHA-256 of the manifest's CRITICAL entries (python/uv
+/// launchers + native assets) under `managed_root` and return a Spanish-language
+/// description for each one whose content does not match the manifest digest.
+///
+/// Entries that are missing or already size-mismatched are skipped here: the
+/// caller's presence/size loop already reports those, so we avoid duplicate
+/// noise and avoid re-reading a file that is obviously wrong. Read failures are
+/// surfaced as integrity failures rather than aborting the whole inspection.
+fn critical_entry_integrity_failures(
+    managed_root: &Path,
+    manifest: &RuntimeManifest,
+) -> Vec<String> {
+    let mut failures = Vec::new();
+    for entry in manifest.critical_entries() {
+        let target = managed_root.join(&entry.path);
+        match fs::metadata(&target) {
+            // Missing or wrong-sized: already reported by the presence/size loop.
+            Err(_) => continue,
+            Ok(metadata) if metadata.len() != entry.size => continue,
+            Ok(_) => {}
+        }
+        match file_sha256(&target) {
+            Ok(actual_sha256) if actual_sha256 == entry.sha256 => {}
+            Ok(actual_sha256) => failures.push(format!(
+                "Checksum inválido en {} (esperado {}, detectado {})",
+                entry.path, entry.sha256, actual_sha256
+            )),
+            Err(error) => failures.push(format!(
+                "No se pudo verificar el checksum de {}: {error}",
+                entry.path
+            )),
+        }
+    }
+    failures
 }
 
 fn healthy_status(pack_version: &str) -> RuntimeStatus {
@@ -2832,6 +2881,81 @@ mod tests {
             .details
             .iter()
             .any(|detail| detail.contains("Tamaño inválido")));
+    }
+
+    #[test]
+    fn reports_damaged_status_when_critical_executable_content_is_corrupt_but_same_size() {
+        let bundle_dir = tempdir().expect("bundle dir");
+        let app_data_dir = tempdir().expect("app data dir");
+        let python_relpath = if cfg!(windows) {
+            "python/python.exe"
+        } else {
+            "python/bin/python3"
+        };
+        let uv_relpath = if cfg!(windows) {
+            "uv/uv.exe"
+        } else {
+            "uv/bin/uv"
+        };
+        let python_sha = write_file(bundle_dir.path(), python_relpath, b"python");
+        let uv_sha = write_file(bundle_dir.path(), uv_relpath, b"uv");
+        let manifest = sample_manifest(
+            &crate::runtime::paths::current_runtime_platform(),
+            &python_sha,
+            &uv_sha,
+        );
+        write_manifest(bundle_dir.path(), &manifest);
+
+        let managed_root = app_data_dir.path().join("runtime").join("2026.05.0");
+        write_manifest(&managed_root, &manifest);
+        // Same length as b"python" (6 bytes) so the size check passes, but the
+        // bytes differ so only a recomputed SHA-256 can catch the corruption.
+        write_file(&managed_root, python_relpath, b"PYTHON");
+        write_file(&managed_root, uv_relpath, b"uv");
+
+        let manager = RuntimeManager::new();
+        let status = manager
+            .status_for_tests(bundle_dir.path(), app_data_dir.path())
+            .expect("status should inspect critical-entry integrity");
+
+        assert_eq!(status.state, RuntimeState::Damaged);
+        assert!(status.repair_needed);
+        assert!(status
+            .details
+            .iter()
+            .any(|detail| detail.contains("Checksum inválido") && detail.contains(python_relpath)));
+    }
+
+    #[test]
+    fn critical_entry_integrity_failures_skip_size_mismatches_and_flag_corruption() {
+        let managed_root = tempdir().expect("managed root");
+        let python_relpath = if cfg!(windows) {
+            "python/python.exe"
+        } else {
+            "python/bin/python3"
+        };
+        let uv_relpath = if cfg!(windows) {
+            "uv/uv.exe"
+        } else {
+            "uv/bin/uv"
+        };
+        let python_sha = write_file(managed_root.path(), python_relpath, b"python");
+        let uv_sha = write_file(managed_root.path(), uv_relpath, b"uv");
+        let mut manifest = sample_manifest(
+            &crate::runtime::paths::current_runtime_platform(),
+            &python_sha,
+            &uv_sha,
+        );
+        // Force python's expected digest to disagree with the on-disk content
+        // while keeping the declared size, so the size loop stays happy and only
+        // the SHA recomputation rejects it.
+        manifest.python_files[0].sha256 = "deadbeef".to_string();
+
+        let failures = critical_entry_integrity_failures(managed_root.path(), &manifest);
+
+        assert_eq!(failures.len(), 1, "only python should fail: {failures:?}");
+        assert!(failures[0].contains("Checksum inválido"));
+        assert!(failures[0].contains(python_relpath));
     }
 
     #[test]
