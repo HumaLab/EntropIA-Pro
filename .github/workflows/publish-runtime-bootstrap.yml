@@ -1,0 +1,178 @@
+name: Publish Runtime Bootstrap
+
+# Hosts the lean-installer download source: takes the `runtime-archive` artifact
+# from a Build Runtime Pack run, splits it under GitHub's 2 GiB per-asset limit,
+# uploads the parts to a stable release tag, and publishes an ed25519-signed
+# bootstrap manifest (index) that the app fetches at first launch.
+#
+# The app verifies the manifest signature with the baked public key
+# (ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64) before trusting any URL, and the
+# whole-archive sha256 after concatenating the parts. Signing uses the repo secret
+# ENTROPIA_RUNTIME_SIGNING_KEY (never logged).
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'App version this manifest release targets (must match the installed app)'
+        required: true
+        default: '0.1.1'
+        type: string
+      pack_version:
+        description: 'Runtime pack version'
+        required: true
+        default: '2026.05.0'
+        type: string
+      runtime_pack_run_id:
+        description: 'Build Runtime Pack run id that produced the runtime-archive artifact'
+        required: true
+        type: string
+      release_tag:
+        description: 'Release tag hosting the signed manifest + archive parts'
+        required: true
+        default: 'runtime-bootstrap'
+        type: string
+      part_size:
+        description: 'Max split part size (stay under the 2 GiB asset limit)'
+        required: false
+        default: '1900M'
+        type: string
+
+jobs:
+  publish:
+    name: Publish signed runtime bootstrap
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: read
+    env:
+      # Must equal the public half of ENTROPIA_RUNTIME_SIGNING_KEY and the value
+      # baked into release builds. The manifest is useless if these diverge.
+      BAKED_PUBLIC_KEY: fSt35Xo0XtpdZUH/Q2gsPm1drMZczLMQNcU6fqAEbi0=
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install signing dependency
+        run: python -m pip install --upgrade cryptography
+
+      - name: Resolve names
+        shell: bash
+        run: |
+          set -euo pipefail
+          echo "PLATFORM=windows-x86_64" >> "$GITHUB_ENV"
+          echo "ASSET_PREFIX=runtime-pack-windows-x86_64-${{ inputs.pack_version }}.zip" >> "$GITHUB_ENV"
+
+      - name: Download runtime-archive artifact
+        uses: actions/download-artifact@v6
+        with:
+          name: runtime-archive
+          path: ${{ runner.temp }}/archive
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          run-id: ${{ inputs.runtime_pack_run_id }}
+
+      - name: Split archive under the asset limit
+        id: split
+        shell: bash
+        run: |
+          set -euo pipefail
+          ARCHIVE="$(find "${{ runner.temp }}/archive" -name '*.zip' | head -1)"
+          if [ -z "$ARCHIVE" ]; then echo "::error::runtime-archive zip not found"; exit 1; fi
+          SPLIT_DIR="${{ runner.temp }}/parts"
+          mkdir -p "$SPLIT_DIR"
+          # Raw byte split: parts concatenate back to the exact archive bytes.
+          split -b "${{ inputs.part_size }}" -d -a 3 "$ARCHIVE" "$SPLIT_DIR/${ASSET_PREFIX}.part"
+          echo "archive=$ARCHIVE" >> "$GITHUB_OUTPUT"
+          echo "split_dir=$SPLIT_DIR" >> "$GITHUB_OUTPUT"
+          echo "Parts:"; ls -la "$SPLIT_DIR"
+
+      - name: Ensure release tag exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if ! gh release view "${{ inputs.release_tag }}" -R "${{ github.repository }}" >/dev/null 2>&1; then
+            gh release create "${{ inputs.release_tag }}" -R "${{ github.repository }}" \
+              --title "EntropIA Pro runtime bootstrap" \
+              --notes "Hosted ML runtime archive parts + ed25519-signed bootstrap manifest. Managed by the Publish Runtime Bootstrap workflow — do not edit assets by hand." \
+              --latest=false
+          fi
+
+      - name: Upload archive parts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" -R "${{ github.repository }}" \
+            "${{ steps.split.outputs.split_dir }}/${ASSET_PREFIX}.part"* --clobber
+
+      - name: Fetch existing manifest for merge
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release download "${{ inputs.release_tag }}" -R "${{ github.repository }}" \
+            --pattern manifest.json --dir "${{ runner.temp }}" 2>/dev/null \
+            && echo "merging into existing manifest" || echo "no existing manifest, creating fresh"
+
+      - name: Build + sign manifest
+        env:
+          ENTROPIA_RUNTIME_SIGNING_KEY: ${{ secrets.ENTROPIA_RUNTIME_SIGNING_KEY }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ -z "${ENTROPIA_RUNTIME_SIGNING_KEY:-}" ]; then
+            echo "::error::ENTROPIA_RUNTIME_SIGNING_KEY secret is not set"; exit 1
+          fi
+          BASE="https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}"
+          mapfile -t PARTS < <(ls "${{ steps.split.outputs.split_dir }}/${ASSET_PREFIX}.part"* | sort)
+          ARCHIVE_URL="$BASE/$(basename "${PARTS[0]}")"
+          EXTRA=()
+          for p in "${PARTS[@]:1}"; do
+            EXTRA+=(--additional-part-url "$BASE/$(basename "$p")")
+          done
+          MERGE=()
+          if [ -f "${{ runner.temp }}/manifest.json" ]; then
+            MERGE=(--merge-into "${{ runner.temp }}/manifest.json")
+          fi
+          python apps/desktop/src-tauri/scripts/publish_runtime_bootstrap.py \
+            --app-version "${{ inputs.app_version }}" \
+            --platform "$PLATFORM" \
+            --pack-version "${{ inputs.pack_version }}" \
+            --archive-url "$ARCHIVE_URL" \
+            "${EXTRA[@]}" \
+            --archive-file "${{ steps.split.outputs.archive }}" \
+            "${MERGE[@]}" \
+            --output "${{ runner.temp }}/manifest.json" | tee "${{ runner.temp }}/sign.out"
+
+      - name: Verify signing key matches baked public key
+        shell: bash
+        run: |
+          set -euo pipefail
+          GOT="$(grep '^public_key_base64=' "${{ runner.temp }}/sign.out" | cut -d= -f2-)"
+          if [ "$GOT" != "$BAKED_PUBLIC_KEY" ]; then
+            echo "::error::Signing key public part does not match the baked public key. Installed apps would REJECT this manifest. Got=$GOT"
+            exit 1
+          fi
+          echo "OK: signing key matches the baked public key ($GOT)"
+
+      - name: Upload signed manifest
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "${{ inputs.release_tag }}" -R "${{ github.repository }}" \
+            "${{ runner.temp }}/manifest.json" --clobber
+          echo "================================================================"
+          echo "Manifest URL (bake as ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL):"
+          echo "https://github.com/${{ github.repository }}/releases/download/${{ inputs.release_tag }}/manifest.json"
+          echo "================================================================"
