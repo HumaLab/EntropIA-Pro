@@ -591,6 +591,70 @@ describe('DependenciasTab', () => {
     expect(screen.queryByRole('button', { name: 'Reparar runtime' })).not.toBeInTheDocument()
   })
 
+  it('offers an actionable re-check for a source-unavailable runtime', async () => {
+    depsMocks.checkAllDeps.mockResolvedValueOnce([
+      { id: 'Python', status: { type: 'installed', version: '3.11.9' }, version: '3.11.9' },
+      { id: 'PaddleOcr', status: { type: 'missing' }, version: null },
+    ])
+    depsMocks.getRuntimeStatus.mockResolvedValueOnce({
+      state: 'blocked_source_unavailable',
+      packVersion: '2026.05.0',
+      repairNeeded: false,
+      repairAvailable: false,
+      summary: 'No hay una fuente confiable disponible',
+      blockedCapabilities: ['ocr'],
+      details: ['manifest not published'],
+      guidance: ['Reintentá cuando exista una fuente confiable'],
+      bootstrapEligible: false,
+      bootstrapRequired: true,
+      activeOperation: null,
+    })
+
+    render(DependenciasTab)
+
+    expect(
+      await screen.findByText(/Todavía no hay una fuente de descarga confiable/i),
+    ).toBeInTheDocument()
+    expect(screen.queryByText(/sin conexión/i)).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Reparar runtime' })).not.toBeInTheDocument()
+
+    const initialChecks = depsMocks.getRuntimeStatus.mock.calls.length
+    const recheckButton = await screen.findByRole('button', { name: 'Volver a verificar' })
+    await fireEvent.click(recheckButton)
+
+    await waitFor(() => {
+      expect(depsMocks.getRuntimeStatus.mock.calls.length).toBeGreaterThan(initialChecks)
+    })
+  })
+
+  it('explains offline distinctly and exposes a retry-connection action', async () => {
+    depsMocks.checkAllDeps.mockResolvedValueOnce([
+      { id: 'Python', status: { type: 'installed', version: '3.11.9' }, version: '3.11.9' },
+      { id: 'PaddleOcr', status: { type: 'missing' }, version: null },
+    ])
+    depsMocks.getRuntimeStatus.mockResolvedValueOnce({
+      state: 'blocked_offline',
+      packVersion: '2026.05.0',
+      repairNeeded: false,
+      repairAvailable: false,
+      summary: 'Sin conexión para descargar el runtime',
+      blockedCapabilities: ['ocr', 'transcription', 'nlp'],
+      details: ['No network reachable'],
+      guidance: ['Reintentá cuando recuperes la conexión'],
+      bootstrapEligible: false,
+      bootstrapRequired: true,
+      activeOperation: null,
+    })
+
+    render(DependenciasTab)
+
+    expect(await screen.findByText(/parece que estás sin conexión/i)).toBeInTheDocument()
+    expect(
+      screen.queryByText(/Todavía no hay una fuente de descarga confiable/i),
+    ).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Reintentar conexión' })).toBeInTheDocument()
+  })
+
   it('does not resurrect stale bootstrap progress after a healthy runtime status', async () => {
     let statusHandler: (status: unknown) => void = vi.fn()
     let progressHandler: (operation: unknown) => void = vi.fn()

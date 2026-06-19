@@ -56,6 +56,7 @@
   let expandedErrors = $state<Set<DependencyId>>(new Set())
   let runtimeStatus = $state<RuntimeStatus | null>(null)
   let runtimeOperation = $state<RuntimeOperation | null>(null)
+  let runtimeRechecking = $state(false)
   let llmModel = $state<LocalModelInfo | null>(null)
   let embeddingModel = $state<LocalEmbeddingModelInfo | null>(null)
   let preparingEntropia = $state(false)
@@ -85,6 +86,13 @@
   let allInstalled = $derived(deps.length > 0 && deps.every((d) => d.status.type === 'installed'))
   let runtimeBlocked = $derived(runtimeNeedsAttention(runtimeStatus))
   let runtimeReleaseOnlyIssue = $derived(runtimeStatus?.state === 'fixture')
+  let runtimeBlockedOffline = $derived(runtimeStatus?.state === 'blocked_offline')
+  let runtimeBlockedSourceUnavailable = $derived(
+    runtimeStatus?.state === 'blocked_source_unavailable',
+  )
+  let runtimeBlockedUnreachable = $derived(
+    runtimeBlockedOffline || runtimeBlockedSourceUnavailable,
+  )
   let depsReadyButReleaseRuntimePending = $derived(
     allInstalled && runtimeBlocked && runtimeReleaseOnlyIssue,
   )
@@ -455,6 +463,21 @@
     }
   }
 
+  async function handleRuntimeRecheck() {
+    if (runtimeRechecking) return
+    runtimeRechecking = true
+    errorBanner = null
+    runtimeOperation = null
+    try {
+      await refreshAllState()
+    } catch (e) {
+      errorBanner = String(e)
+      await refreshAllState().catch(() => undefined)
+    } finally {
+      runtimeRechecking = false
+    }
+  }
+
   function toggleError(id: DependencyId) {
     const next = new Set(expandedErrors)
     if (next.has(id)) next.delete(id)
@@ -621,6 +644,26 @@
             {/each}
           </ul>
         {/if}
+        {#if runtimeBlockedUnreachable}
+          <div class="deps-runtime-panel__blocked" role="group" aria-label="Runtime no disponible">
+            {#if runtimeBlockedOffline}
+              <strong>No pudimos llegar a la fuente del runtime: parece que estás sin conexión.</strong>
+              <span>
+                EntropIA Pro necesita descargar y verificar el runtime administrado la primera vez.
+                Conectate a internet y volvé a verificar. Mientras tanto, las capacidades locales
+                (OCR, transcripción y NLP) quedan en pausa.
+              </span>
+            {:else}
+              <strong>Todavía no hay una fuente de descarga confiable para el runtime.</strong>
+              <span>
+                El manifiesto firmado del runtime aún no está publicado, así que no se puede
+                descargar ni verificar de forma segura. No es un problema de tu equipo. Volvé a
+                verificar más tarde; cuando EntropIA publique una fuente firmada, la app la va a tomar
+                automáticamente.
+              </span>
+            {/if}
+          </div>
+        {/if}
         {#if runtimeOperation}
           <p class="deps-runtime-panel__progress">{bootstrapProgressLabel()}</p>
         {/if}
@@ -630,6 +673,15 @@
       </div>
       {#if shouldShowRuntimeRepairAction(runtimeStatus)}
         <Button variant="secondary" onclick={handleRuntimeRepair}>Reparar runtime</Button>
+      {:else if runtimeBlockedUnreachable}
+        <Button
+          variant="secondary"
+          onclick={handleRuntimeRecheck}
+          loading={runtimeRechecking}
+          disabled={runtimeRechecking}
+        >
+          {runtimeBlockedOffline ? 'Reintentar conexión' : 'Volver a verificar'}
+        </Button>
       {/if}
     </div>
   {/if}
@@ -949,6 +1001,20 @@
 
   .deps-runtime-panel__guidance {
     margin-top: var(--space-1);
+    color: #78350f;
+  }
+
+  .deps-runtime-panel__blocked {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-1);
+    margin-top: var(--space-2);
+    padding: var(--space-2) var(--space-3);
+    border-radius: var(--radius-sm, 4px);
+    background: rgba(245, 158, 11, 0.12);
+  }
+
+  .deps-runtime-panel__blocked strong {
     color: #78350f;
   }
 
