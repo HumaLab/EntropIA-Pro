@@ -1,0 +1,137 @@
+name: Build Runtime Pack
+
+# Builds a FRESH Windows runtime-pack from scratch (managed Python env + warmed
+# model caches + native libs) and uploads it as the `runtime-payloads` artifact,
+# which Release (release.yml) consumes via runtime_payload_run_id.
+#
+# This fills the gap left by reusing an old installer's runtime-pack: the ML
+# dependency set evolved (e.g. spaCy es_core_news_md was added), so older packs
+# fail runtime-pack-smoke. Dependency specs mirror src/deps/registry.rs.
+
+on:
+  workflow_dispatch:
+    inputs:
+      app_version:
+        description: 'App version to stamp into the pack manifest'
+        required: true
+        default: '0.1.1'
+        type: string
+      pack_version:
+        description: 'Pack version (YYYY.MM.patch)'
+        required: true
+        default: '2026.05.0'
+        type: string
+      native_source_release_tag:
+        description: 'Release tag whose Windows installer provides onnxruntime.dll'
+        required: true
+        default: 'runtime-source-0.1.0'
+        type: string
+
+jobs:
+  build:
+    name: Build Windows runtime pack
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      MANAGED_ROOT: ${{ github.workspace }}/.runtime-build/managed
+      ENV_DIR: ${{ github.workspace }}/.runtime-build/managed/venv/entropia-env
+      HF_CACHE: ${{ github.workspace }}/.runtime-build/caches/hf
+      PADDLEX_CACHE: ${{ github.workspace }}/.runtime-build/caches/paddlex
+      NATIVE_DIR: ${{ github.workspace }}/.runtime-build/native
+      OUTPUT_DIR: ${{ github.workspace }}/.runtime-build/runtime-payloads
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+
+      - name: Install uv
+        shell: bash
+        run: |
+          set -euo pipefail
+          python -m pip install --upgrade uv
+          uv --version
+
+      - name: Create managed Python env
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$MANAGED_ROOT"
+          uv venv --python 3.11 "$ENV_DIR"
+          echo "MANAGED_PY=$ENV_DIR/Scripts/python.exe" >> "$GITHUB_ENV"
+
+      - name: Install AI dependencies (registry.rs order)
+        shell: bash
+        run: |
+          set -euo pipefail
+          PY="$ENV_DIR/Scripts/python.exe"
+          uv pip install --python "$PY" "paddlepaddle>=3.2.1,<3.3.0"
+          uv pip install --python "$PY" "paddleocr[doc-parser]>=2.9.0"
+          uv pip install --python "$PY" "faster-whisper>=1.0.0"
+          uv pip install --python "$PY" "spacy>=3.8.0,<3.9.0" \
+            "https://github.com/explosion/spacy-models/releases/download/es_core_news_md-3.8.0/es_core_news_md-3.8.0-py3-none-any.whl"
+
+      - name: Warm up models (download weights into caches)
+        shell: bash
+        env:
+          HF_HOME: ${{ github.workspace }}/.runtime-build/caches/hf
+          HF_HUB_CACHE: ${{ github.workspace }}/.runtime-build/caches/hf
+          PADDLE_PDX_CACHE_HOME: ${{ github.workspace }}/.runtime-build/caches/paddlex
+        run: |
+          set -euo pipefail
+          mkdir -p "$HF_HUB_CACHE" "$PADDLE_PDX_CACHE_HOME"
+          PY="$ENV_DIR/Scripts/python.exe"
+          "$PY" -c "import paddle; print('paddle', paddle.__version__)"
+          "$PY" -c "from paddleocr import PaddleOCRVL; PaddleOCRVL(); print('paddleocr-vl warmed')"
+          "$PY" -c "from faster_whisper import WhisperModel; WhisperModel('base'); print('faster-whisper warmed')"
+          "$PY" -c "import spacy; spacy.load('es_core_news_md'); print('spacy ok')"
+
+      - name: Gather native libs (pdfium committed; onnxruntime from installer)
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p "$NATIVE_DIR"
+          cp apps/desktop/src-tauri/resources/lib/pdfium.dll "$NATIVE_DIR/"
+          INST="${{ github.workspace }}/.runtime-build/inst"
+          mkdir -p "$INST"
+          gh release download "${{ inputs.native_source_release_tag }}" \
+            --pattern 'EntropIA.Pro_*_x64-setup.exe' --dir "$INST"
+          7z x "$INST"/*.exe -o"$INST/x" -y >/dev/null
+          ONNX="$(find "$INST/x" -name onnxruntime.dll | head -1)"
+          if [ -z "$ONNX" ]; then echo "::error::onnxruntime.dll not found in installer"; exit 1; fi
+          cp "$ONNX" "$NATIVE_DIR/"
+          ls -la "$NATIVE_DIR"
+
+      - name: Materialize runtime payload
+        shell: bash
+        run: |
+          set -euo pipefail
+          python apps/desktop/src-tauri/scripts/materialize_windows_runtime_payload.py \
+            --managed-python "$ENV_DIR/Scripts/python.exe" \
+            --uv-path "apps/desktop/src-tauri/resources/tools/uv/windows-x86_64/uv.exe" \
+            --pack-version "${{ inputs.pack_version }}" \
+            --app-version "${{ inputs.app_version }}" \
+            --hf-cache-source "$HF_CACHE" \
+            --paddlex-cache-source "$PADDLEX_CACHE" \
+            --native-source-dir "$NATIVE_DIR" \
+            --output-dir "$OUTPUT_DIR"
+
+      - name: Smoke test the runtime pack
+        shell: bash
+        run: |
+          set -euo pipefail
+          python apps/desktop/src-tauri/scripts/runtime-pack-smoke.py \
+            --platform windows-x86_64 --root "$OUTPUT_DIR" --release --install-probe
+
+      - name: Upload runtime-payloads artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: runtime-payloads
+          path: ${{ env.OUTPUT_DIR }}
+          retention-days: 7
+          if-no-files-found: error
