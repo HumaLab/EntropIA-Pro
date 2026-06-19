@@ -39,6 +39,7 @@ jobs:
       PADDLEX_CACHE: ${{ github.workspace }}/.runtime-build/caches/paddlex
       NATIVE_DIR: ${{ github.workspace }}/.runtime-build/native
       OUTPUT_DIR: ${{ github.workspace }}/.runtime-build/runtime-payloads
+      ASSEMBLED_DIR: ${{ github.workspace }}/.runtime-build/assembled
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
@@ -121,12 +122,22 @@ jobs:
             --native-source-dir "$NATIVE_DIR" \
             --output-dir "$OUTPUT_DIR"
 
-      - name: Smoke test the runtime pack
+      - name: Assemble runtime pack (generate manifest.json)
+        shell: bash
+        run: |
+          set -euo pipefail
+          python apps/desktop/src-tauri/scripts/build_runtime_pack.py \
+            --platform windows-x86_64 \
+            --payload-root "$OUTPUT_DIR" \
+            --output-dir "$ASSEMBLED_DIR" \
+            --require-release-payload
+
+      - name: Smoke test the assembled runtime pack
         shell: bash
         run: |
           set -euo pipefail
           python apps/desktop/src-tauri/scripts/runtime-pack-smoke.py \
-            --platform windows-x86_64 --root "$OUTPUT_DIR" --release --install-probe
+            --platform windows-x86_64 --root "$ASSEMBLED_DIR" --release --install-probe
 
       - name: Upload runtime-payloads artifact
         uses: actions/upload-artifact@v4
