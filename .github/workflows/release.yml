@@ -38,7 +38,7 @@ jobs:
       matrix:
         # Keep this in sync with the release build matrix, but only include
         # platforms that ship a runtime-pack. macOS has no runtime-pack today.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64"}]' || '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","runtime_pack_platform":"linux-x86_64"}]') }}
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64","build_args":"--bundles nsis"}]' || '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64","build_args":"--bundles nsis"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","runtime_pack_platform":"linux-x86_64"}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -109,7 +109,7 @@ jobs:
         # Safe default: manual releases build Windows unless all is requested.
         # Tag pushes still enter the Windows matrix, but runtime-pack validation
         # fails first because tag events cannot provide release payload inputs.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"","rust_target":"","runtime_pack_platform":"windows-x86_64"}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"","rust_target":"","runtime_pack_platform":"windows-x86_64"},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","runtime_pack_platform":""},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":"","runtime_pack_platform":"linux-x86_64"}]') }}
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"","rust_target":"","runtime_pack_platform":"windows-x86_64","build_args":"--bundles nsis"}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"","rust_target":"","runtime_pack_platform":"windows-x86_64","build_args":"--bundles nsis"},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","runtime_pack_platform":""},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":"","runtime_pack_platform":"linux-x86_64"}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
