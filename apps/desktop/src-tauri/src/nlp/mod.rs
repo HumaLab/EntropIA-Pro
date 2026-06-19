@@ -18,6 +18,7 @@ use tauri::{AppHandle, Emitter, Manager};
 use tokio::sync::mpsc;
 
 use crate::llm::LlmQueue;
+#[cfg(feature = "local-ml")]
 use crate::runtime::RuntimeManager;
 use embeddings::EmbeddingEngine;
 
@@ -712,9 +713,20 @@ fn init_embed_engine_from_config(
 pub(crate) fn ensure_nlp_runtime_ready(app_handle: &AppHandle) -> Result<(), String> {
     // Dev fallback is acceptable: Ok(None) means managed runtime is not healthy
     // but callers will fall back to CARGO_MANIFEST_DIR / system Python.
-    managed_runtime_root_for_nlp(app_handle).map(|_| ())
+    // Local NLP (spaCy/local-gemma) only exists under local-ml; the lean build has
+    // no managed runtime to prepare, so it is a no-op (mirrors Lite).
+    #[cfg(feature = "local-ml")]
+    {
+        managed_runtime_root_for_nlp(app_handle).map(|_| ())
+    }
+    #[cfg(not(feature = "local-ml"))]
+    {
+        let _ = app_handle;
+        Ok(())
+    }
 }
 
+#[cfg(feature = "local-ml")]
 fn managed_runtime_root_for_nlp(app_handle: &AppHandle) -> Result<Option<PathBuf>, String> {
     managed_runtime_root_for_nlp_with(
         || RuntimeManager::new().ensure_ready_or_bootstrap(app_handle),
@@ -722,6 +734,7 @@ fn managed_runtime_root_for_nlp(app_handle: &AppHandle) -> Result<Option<PathBuf
     )
 }
 
+#[cfg(any(feature = "local-ml", test))]
 fn managed_runtime_root_for_nlp_with<E, H>(
     ensure_ready_or_bootstrap: E,
     hydrated_runtime_root: H,
