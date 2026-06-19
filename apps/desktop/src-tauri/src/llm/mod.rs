@@ -592,8 +592,9 @@ fn persist_result(
         .as_millis() as i64;
 
     conn.execute(
-        "INSERT OR REPLACE INTO llm_results (id, target_id, target_type, job_type, result, created_at)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        "INSERT INTO llm_results (id, target_id, target_type, job_type, result, created_at)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+         ON CONFLICT(id) DO UPDATE SET target_id=excluded.target_id, target_type=excluded.target_type, job_type=excluded.job_type, result=excluded.result, created_at=excluded.created_at",
         params![id, target_id, target_type, job_type, result, now],
     )
     .map_err(|e| format!("Failed to persist LLM result: {e}"))?;

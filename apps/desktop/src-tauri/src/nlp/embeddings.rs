@@ -1295,7 +1295,7 @@ fn upsert_vec_asset(
     blob: &[u8],
 ) -> Result<(), String> {
     let result = conn.execute(
-        "INSERT OR REPLACE INTO vec_assets(asset_id, item_id, embedding) VALUES (?1, ?2, ?3)",
+        "INSERT INTO vec_assets(asset_id, item_id, embedding) VALUES (?1, ?2, ?3) ON CONFLICT(asset_id) DO UPDATE SET item_id=excluded.item_id, embedding=excluded.embedding",
         params![asset_id, item_id, blob],
     );
 
@@ -1869,6 +1869,43 @@ mod tests {
             )
             .expect("count query should succeed");
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn upsert_vec_asset_twice_emits_update_not_delete_insert() {
+        // Regression for #21: re-embedding the same asset must emit ONE UPDATE in
+        // sync_oplog, NOT a DELETE+INSERT pair. INSERT OR REPLACE = DELETE+INSERT
+        // fires the `_d` tombstone trigger, which can delete the row on the remote.
+        use crate::sync::capture::ensure_capture;
+        use crate::sync::test_support::{new_synced_test_db, set_session_with_capture};
+
+        let conn = new_synced_test_db();
+        ensure_capture(&conn).expect("ensure capture");
+        set_session_with_capture(&conn);
+
+        upsert_vec_asset(&conn, "item-1", "asset-1", &[1u8, 2, 3]).expect("first upsert");
+        upsert_vec_asset(&conn, "item-1", "asset-1", &[4u8, 5, 6]).expect("second upsert");
+
+        let deletes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_oplog WHERE table_name = 'vec_assets' AND op = 'D'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count deletes");
+        let updates: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_oplog WHERE table_name = 'vec_assets' AND op = 'U'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count updates");
+
+        assert_eq!(
+            deletes, 0,
+            "re-embedding must not emit a tombstone (op 'D')"
+        );
+        assert!(updates >= 1, "re-embedding must emit an UPDATE (op 'U')");
     }
 
     #[test]
