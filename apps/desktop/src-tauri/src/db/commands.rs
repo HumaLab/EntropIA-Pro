@@ -637,6 +637,59 @@ mod tests {
         assert!(validate_sql_batch("ROLLBACK").is_ok());
     }
 
+    #[test]
+    fn cascade_rollback_reverts_partial_delete_and_reopens_autocommit() {
+        // #23 e2e: replica deleteWithCascade (asset.repo.ts) por la ruta REAL —
+        // validadores reales + SQLite real. db_execute de Pro es DML-only y RECHAZA
+        // ROLLBACK, por eso el catch del repo usa executeBatch('ROLLBACK'). El cascade
+        // corre como un batch BEGIN;...;COMMIT; si falla a mitad, el BEGIN deja la txn
+        // abierta y el ROLLBACK por batch debe revertir el delete parcial y devolver la
+        // conexion a autocommit.
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "PRAGMA foreign_keys = ON;
+             CREATE TABLE assets (id TEXT PRIMARY KEY);
+             CREATE TABLE extractions (id TEXT PRIMARY KEY, asset_id TEXT NOT NULL REFERENCES assets(id));
+             INSERT INTO assets (id) VALUES ('a1'), ('a2');
+             INSERT INTO extractions (id, asset_id) VALUES ('e1', 'a1');",
+        )
+        .unwrap();
+
+        // DELETE a2 (ok) y luego DELETE a1 viola la FK de e1 => el batch aborta antes
+        // del COMMIT, dejando la transaccion abierta con el delete de a2 aplicado.
+        let cascade = "BEGIN;\n\
+            DELETE FROM assets WHERE id = 'a2';\n\
+            DELETE FROM assets WHERE id = 'a1';\n\
+            COMMIT;";
+        validate_sql_batch(cascade).expect("el batch del cascade pasa el validador");
+        assert!(
+            conn.execute_batch(cascade).is_err(),
+            "el DELETE de a1 viola la FK de e1: el batch falla antes del COMMIT"
+        );
+        assert!(
+            !conn.is_autocommit(),
+            "tras el batch fallido el BEGIN dejo la transaccion abierta"
+        );
+
+        // Pro: db_execute es DML-only y rechaza ROLLBACK; el catch debe ir por batch.
+        assert!(
+            validate_sql_execute("ROLLBACK").is_err(),
+            "db_execute de Pro es DML-only: rechaza ROLLBACK (por eso NO se usa execute)"
+        );
+        validate_sql_batch("ROLLBACK")
+            .expect("db_execute_batch acepta ROLLBACK: la via correcta del catch en Pro");
+        conn.execute_batch("ROLLBACK").expect("el ROLLBACK por batch se ejecuta");
+
+        assert!(
+            conn.is_autocommit(),
+            "tras el ROLLBACK la conexion vuelve a autocommit (la txn se cerro)"
+        );
+        let assets: i64 = conn
+            .query_row("SELECT COUNT(*) FROM assets", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(assets, 2, "el ROLLBACK revirtio el DELETE parcial de a2");
+    }
+
     fn setup_db_browser_test_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db should open");
         conn.execute_batch(
