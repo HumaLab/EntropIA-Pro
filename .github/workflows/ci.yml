@@ -35,7 +35,15 @@ jobs:
           if [ "${{ github.event_name }}" = "pull_request" ]; then
             FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD)
           else
-            FILES=$(git diff --name-only HEAD~1...HEAD)
+            # Diff the WHOLE push range, not just the top commit: a multi-commit
+            # push whose HEAD commit is docs/frontend-only must still detect Rust
+            # changes in the earlier commits.
+            BEFORE="${{ github.event.before }}"
+            if [ -n "$BEFORE" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BEFORE^{commit}" 2>/dev/null; then
+              FILES=$(git diff --name-only "$BEFORE"...HEAD)
+            else
+              FILES=$(git diff --name-only HEAD~1...HEAD)
+            fi
           fi
 
           if echo "$FILES" | grep -E '(^rust-toolchain\.toml$|^apps/desktop/src-tauri/(Cargo\.(toml|lock)|build\.rs|tauri(\..*)?\.conf\.json|src/.*\.rs|scripts/.*\.ps1)$)' >/dev/null; then
