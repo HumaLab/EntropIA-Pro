@@ -627,6 +627,16 @@ fn validate_sql_batch(sql: &str) -> Result<(), String> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn rollback_must_go_through_db_execute_batch_not_db_execute() {
+        // #23: Pro's db_execute is DML-only and REJECTS ROLLBACK, so the cascade-
+        // delete repos must roll back via executeBatch (db_execute_batch), which
+        // allows it — matching how their BEGIN/COMMIT are issued. Sending ROLLBACK
+        // through execute silently fails and leaves the transaction open.
+        assert!(validate_sql_execute("ROLLBACK").is_err());
+        assert!(validate_sql_batch("ROLLBACK").is_ok());
+    }
+
     fn setup_db_browser_test_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db should open");
         conn.execute_batch(

@@ -256,7 +256,7 @@ export class ItemRepo {
       `)
     } catch (e) {
       try {
-        await this.rawClient.execute('ROLLBACK;')
+        await this.rawClient.executeBatch('ROLLBACK')
       } catch {
         /* rollback is best-effort; preserve the original failure */
       }

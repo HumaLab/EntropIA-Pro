@@ -414,7 +414,7 @@ describe('ItemRepo', () => {
       await expect(repoWithRaw.deleteWithCascade('item-1')).rejects.toThrow(
         'Failed to delete item cascade for item-1: constraint violation'
       )
-      expect(rawClient.execute).toHaveBeenCalledWith('ROLLBACK;')
+      expect(rawClient.executeBatch).toHaveBeenCalledWith('ROLLBACK')
     })
 
     it('escapes single quotes in item ID to prevent SQL injection', async () => {

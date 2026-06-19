@@ -421,7 +421,7 @@ describe('AssetRepo', () => {
       await expect(repoWithRaw.deleteWithCascade('asset-1')).rejects.toThrow(
         'Failed to delete asset cascade for asset-1: constraint violation'
       )
-      expect(rawClient.execute).toHaveBeenCalledWith('ROLLBACK;')
+      expect(rawClient.executeBatch).toHaveBeenCalledWith('ROLLBACK')
     })
   })
 })
