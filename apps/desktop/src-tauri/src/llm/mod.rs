@@ -1,5 +1,7 @@
 pub mod commands;
+#[cfg(feature = "local-ml")]
 pub mod download;
+#[cfg(feature = "local-ml")]
 pub mod engine;
 pub mod openrouter;
 pub mod prompt;
@@ -20,6 +22,7 @@ use tokio::sync::mpsc;
 use crate::nlp::text_provider;
 use crate::settings;
 
+#[cfg(feature = "local-ml")]
 use self::engine::{LlmConfig, LlmEngine};
 use self::openrouter::OpenRouterClient;
 
@@ -29,8 +32,10 @@ const LLM_TARGET_ASSET: &str = "asset";
 const LLM_TARGET_ITEM: &str = "item";
 const LLM_TARGET_COLLECTION: &str = "collection";
 
+#[cfg(feature = "local-ml")]
 pub(crate) type SharedLocalLlmEngine = Arc<Mutex<LlmEngine>>;
 
+#[cfg(feature = "local-ml")]
 static LOCAL_GEMMA_ENGINE: Lazy<Mutex<Option<SharedLocalLlmEngine>>> =
     Lazy::new(|| Mutex::new(None));
 
@@ -110,6 +115,7 @@ fn should_auto_download_default_model(
         && resolve_local_model_source_url(Some(conn)) == DEFAULT_MODEL_SOURCE_URL
 }
 
+#[cfg(feature = "local-ml")]
 pub(crate) fn ensure_default_model_downloaded_if_missing(
     conn: &rusqlite::Connection,
     db_path: &std::path::Path,
@@ -130,6 +136,7 @@ pub(crate) fn ensure_default_model_downloaded_if_missing(
     self::download::download_model_file(DEFAULT_MODEL_SOURCE_URL, &model_path, app_handle)
 }
 
+#[cfg(feature = "local-ml")]
 pub(crate) fn get_or_init_local_gemma_engine(
     conn: &rusqlite::Connection,
     db_path: &std::path::Path,
@@ -1097,7 +1104,9 @@ impl LlmQueue {
             eprintln!(
                 "{LLM_LOCAL_PREFIX} Local Gemma engine will initialize lazily on first local job"
             );
+            #[cfg(feature = "local-ml")]
             let mut engine: Option<SharedLocalLlmEngine> = None;
+            #[cfg(feature = "local-ml")]
             let mut init_error: Option<String> = None;
 
             // Ensure llm_results table exists and legacy rows are normalized.
@@ -1118,12 +1127,18 @@ impl LlmQueue {
                     settings::get_setting(&conn, "openrouter_api_key").unwrap_or_default();
                 let remote_model = settings::get_setting(&conn, "openrouter_model")
                     .unwrap_or_else(|| "google/gemma-3-4b-it".to_string());
+                #[cfg(feature = "local-ml")]
                 let local_can_initialize = local_model_can_initialize_from_conn(&conn, &db_path);
+                #[cfg(feature = "local-ml")]
                 let use_openrouter = match llm_mode.as_str() {
                     "openrouter" => true,
                     "auto" => engine.is_none() && !local_can_initialize && !api_key.is_empty(),
                     _ => false, // "local" or unknown
                 };
+                // Without the local engine there is no local path; every job must
+                // go through OpenRouter, so force the remote selector on.
+                #[cfg(not(feature = "local-ml"))]
+                let use_openrouter = true;
                 let job_log_prefix = llm_job_prefix(use_openrouter, &job);
 
                 emit_progress(&app_handle, &id, job_name, 10);
@@ -1156,7 +1171,15 @@ impl LlmQueue {
                         Err(e) => Err(e),
                     }
                 } else {
-                    // Local engine path
+                    // Local engine path. Compiled only with the local engine; under
+                    // `not(local-ml)` `use_openrouter` is always true so this arm is
+                    // never taken (the block below is the unreachable tail).
+                    #[cfg(not(feature = "local-ml"))]
+                    {
+                        unreachable!("local-ml disabled: use_openrouter is always true")
+                    }
+                    #[cfg(feature = "local-ml")]
+                    {
                     if engine.is_none() {
                         let init_db_path = db_path.clone();
                         let init_app_handle = app_handle.clone();
@@ -1242,6 +1265,7 @@ impl LlmQueue {
                                 continue;
                             }
                         }
+                    }
                     }
                 };
 
@@ -1391,6 +1415,7 @@ const MAX_ASK_CONTEXT_CHARS: usize = 6000;
 /// Maximum characters per individual document snippet (~400 tokens).
 const MAX_SNIPPET_CHARS: usize = 1200;
 
+#[cfg(feature = "local-ml")]
 fn process_job(
     engine: &LlmEngine,
     conn: &rusqlite::Connection,

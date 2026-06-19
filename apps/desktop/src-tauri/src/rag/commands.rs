@@ -30,6 +30,7 @@ const QUESTION_MAX_CHARS: usize = 4000;
 /// `llm_mode` lo pide explícitamente Y hay credenciales (mismo idioma que
 /// `ner_fallback_config`).
 enum RagAnswerMode {
+    #[cfg(feature = "local-ml")]
     Local,
     OpenRouter { api_key: String, model: String },
 }
@@ -199,6 +200,7 @@ async fn generate_answer(
                 crate::llm::openrouter::OpenRouterClient::new(api_key.clone(), model.clone());
             client.generate(&prompt, params.max_tokens).await
         }
+        #[cfg(feature = "local-ml")]
         RagAnswerMode::Local => {
             // Camino por defecto: motor Gemma local. Mismo patrón que
             // `run_local_gemma_ner`.
@@ -368,6 +370,31 @@ fn embed_query_local(db_path: &std::path::Path, question: &str) -> Option<Vec<f3
 ///
 /// Devuelve `(modo, model_string)`: el `model_string` es el que se persiste y
 /// se devuelve al frontend (filename local o id del modelo remoto).
+///
+/// Sin el feature `local-ml` no hay motor local: el chat RAG es solo OpenRouter
+/// (igual que EntropIA Lite). Devuelve siempre `OpenRouter`; una api key vacía
+/// la captura aguas abajo `OpenRouterClient` con un error claro.
+#[cfg(not(feature = "local-ml"))]
+fn resolve_answer_mode(conn: &Connection) -> (RagAnswerMode, String) {
+    let api_key = crate::settings::get_setting(conn, "openrouter_api_key")
+        .map(|v| v.trim().to_string())
+        .unwrap_or_default();
+    let model = crate::settings::get_setting(conn, "openrouter_model")
+        .map(|v| v.trim().to_string())
+        .filter(|v| !v.is_empty())
+        .unwrap_or_else(|| DEFAULT_RAG_OPENROUTER_MODEL.to_string());
+    (
+        RagAnswerMode::OpenRouter {
+            api_key,
+            model: model.clone(),
+        },
+        model,
+    )
+}
+
+/// Devuelve `(modo, model_string)`: el `model_string` es el que se persiste y
+/// se devuelve al frontend (filename local o id del modelo remoto).
+#[cfg(feature = "local-ml")]
 fn resolve_answer_mode(conn: &Connection) -> (RagAnswerMode, String) {
     let wants_openrouter = matches!(
         crate::settings::get_setting(conn, "llm_mode")
@@ -451,6 +478,7 @@ fn empty_answer(model: String, conversation_id: Option<String>) -> RagAnswer {
 /// fragmentos más relevantes van primero), construimos el prompt crudo y, como
 /// red de seguridad final, truncamos el prompt entero al presupuesto real de
 /// tokens del modelo. El resultado se envuelve en el formato de turnos Gemma.
+#[cfg(feature = "local-ml")]
 fn build_local_rag_prompt(
     n_ctx: u32,
     max_tokens: i32,
@@ -470,6 +498,7 @@ fn build_local_rag_prompt(
 /// Acota el bloque de fragmentos al primer chunk de [`chunk_text`]. Para
 /// contextos chicos (la mayoría) es un passthrough sin costo; para contextos
 /// enormes evita arrastrar megabytes de texto hacia el truncado final.
+#[cfg(feature = "local-ml")]
 fn budget_context_for_local(context: &str) -> String {
     crate::nlp::chunking::chunk_text(context)
         .into_iter()
@@ -597,6 +626,7 @@ mod tests {
         conn
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn resolve_answer_mode_defaults_to_local_without_settings() {
         // Sin `llm_mode`: camino LOCAL, model = filename del modelo Gemma.
@@ -606,6 +636,7 @@ mod tests {
         assert_eq!(model, crate::llm::MODEL_FILENAME);
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn resolve_answer_mode_local_is_default_explicit() {
         let conn = conn_with_settings(&[("llm_mode", "local")]);
@@ -614,6 +645,7 @@ mod tests {
         assert_eq!(model, crate::llm::MODEL_FILENAME);
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn resolve_answer_mode_openrouter_without_key_degrades_to_local() {
         // `llm_mode=openrouter` pero SIN api key: debe degradar a LOCAL,
@@ -640,6 +672,7 @@ mod tests {
                 assert_eq!(api_key, "sk-or-123", "api key is trimmed");
                 assert_eq!(m, "vendor/model-x", "model is trimmed");
             }
+            #[cfg(feature = "local-ml")]
             RagAnswerMode::Local => panic!("configured OpenRouter mode must be selected"),
         }
         assert_eq!(model, "vendor/model-x");

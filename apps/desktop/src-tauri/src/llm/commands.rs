@@ -1,5 +1,6 @@
 use tauri::State;
 
+#[cfg(feature = "local-ml")]
 use super::download::download_model_file;
 use super::openrouter::{ModelInfo, OpenRouterClient};
 use super::{
@@ -59,6 +60,22 @@ pub async fn llm_open_models_dir(db: State<'_, AppDbState>) -> Result<(), String
 
 /// Start downloading the local model from the configured (or default) source URL.
 /// Emits `llm:download_progress`, `llm:download_complete`, and `llm:download_error` events.
+///
+/// Without the `local-ml` feature there is no local engine to feed, so the
+/// command stays registered but reports that the local model is not needed in
+/// this build (OpenRouter-only). Mirrors EntropIA Lite.
+#[cfg(not(feature = "local-ml"))]
+#[tauri::command]
+pub async fn llm_download_model(
+    _db: State<'_, AppDbState>,
+    _app_handle: tauri::AppHandle,
+) -> Result<String, String> {
+    Err("No requerido en este build (solo OpenRouter). Configurá OpenRouter en Configuración para usar LLM remoto.".to_string())
+}
+
+/// Start downloading the local model from the configured (or default) source URL.
+/// Emits `llm:download_progress`, `llm:download_complete`, and `llm:download_error` events.
+#[cfg(feature = "local-ml")]
 #[tauri::command]
 pub async fn llm_download_model(
     db: State<'_, AppDbState>,

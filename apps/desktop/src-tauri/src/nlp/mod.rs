@@ -856,6 +856,7 @@ async fn run_configured_ner_input(
     }
 
     match fallback.mode {
+        #[cfg(feature = "local-ml")]
         NerLlmFallbackMode::Local => run_local_gemma_ner(app_handle, db_path, &input).await,
         NerLlmFallbackMode::OpenRouter => {
             let (api_key, model_name) = fallback.openrouter?;
@@ -885,6 +886,7 @@ async fn run_configured_ner_batch(
 
 #[derive(Clone, Copy)]
 enum NerLlmFallbackMode {
+    #[cfg(feature = "local-ml")]
     Local,
     OpenRouter,
 }
@@ -900,10 +902,16 @@ fn ner_fallback_config(conn: &rusqlite::Connection) -> NerFallbackConfig {
         .as_str()
     {
         "openrouter" | "auto" => NerLlmFallbackMode::OpenRouter,
+        #[cfg(feature = "local-ml")]
         _ => NerLlmFallbackMode::Local,
+        // Without the local engine the default must resolve to OpenRouter so NER
+        // never routes to a non-existent local Gemma engine.
+        #[cfg(not(feature = "local-ml"))]
+        _ => NerLlmFallbackMode::OpenRouter,
     };
     let openrouter = match mode {
         NerLlmFallbackMode::OpenRouter => ner::openrouter_settings(conn),
+        #[cfg(feature = "local-ml")]
         NerLlmFallbackMode::Local => {
             Err("OpenRouter no seleccionado para fallback NER".to_string())
         }
@@ -927,6 +935,7 @@ async fn run_spacy_ner(
     .map_err(|error| format!("spaCy NER task panicked: {error}"))?
 }
 
+#[cfg(feature = "local-ml")]
 async fn run_local_gemma_ner(
     app_handle: &AppHandle,
     db_path: &std::path::Path,
