@@ -13,6 +13,50 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 const DEFAULT_DOWNLOAD_CHUNK_SIZE: usize = 64 * 1024;
 
+/// Bytes that must be free on the runtime volume before starting a remote bootstrap:
+/// the compressed archive is written to disk AND extracted next to it, so the peak
+/// footprint is roughly 2x the archive plus headroom for the materialized env. We
+/// require ~3x so a budget/corporate PC with little free space fails fast with a
+/// clear message instead of dying mid-extract with Windows error 112 (disk full).
+fn required_free_bytes(archive_size: u64) -> u64 {
+    archive_size.saturating_mul(3)
+}
+
+/// Best-effort free space on the volume containing `path`. Returns `None` when it
+/// cannot be determined (then the precheck is skipped rather than blocking install).
+#[cfg(windows)]
+fn available_disk_space(path: &Path) -> Option<u64> {
+    use std::os::windows::ffi::OsStrExt;
+    extern "system" {
+        fn GetDiskFreeSpaceExW(
+            lpDirectoryName: *const u16,
+            lpFreeBytesAvailableToCaller: *mut u64,
+            lpTotalNumberOfBytes: *mut u64,
+            lpTotalNumberOfFreeBytes: *mut u64,
+        ) -> i32;
+    }
+    let wide: Vec<u16> = path
+        .as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect();
+    let mut free_available: u64 = 0;
+    let ok = unsafe {
+        GetDiskFreeSpaceExW(
+            wide.as_ptr(),
+            &mut free_available,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    (ok != 0).then_some(free_available)
+}
+
+#[cfg(not(windows))]
+fn available_disk_space(_path: &Path) -> Option<u64> {
+    None
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct BootstrapDownloadOutcome {
     pub archive_path: PathBuf,
@@ -107,6 +151,20 @@ where
     R: Read,
 {
     release.verify_signature(public_key_base64)?;
+
+    // Fail fast on a low-disk machine before committing to a multi-GB download +
+    // extract (otherwise it dies mid-way with os error 112). Best-effort: if free
+    // space can't be read, proceed rather than block.
+    if let Some(free) = available_disk_space(app_data_dir) {
+        let required = required_free_bytes(release.archive_size);
+        if free < required {
+            return Err(format!(
+                "Espacio en disco insuficiente para instalar el runtime de IA: se requieren ~{:.1} GB libres y hay {:.1} GB en el disco de la aplicación. Liberá espacio y volvé a intentar.",
+                required as f64 / 1_000_000_000.0,
+                free as f64 / 1_000_000_000.0
+            ));
+        }
+    }
 
     let paths = bootstrap_download_plan_paths(
         app_data_dir,
