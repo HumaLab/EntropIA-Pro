@@ -6,22 +6,28 @@
 ///
 /// The Python process is isolated — if it crashes, we catch it as a
 /// `Result::Err` instead of a hard abort that kills the entire app.
+#[cfg(feature = "local-ml")]
 use std::io::Read;
+#[cfg(feature = "local-ml")]
 use std::path::PathBuf;
+#[cfg(feature = "local-ml")]
 use std::process::{Command, Output};
+#[cfg(feature = "local-ml")]
 use std::time::{Duration, Instant};
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "local-ml"))]
 use std::os::windows::process::CommandExt;
 
-#[cfg(windows)]
+#[cfg(all(windows, feature = "local-ml"))]
 const CREATE_NO_WINDOW: u32 = 0x0800_0000;
 
 /// Wall-clock cap for the transcription subprocess. Generous enough for a first-run
 /// model download plus transcription on a slow CPU/network, but bounded so a stalled
 /// download (flaky network, captive portal) can't wedge the worker thread forever.
+#[cfg(feature = "local-ml")]
 const TRANSCRIPTION_TIMEOUT_SECS: u64 = 1800;
 
+#[cfg(feature = "local-ml")]
 fn apply_windows_no_window(_cmd: &mut Command) {
     #[cfg(windows)]
     {
@@ -31,12 +37,14 @@ fn apply_windows_no_window(_cmd: &mut Command) {
 
 /// Read a child stdout/stderr pipe to EOF on its own thread, so polling try_wait()
 /// never deadlocks against a full pipe buffer.
+#[cfg(feature = "local-ml")]
 fn drain_child_pipe(mut pipe: impl Read + Send + 'static) -> Vec<u8> {
     let mut buffer = Vec::new();
     let _ = pipe.read_to_end(&mut buffer);
     buffer
 }
 
+#[cfg(feature = "local-ml")]
 fn join_child_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8> {
     handle
         .and_then(|handle| handle.join().ok())
@@ -44,6 +52,7 @@ fn join_child_reader(handle: Option<std::thread::JoinHandle<Vec<u8>>>) -> Vec<u8
 }
 
 /// Configuration for the transcription engine.
+#[cfg(feature = "local-ml")]
 #[derive(Clone)]
 pub struct WhisperConfig {
     /// Path to the Python interpreter or transcribe.py executable.
@@ -89,10 +98,12 @@ pub struct Segment {
 /// - Transcribes the audio file
 /// - Outputs JSON to stdout
 /// - Exits (freeing all memory)
+#[cfg(feature = "local-ml")]
 pub struct WhisperEngine {
     config: WhisperConfig,
 }
 
+#[cfg(feature = "local-ml")]
 impl WhisperEngine {
     /// Validate configuration. The model is loaded per-call by the Python process.
     ///
@@ -283,6 +294,7 @@ impl WhisperEngine {
 /// Extract JSON content between `===TRANSCRIPTION_JSON_BEGIN===` and
 /// `===TRANSCRIPTION_JSON_END===` sentinels. Falls back to the full output
 /// if sentinels are not found (backwards compatibility).
+#[cfg(feature = "local-ml")]
 fn extract_sentinel_json(output: &str) -> &str {
     const BEGIN: &str = "===TRANSCRIPTION_JSON_BEGIN===";
     const END: &str = "===TRANSCRIPTION_JSON_END===";
@@ -299,7 +311,7 @@ fn extract_sentinel_json(output: &str) -> &str {
     output.trim()
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-ml"))]
 mod tests {
     use super::*;
 

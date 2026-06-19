@@ -1,4 +1,5 @@
 pub mod openrouter;
+#[cfg(feature = "local-ml")]
 pub mod spacy;
 pub mod types;
 

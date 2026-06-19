@@ -7,12 +7,17 @@ pub mod commands;
 mod engine;
 
 use crate::nlp::{lookup_item_id_for_asset, NlpJob, NlpQueue};
+#[cfg(feature = "local-ml")]
 use crate::path_utils::normalize_windows_path;
+#[cfg(feature = "local-ml")]
 use crate::runtime::{managed_hf_cache_dir, managed_script_path, RuntimeManager};
 use assemblyai::AssemblyAiClient;
-use engine::{TranscriptionResult, WhisperConfig, WhisperEngine};
+use engine::TranscriptionResult;
+#[cfg(feature = "local-ml")]
+use engine::{WhisperConfig, WhisperEngine};
 use serde::Serialize;
 use std::path::Path;
+#[cfg(feature = "local-ml")]
 use std::path::PathBuf;
 use tauri::{AppHandle, Emitter, Manager};
 
@@ -95,7 +100,9 @@ impl TranscriptionQueue {
             .name("transcription-worker".to_string())
             .stack_size(8 * 1024 * 1024) // 8 MB — subprocess only, no heavy stack needed
             .spawn(move || {
+                #[cfg(feature = "local-ml")]
                 let mut engine: Option<WhisperEngine> = None;
+                #[cfg(feature = "local-ml")]
                 let mut init_error: Option<String> = None;
 
                 // ── Open dedicated DB connection ────────────────────────────
@@ -129,6 +136,7 @@ impl TranscriptionQueue {
                     let asset_id = job.asset_id.clone();
                     let stt_mode = get_stt_mode(&conn);
 
+                    #[cfg(feature = "local-ml")]
                     if stt_mode != STT_MODE_ASSEMBLYAI && engine.is_none() && init_error.is_none() {
                         match create_whisper_engine(&app_handle, Some(&db_path)) {
                             Ok(resolved_engine) => {
@@ -152,9 +160,32 @@ impl TranscriptionQueue {
                         }
                     }
 
-                    let result = match engine.as_ref() {
-                        Some(_) => process_job(&conn, &job, &db_path, &app_handle),
-                        None => {
+                    let result = {
+                        #[cfg(feature = "local-ml")]
+                        {
+                            match engine.as_ref() {
+                                Some(_) => process_job(&conn, &job, &db_path, &app_handle),
+                                None => {
+                                    let has_cloud_fallback =
+                                        !get_assemblyai_api_key(&conn).is_empty();
+
+                                    if stt_mode == STT_MODE_ASSEMBLYAI
+                                        || (stt_mode == STT_MODE_AUTO && has_cloud_fallback)
+                                    {
+                                        process_job(&conn, &job, &db_path, &app_handle)
+                                    } else {
+                                        Err(init_error.clone().unwrap_or_else(|| {
+                                            "Transcription engine unavailable after lazy init"
+                                                .to_string()
+                                        }))
+                                    }
+                                }
+                            }
+                        }
+                        // Lean build: no local engine ever exists, so every job
+                        // routes through the cloud (AssemblyAI) fallback path.
+                        #[cfg(not(feature = "local-ml"))]
+                        {
                             let has_cloud_fallback = !get_assemblyai_api_key(&conn).is_empty();
 
                             if stt_mode == STT_MODE_ASSEMBLYAI
@@ -162,9 +193,10 @@ impl TranscriptionQueue {
                             {
                                 process_job(&conn, &job, &db_path, &app_handle)
                             } else {
-                                Err(init_error.clone().unwrap_or_else(|| {
-                                    "Transcription engine unavailable after lazy init".to_string()
-                                }))
+                                Err(
+                                    "Transcripción local no disponible en esta build y AssemblyAI no está configurado. Andá a Configuración > STT para resolverlo."
+                                        .to_string(),
+                                )
                             }
                         }
                     };
@@ -212,9 +244,20 @@ impl TranscriptionQueue {
 pub(crate) fn ensure_transcription_runtime_ready(app_handle: &AppHandle) -> Result<(), String> {
     // Dev fallback is acceptable: Ok(None) means managed runtime is not healthy
     // but callers will fall back to CARGO_MANIFEST_DIR / system Python.
-    managed_runtime_root_for_transcription(app_handle).map(|_| ())
+    #[cfg(feature = "local-ml")]
+    {
+        managed_runtime_root_for_transcription(app_handle).map(|_| ())
+    }
+    // Lean build has no local runtime — this is a no-op so the unconditional
+    // command surface (transcribe_audio / transcribe_dictation) still links.
+    #[cfg(not(feature = "local-ml"))]
+    {
+        let _ = app_handle;
+        Ok(())
+    }
 }
 
+#[cfg(feature = "local-ml")]
 fn managed_runtime_root_for_transcription(
     app_handle: &AppHandle,
 ) -> Result<Option<PathBuf>, String> {
@@ -224,6 +267,7 @@ fn managed_runtime_root_for_transcription(
     )
 }
 
+#[cfg(feature = "local-ml")]
 fn managed_runtime_root_for_transcription_with<E, H>(
     ensure_ready_or_bootstrap: E,
     hydrated_runtime_root: H,
@@ -242,6 +286,7 @@ where
     hydrated_runtime_root()
 }
 
+#[cfg(feature = "local-ml")]
 fn resolve_transcription_script_path(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let runtime_root = managed_runtime_root_for_transcription(app_handle)?;
     Ok(resolve_transcription_script_path_from_roots(
@@ -250,6 +295,7 @@ fn resolve_transcription_script_path(app_handle: &AppHandle) -> Result<PathBuf, 
     ))
 }
 
+#[cfg(feature = "local-ml")]
 fn resolve_model_cache_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     let runtime_root = managed_runtime_root_for_transcription(app_handle)?;
     let app_data_dir = app_handle
@@ -269,6 +315,7 @@ fn resolve_model_cache_dir(app_handle: &AppHandle) -> Result<PathBuf, String> {
     Ok(model_cache_dir)
 }
 
+#[cfg(feature = "local-ml")]
 fn resolve_transcription_script_path_from_roots(
     managed_root: Option<&Path>,
     manifest_dir: &Path,
@@ -288,6 +335,7 @@ fn resolve_transcription_script_path_from_roots(
     normalize_windows_path(manifest_dir.join("scripts/transcribe.py"))
 }
 
+#[cfg(feature = "local-ml")]
 fn resolve_transcription_model_cache_dir(
     managed_root: Option<&Path>,
     app_data_dir: &Path,
@@ -297,6 +345,7 @@ fn resolve_transcription_model_cache_dir(
         .unwrap_or_else(|| app_data_dir.join("hf_cache")))
 }
 
+#[cfg(feature = "local-ml")]
 fn create_whisper_engine(
     app_handle: &AppHandle,
     settings_db_path: Option<&Path>,
@@ -316,6 +365,7 @@ fn create_whisper_engine(
     })
 }
 
+#[cfg(feature = "local-ml")]
 pub fn transcribe_audio_file(
     app_handle: &AppHandle,
     settings_db_path: Option<&Path>,
@@ -350,10 +400,12 @@ pub(super) fn ensure_selected_cloud_key(conn: &rusqlite::Connection) -> Result<(
     Ok(())
 }
 
+#[cfg(feature = "local-ml")]
 pub fn local_transcription_available(settings_db_path: Option<&Path>) -> bool {
     which_python(settings_db_path).is_some()
 }
 
+#[cfg(feature = "local-ml")]
 fn transcribe_with_local_provider(
     app_handle: &AppHandle,
     settings_db_path: Option<&Path>,
@@ -395,6 +447,11 @@ pub(super) fn transcribe_with_selected_provider(
     let mode = get_stt_mode(conn);
     let assemblyai_api_key = get_assemblyai_api_key(conn);
 
+    // Lean build never touches the local provider, so this param is only used
+    // under local-ml. Silence the unused-variable warning when gated out.
+    #[cfg(not(feature = "local-ml"))]
+    let _ = settings_db_path;
+
     let emit_provider_progress = |pct: u8, stage: &str| {
         if let Some(asset_id) = asset_id {
             emit_progress(app_handle, asset_id, pct, stage);
@@ -403,6 +460,7 @@ pub(super) fn transcribe_with_selected_provider(
     let enable_role_speaker_identification = asset_id.is_some();
 
     match mode.as_str() {
+        #[cfg(feature = "local-ml")]
         STT_MODE_LOCAL => transcribe_with_local_provider(app_handle, settings_db_path, audio_path),
         STT_MODE_ASSEMBLYAI => {
             if assemblyai_api_key.is_empty() {
@@ -420,31 +478,34 @@ pub(super) fn transcribe_with_selected_provider(
             )
         }
         STT_MODE_AUTO => {
-            let local_available = local_transcription_available(settings_db_path);
+            #[cfg(feature = "local-ml")]
+            {
+                let local_available = local_transcription_available(settings_db_path);
 
-            if local_available {
-                match transcribe_with_local_provider(app_handle, settings_db_path, audio_path) {
-                    Ok(result) => return Ok(result),
-                    Err(local_error) => {
-                        eprintln!("[transcription] Local STT failed in auto mode, trying AssemblyAI fallback: {local_error}");
+                if local_available {
+                    match transcribe_with_local_provider(app_handle, settings_db_path, audio_path) {
+                        Ok(result) => return Ok(result),
+                        Err(local_error) => {
+                            eprintln!("[transcription] Local STT failed in auto mode, trying AssemblyAI fallback: {local_error}");
 
-                        if assemblyai_api_key.is_empty() {
-                            return Err(format!(
-                                "La transcripción local falló y no hay fallback cloud configurado. Error local: {local_error}"
-                            ));
+                            if assemblyai_api_key.is_empty() {
+                                return Err(format!(
+                                    "La transcripción local falló y no hay fallback cloud configurado. Error local: {local_error}"
+                                ));
+                            }
+
+                            return transcribe_with_assemblyai_provider(
+                                audio_path,
+                                &assemblyai_api_key,
+                                enable_role_speaker_identification,
+                                emit_provider_progress,
+                            )
+                                .map_err(|cloud_error| {
+                                    format!(
+                                        "La transcripción local falló y el fallback con AssemblyAI también falló. Error local: {local_error}\nError AssemblyAI: {cloud_error}"
+                                    )
+                                });
                         }
-
-                        return transcribe_with_assemblyai_provider(
-                            audio_path,
-                            &assemblyai_api_key,
-                            enable_role_speaker_identification,
-                            emit_provider_progress,
-                        )
-                            .map_err(|cloud_error| {
-                                format!(
-                                    "La transcripción local falló y el fallback con AssemblyAI también falló. Error local: {local_error}\nError AssemblyAI: {cloud_error}"
-                                )
-                            });
                     }
                 }
             }
@@ -466,7 +527,26 @@ pub(super) fn transcribe_with_selected_provider(
                 emit_provider_progress,
             )
         }
+        #[cfg(feature = "local-ml")]
         _ => transcribe_with_local_provider(app_handle, settings_db_path, audio_path),
+        // Lean build: LOCAL + unknown modes have no local engine, so route to
+        // AssemblyAI (mirrors Lite's AssemblyAI-only shape).
+        #[cfg(not(feature = "local-ml"))]
+        _ => {
+            if assemblyai_api_key.is_empty() {
+                return Err(
+                    "AssemblyAI no está configurado. Andá a Configuración > STT y cargá una API key antes de transcribir."
+                        .to_string(),
+                );
+            }
+
+            transcribe_with_assemblyai_provider(
+                audio_path,
+                &assemblyai_api_key,
+                enable_role_speaker_identification,
+                emit_provider_progress,
+            )
+        }
     }
 }
 
@@ -484,6 +564,7 @@ pub fn cleanup_temp_audio_file(audio_path: &str) -> Result<(), String> {
 ///
 /// Uses the shared Python candidate cache to avoid redundant filesystem scans
 /// and log noise. Probes each candidate for the `faster_whisper` module.
+#[cfg(feature = "local-ml")]
 fn which_python(settings_db_path: Option<&std::path::Path>) -> Option<std::path::PathBuf> {
     crate::python_discovery::which_python_for_module(
         "transcription",
@@ -494,7 +575,7 @@ fn which_python(settings_db_path: Option<&std::path::Path>) -> Option<std::path:
     )
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "local-ml"))]
 mod tests {
     use super::*;
     use crate::runtime::status::{RuntimeCapability, RuntimeState, RuntimeStatus};

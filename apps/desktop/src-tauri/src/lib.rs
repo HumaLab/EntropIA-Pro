@@ -313,6 +313,9 @@ pub fn run() {
                 .expect("Failed to create app_settings table");
             eprintln!("[setup] app_settings table ensured");
 
+            settings::migrate_legacy_default_openrouter_model(&ui_conn)
+                .expect("Failed to migrate legacy default OpenRouter model");
+
             // OCR worker connection
             let worker_conn = rusqlite::Connection::open(&db_path)
                 .expect("Failed to open SQLite database (worker)");

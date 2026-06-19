@@ -9,6 +9,10 @@ use crate::db::state::AppDbState;
 #[cfg(feature = "local-ml")]
 use crate::runtime::bootstrap_types::BootstrapRemoteSource;
 
+const OPENROUTER_MODEL_KEY: &str = "openrouter_model";
+const LEGACY_DEFAULT_OPENROUTER_MODEL: &str = "google/gemma-3-4b-it";
+pub(crate) const DEFAULT_OPENROUTER_MODEL: &str = "google/gemma-4-26b-a4b-it";
+
 pub const RUNTIME_BOOTSTRAP_MANIFEST_URL_KEY: &str = "runtime_bootstrap_manifest_url";
 pub const RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID_KEY: &str = "runtime_bootstrap_public_key_id";
 pub const RUNTIME_BOOTSTRAP_PUBLIC_KEY_KEY_PREFIX: &str = "runtime_bootstrap_public_key.";
@@ -196,6 +200,23 @@ pub fn set_setting(
 pub fn delete_setting(conn: &rusqlite::Connection, key: &str) -> Result<(), rusqlite::Error> {
     conn.execute("DELETE FROM app_settings WHERE key = ?1", params![key])?;
     Ok(())
+}
+
+/// One-shot rename of the stale default OpenRouter model. Rows whose
+/// `openrouter_model` value still equals the legacy default get bumped to the
+/// new default; user-customized values are untouched (the WHERE clause only
+/// matches the exact legacy string). Feature-agnostic — runs once at setup.
+pub fn migrate_legacy_default_openrouter_model(conn: &rusqlite::Connection) -> Result<(), String> {
+    conn.execute(
+        "UPDATE app_settings SET value = ?1 WHERE key = ?2 AND value = ?3",
+        rusqlite::params![
+            DEFAULT_OPENROUTER_MODEL,
+            OPENROUTER_MODEL_KEY,
+            LEGACY_DEFAULT_OPENROUTER_MODEL
+        ],
+    )
+    .map(|_| ())
+    .map_err(|e| format!("Failed to migrate default OpenRouter model: {e}"))
 }
 
 #[cfg(feature = "local-ml")]

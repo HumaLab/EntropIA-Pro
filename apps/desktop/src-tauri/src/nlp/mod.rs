@@ -840,11 +840,24 @@ async fn run_configured_ner_input(
         return Ok(Vec::new());
     }
 
+    // Lean build routes NER straight to OpenRouter and never touches the local
+    // (spaCy / Gemma) engines, so these params are only consumed under local-ml.
+    #[cfg(not(feature = "local-ml"))]
+    {
+        let _ = app_handle;
+        let _ = db_path;
+    }
+
     // Prefer a non-empty spaCy result. An EMPTY spaCy pass (model resolved but
     // found nothing for this text) must NOT short-circuit the LLM fallback — on a
     // re-run that would silently produce zero entities and, combined with the
     // persist step, wipe a richer earlier Gemma result. Fall through so Gemma can
     // re-derive the entities; the call-site empty-guard is the final safety net.
+    //
+    // Under the lean build (no local-ml) spaCy is compiled out entirely, so this
+    // attempt is skipped and control falls straight through to the OpenRouter
+    // fallback below — matching Lite's OpenRouter-only NER shape.
+    #[cfg(feature = "local-ml")]
     match run_spacy_ner(app_handle, db_path, &input).await {
         Ok(entities) if !entities.is_empty() => return Ok(entities),
         Ok(_) => {
@@ -919,6 +932,7 @@ fn ner_fallback_config(conn: &rusqlite::Connection) -> NerFallbackConfig {
     NerFallbackConfig { mode, openrouter }
 }
 
+#[cfg(feature = "local-ml")]
 async fn run_spacy_ner(
     app_handle: &AppHandle,
     db_path: &std::path::Path,
