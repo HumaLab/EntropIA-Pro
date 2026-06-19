@@ -6,120 +6,42 @@ on:
   workflow_dispatch:
     inputs:
       release_platform:
-        description: 'Platforms to build from manual dispatch. Tag pushes are guarded and fail until runtime payload inputs are provided via workflow_dispatch.'
+        description: 'Platforms to build from manual dispatch.'
         required: false
         default: 'windows'
         type: choice
         options:
           - windows
           - all
-      runtime_payload_artifact:
-        description: 'Release runtime payload artifact name from the Runtime Payload workflow, usually runtime-payloads. Required for Windows/Linux releases.'
-        required: false
-        type: string
-      runtime_payload_run_id:
-        description: 'Workflow run ID that produced runtime_payload_artifact. Required when using the Runtime Payload workflow artifact.'
-        required: false
-        type: string
 
 env:
   PNPM_VERSION: 9.15.4
   MACOSX_DEPLOYMENT_TARGET: '10.15'
   CMAKE_OSX_DEPLOYMENT_TARGET: '10.15'
+  # LEAN INSTALLER: the ~2.2GB ML runtime is NOT bundled (it overruns the NSIS/WiX
+  # 2 GiB bundler limits). The app ships the tiny runtime-pack fixture and downloads
+  # the real runtime at first launch from this ed25519-signed source, published by
+  # the Publish Runtime Bootstrap workflow. These three vars are read at COMPILE time
+  # via option_env!() (settings.rs) and pinned by build.rs rerun-if-env-changed.
+  ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL: https://github.com/HumaLab/EntropIA-Pro/releases/download/runtime-bootstrap/manifest.json
+  ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID: entropia-runtime-2026
+  ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64: fSt35Xo0XtpdZUH/Q2gsPm1drMZczLMQNcU6fqAEbi0=
 
 jobs:
-  runtime-pack:
-    name: Runtime pack ${{ matrix.runtime_pack_platform }}
-    permissions:
-      contents: read
-      actions: read
-    strategy:
-      fail-fast: false
-      matrix:
-        # Keep this in sync with the release build matrix, but only include
-        # platforms that ship a runtime-pack. macOS has no runtime-pack today.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64"}]' || '[{"name":"windows-latest","platform":"windows-latest","runtime_pack_platform":"windows-x86_64"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","runtime_pack_platform":"linux-x86_64"}]') }}
-    runs-on: ${{ matrix.platform }}
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v6
-
-      - name: Setup Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: '3.11'
-
-      - name: Require release runtime payload
-        shell: bash
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          RUNTIME_PAYLOAD_ARTIFACT: ${{ inputs.runtime_payload_artifact }}
-          RUNTIME_PAYLOAD_RUN_ID: ${{ inputs.runtime_payload_run_id }}
-        run: |
-          set -euo pipefail
-          if [ "$EVENT_NAME" = "push" ]; then
-            echo "::error::Tag-push releases cannot provide the required runtime payload inputs. Use workflow_dispatch with runtime_payload_artifact and runtime_payload_run_id so release builds cannot ship fixture runtime packs."
-            exit 1
-          fi
-          if [ -z "$RUNTIME_PAYLOAD_ARTIFACT" ]; then
-            echo "::error::${{ matrix.runtime_pack_platform }} releases require runtime_payload_artifact=runtime-payloads. Run the Runtime Payload workflow first."
-            exit 1
-          fi
-          if [ -z "$RUNTIME_PAYLOAD_RUN_ID" ]; then
-            echo "::error::${{ matrix.runtime_pack_platform }} releases require runtime_payload_run_id so this workflow can download the Runtime Payload artifact from the correct run."
-            exit 1
-          fi
-
-      - name: Download release runtime payload artifact
-        uses: actions/download-artifact@v6
-        with:
-          name: ${{ inputs.runtime_payload_artifact }}
-          path: ${{ runner.temp }}/runtime-payloads
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          run-id: ${{ inputs.runtime_payload_run_id }}
-
-      - name: Assemble runtime-pack payload (release required)
-        shell: bash
-        run: |
-          set -euo pipefail
-          RUNTIME_PAYLOAD_ROOT="${RUNNER_TEMP}/runtime-payloads"
-          ASSEMBLED_RUNTIME_PACK_ROOT="apps/desktop/src-tauri/target/runtime-pack"
-          python apps/desktop/src-tauri/scripts/build_runtime_pack.py --platform ${{ matrix.runtime_pack_platform }} --payload-root "$RUNTIME_PAYLOAD_ROOT" --output-dir "$ASSEMBLED_RUNTIME_PACK_ROOT" --require-release-payload
-
-      - name: runtime-pack-smoke
-        shell: bash
-        run: python apps/desktop/src-tauri/scripts/runtime-pack-smoke.py --platform ${{ matrix.runtime_pack_platform }} --root apps/desktop/src-tauri/target/runtime-pack --release --install-probe
-
-      - name: Upload assembled runtime-pack
-        uses: actions/upload-artifact@v6
-        with:
-          name: assembled-runtime-pack-${{ matrix.runtime_pack_platform }}
-          path: apps/desktop/src-tauri/target/runtime-pack/${{ matrix.runtime_pack_platform }}
-          if-no-files-found: error
-
   build:
     name: Build ${{ matrix.name }}
-    needs: [runtime-pack]
     permissions:
       contents: write
       actions: read
     strategy:
       fail-fast: false
       matrix:
-        # Safe default: manual releases build Windows unless all is requested.
-        # Tag pushes still enter the Windows matrix, but runtime-pack validation
-        # fails first because tag events cannot provide release payload inputs.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":"","runtime_pack_platform":"windows-x86_64"}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":"","runtime_pack_platform":"windows-x86_64"},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin","runtime_pack_platform":""},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":"","runtime_pack_platform":"linux-x86_64"}]') }}
+        # Default dispatch + tag pushes build Windows only. `all` adds macOS + Linux.
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":""}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":""},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":""}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v6
-
-      - name: Select runtime-pack platform
-        id: runtime_pack
-        shell: bash
-        run: |
-          echo "platform=${{ matrix.runtime_pack_platform }}" >> "$GITHUB_OUTPUT"
 
       - name: Install Linux system dependencies
         if: matrix.platform == 'ubuntu-22.04'
@@ -159,28 +81,19 @@ jobs:
         shell: pwsh
         run: npm exec --package=pnpm@${{ env.PNPM_VERSION }} -- pnpm install --frozen-lockfile
 
-      - name: Clear bundled runtime-pack fixture
-        if: steps.runtime_pack.outputs.platform != ''
-        shell: bash
-        run: |
-          PLATFORM="${{ steps.runtime_pack.outputs.platform }}"
-          rm -rf "apps/desktop/src-tauri/resources/runtime-pack/$PLATFORM"
-
-      - name: Inject assembled runtime-pack into bundle resources
-        if: steps.runtime_pack.outputs.platform != ''
-        uses: actions/download-artifact@v6
-        with:
-          name: assembled-runtime-pack-${{ steps.runtime_pack.outputs.platform }}
-          path: apps/desktop/src-tauri/resources/runtime-pack/${{ steps.runtime_pack.outputs.platform }}
-
+      # No runtime-pack injection: the committed fixture ships as-is so the app
+      # detects "runtime not ready" and bootstraps it from the baked signed source.
       - name: Build Tauri application
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL }}
+          ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID }}
+          ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64 }}
         with:
           tagName: ${{ github.ref_name }}
           releaseName: 'EntropIA Pro ${{ github.ref_name }}'
-          releaseBody: 'See the assets below to download the EntropIA Pro installer for your platform.'
+          releaseBody: 'See the assets below to download the EntropIA Pro installer for your platform. The local ML runtime downloads automatically on first launch.'
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.build_args }}
