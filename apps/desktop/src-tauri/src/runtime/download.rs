@@ -101,6 +101,25 @@ pub fn bootstrap_download_plan_paths(
     }
 }
 
+/// Removes the partially-downloaded archive (temp and/or finalized) if the bootstrap
+/// fails before it is committed, so a failed multi-GB download doesn't leave a stale
+/// file that piles up across retries. On success the guard is committed and the
+/// archive is kept (existing behavior).
+struct PartialDownloadGuard {
+    tmp: PathBuf,
+    archive: PathBuf,
+    committed: bool,
+}
+
+impl Drop for PartialDownloadGuard {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = fs::remove_file(&self.tmp);
+            let _ = fs::remove_file(&self.archive);
+        }
+    }
+}
+
 pub fn download_and_activate_remote_runtime<F>(
     source_manifest_url: &str,
     release: &BootstrapReleaseManifest,
@@ -197,6 +216,13 @@ where
     );
 
     let tmp_archive_path = paths.archive_path.with_extension("download.tmp");
+    // Remove the partial archive (temp before rename, finalized after) if anything
+    // below fails, so a failed multi-GB download doesn't leak across retries.
+    let mut partial_guard = PartialDownloadGuard {
+        tmp: tmp_archive_path.clone(),
+        archive: paths.archive_path.clone(),
+        committed: false,
+    };
     let mut archive_file = fs::File::create(&tmp_archive_path).map_err(|error| {
         format!(
             "Failed to create temporary archive {}: {error}",
@@ -366,6 +392,8 @@ where
         })?;
     }
 
+    // Verified, extracted, and promoted — keep the archive and disarm the cleanup.
+    partial_guard.committed = true;
     Ok(BootstrapDownloadOutcome {
         archive_path: paths.archive_path,
         staging_path: paths.staging_path,
