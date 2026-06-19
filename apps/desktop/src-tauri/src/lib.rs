@@ -116,7 +116,12 @@ pub fn run() {
 
         // Suppress CRT debug assertions in debug builds.
         // Routes assertion output to stderr instead of a blocking dialog.
-        #[cfg(debug_assertions)]
+        // `_CrtSetReportMode` lives in the MSVC DEBUG CRT (ucrtbased), which is only
+        // linked when a native C++ dep is built with /MDd — i.e. the local-ml ML libs
+        // (MNN via ocr-rs, llama.cpp). The lean (API-only) build links none of them, so
+        // the symbol would be unresolved (LNK2019). It is also only relevant there: the
+        // lean variant has no native ML libs to throw CRT assertions, so gate it off.
+        #[cfg(all(debug_assertions, feature = "local-ml"))]
         {
             extern "C" {
                 fn _CrtSetReportMode(reportType: i32, reportMode: i32) -> i32;
