@@ -29,17 +29,17 @@ regex = "1"
 once_cell = "1"
 uuid = { version = "1", features = ["v4"] }
 tempfile = "3"
-ndarray = "=0.16.1"
-ort = { version = "=2.0.0-rc.10", default-features = false, features = ["ndarray", "load-dynamic"] }
-tokenizers = { version = "0.15", default-features = false, features = ["onig"] }
+ndarray = { version = "=0.16.1", optional = true }
+ort = { version = "=2.0.0-rc.10", default-features = false, features = ["ndarray", "load-dynamic"], optional = true }
+tokenizers = { version = "0.15", default-features = false, features = ["onig"], optional = true }
 encoding_rs = "0.8"
-llama-cpp-2 = "0.1"
+llama-cpp-2 = { version = "0.1", optional = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "stream", "blocking", "rustls-tls", "rustls-tls-native-roots"] }
-zip = { version = "2", default-features = false, features = ["deflate"] }
+zip = { version = "2", default-features = false, features = ["deflate"], optional = true }
 urlencoding = "2"
 sha2 = "0.10"
 base64 = "0.22"
-ed25519-dalek = "2"
+ed25519-dalek = { version = "2", optional = true }
 # Audio preview decoding (prepare_audio_preview command): decode arbitrary
 # source audio to a PCM16 WAV the webview <audio> element can play.
 symphonia = { version = "0.5", features = ["all"] }
@@ -69,7 +69,22 @@ opt-level = "s"
 strip = true
 
 [features]
-default = ["paddle-ocr"]
+# local-ml bundles every local-inference capability: local OCR (MNN/PaddleOCR via
+# the paddle-ocr sub-feature), local embeddings + LLM (ort / llama.cpp), and the
+# signed managed-runtime download (ed25519 / zip). Building with
+# `--no-default-features` drops all of it and yields the API-only "lite" variant.
+# It stays the DEFAULT until the strangler migration is complete, so the Pro build
+# remains the green target throughout (the default flips to [] only at the end).
+default = ["local-ml"]
+local-ml = [
+    "paddle-ocr",
+    "dep:ort",
+    "dep:ndarray",
+    "dep:tokenizers",
+    "dep:llama-cpp-2",
+    "dep:ed25519-dalek",
+    "dep:zip",
+]
 # The paddle-ocr feature requires MNN to be built from source on Windows
 # (prebuilt MNN libs have a linker issue: __std_min_4i/__std_max_4i unresolved).
 # The build-mnn-from-source flag in the ocr-rs dependency ensures MNN compiles

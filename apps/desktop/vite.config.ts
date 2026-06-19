@@ -6,8 +6,18 @@ import { resolve } from 'path'
 // comparison is required because 'false' is truthy.
 const isTauriDebug = process.env.TAURI_ENV_DEBUG === 'true'
 
+// Build-variant switch for the strangler unification (Lite/Pro from one tree).
+// '1' = full build (local OCR/LLM/embeddings UI); '0' = API-only "lite" variant.
+// CI must drive this from the SAME matrix dimension that selects the Cargo
+// `local-ml` feature so the Rust backend and the frontend never disagree about
+// which variant is being built. Defaults to '1' (Pro) for local dev.
+const localMl = process.env.VITE_LOCAL_ML ?? '1'
+
 export default defineConfig({
   plugins: [svelte()],
+  define: {
+    'import.meta.env.VITE_LOCAL_ML': JSON.stringify(localMl),
+  },
   optimizeDeps: {
     // Restrict dep-scan to the real frontend entry.
     // Without this, Vite may crawl every HTML file under apps/desktop,
