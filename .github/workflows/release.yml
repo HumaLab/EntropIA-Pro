@@ -44,7 +44,7 @@ jobs:
       fail-fast: false
       matrix:
         # Default dispatch + tag pushes build Windows only. `all` adds macOS + Linux.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":""}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis","rust_target":""},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":""}]') }}
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis,msi","rust_target":""}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis,msi","rust_target":""},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":""}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
