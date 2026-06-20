@@ -15,7 +15,7 @@ EntropIA organiza colecciones, procesa imágenes/PDFs/audio, y enriquece resulta
 | LLM / NER / RAG | Gemma local + OpenRouter | OpenRouter |
 | Embeddings | BGE-M3 local (ONNX) + OpenRouter | OpenRouter |
 | Runtime ML nativo | sí (se descarga al 1er uso) | no |
-| Instalador | NSIS liviano | MSIX (Microsoft Store) |
+| Instalador | NSIS + MSI (GitHub) | NSIS + MSI (GitHub) · MSIX (Store) |
 | Identidad | `com.entropia.pro.desktop` | `CONICET.EntropIALite` |
 | Se construye con | features default (`local-ml`) + `VITE_LOCAL_ML=1` | `--no-default-features` + `VITE_LOCAL_ML=0` |
 
@@ -23,8 +23,8 @@ EntropIA organiza colecciones, procesa imágenes/PDFs/audio, y enriquece resulta
 
 ## Descarga
 
-- **EntropIA Pro** (Windows x64, instalador NSIS): [Releases del repo](https://github.com/HumaLab/EntropIA-Pro/releases).
-- **EntropIA Lite** (Microsoft Store): <https://apps.microsoft.com/detail/9N328K9L95JD>.
+- **EntropIA Pro** (Windows x64) — `.exe` (NSIS) + `.msi`: [Releases del repo](https://github.com/HumaLab/EntropIA-Pro/releases).
+- **EntropIA Lite** (Windows x64) — Microsoft Store: <https://apps.microsoft.com/detail/9N328K9L95JD>, o `.exe`/`.msi` desde [Releases del repo](https://github.com/HumaLab/EntropIA-Pro/releases).
 
 ## Capacidades
 
@@ -71,13 +71,13 @@ pnpm exec tauri build    # instalador NSIS
 ```powershell
 $env:VITE_LOCAL_ML='0'
 pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json -- --no-default-features
-pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles msi -- --no-default-features
+pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
 ```
 
 > - Usá **`pnpm exec tauri`** (no `pnpm tauri … -- …`): pnpm se come el primer `--` y rompe el pasaje de args a Cargo.
 > - En PowerShell `$env:VITE_LOCAL_ML` **persiste en la sesión** → seteálo en cada cambio de variante (o abrí terminal nueva). En bash va adelante: `VITE_LOCAL_ML=0 pnpm exec tauri …`.
 > - Lite usa `identifier com.entropia.lite` → **datos de app separados** de Pro (podés correr ambas sin pisarte).
-> - `tauri build` de Lite genera el **MSI**; el **MSIX** final de Store sale del repack (ver _Release e instaladores_).
+> - `tauri build` de Lite genera el **`.exe` (NSIS) + `.msi`**; el **MSIX** final de Store sale del repack (ver _Release e instaladores_).
 
 ### Validar
 
@@ -108,9 +108,9 @@ Flujo de release de Pro:
 
 1. **Build Runtime Pack** → arma el runtime-pack fresco (artifact `runtime-archive`).
 2. **Publish Runtime Bootstrap** con ese `runtime_pack_run_id` → parte el archivo bajo el límite de 2 GiB por asset, sube las partes al tag `runtime-bootstrap` y publica un `manifest.json` firmado.
-3. Push del tag `v*` → el workflow **Release** construye el instalador NSIS con la URL del manifiesto + la clave pública **horneadas** en el binario.
+3. Push del tag `v*` → el workflow **Release** construye los instaladores NSIS + MSI con la URL del manifiesto + la clave pública **horneadas** en el binario.
 
-**Lite — MSIX para Microsoft Store.** El job `build-lite` del workflow **Release** construye la variante lean y **repackea** un MSIX base capturado (`apps/desktop/src-tauri/msix/`), reescribiendo la identidad a `CONICET.EntropIALite` + la versión, y sube el `.msix` (sin firmar — la Store lo firma) como artifact para Partner Center.
+**Lite — instaladores en GitHub + MSIX para la Store.** El job `build-lite` del workflow **Release** construye la variante lean con `--bundles nsis,msi`; el job `attach-lite-installers` adjunta el `.exe` (NSIS) + `.msi` al release de GitHub (descargables igual que los de Pro). En paralelo, el `.msi` alimenta el **repack** de un MSIX base capturado (`apps/desktop/src-tauri/msix/`), reescribiendo la identidad a `CONICET.EntropIALite` + la versión; el `.msix` (sin firmar — la Store lo firma) se sube como artifact para Partner Center.
 
 - Para probar **solo** el MSIX de Lite sin la build de Pro: dispatch manual del workflow **Release** con la opción `lite_only=true` (o `gh workflow run release.yml -f lite_only=true`).
 - El MSIX base se re-captura (VM Hyper-V, manual) **solo** si cambia la forma del paquete (assets/capabilities); los releases de rutina solo cambian el exe + suben la versión.

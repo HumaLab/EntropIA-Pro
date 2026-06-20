@@ -15,7 +15,7 @@ EntropIA organizes collections, processes images/PDFs/audio, and enriches result
 | LLM / NER / RAG | local Gemma + OpenRouter | OpenRouter |
 | Embeddings | local BGE-M3 (ONNX) + OpenRouter | OpenRouter |
 | Native ML runtime | yes (downloaded on first use) | no |
-| Installer | lean NSIS | MSIX (Microsoft Store) |
+| Installer | NSIS + MSI (GitHub) | NSIS + MSI (GitHub) · MSIX (Store) |
 | Identity | `com.entropia.pro.desktop` | `CONICET.EntropIALite` |
 | Built with | default features (`local-ml`) + `VITE_LOCAL_ML=1` | `--no-default-features` + `VITE_LOCAL_ML=0` |
 
@@ -23,8 +23,8 @@ EntropIA organizes collections, processes images/PDFs/audio, and enriches result
 
 ## Download
 
-- **EntropIA Pro** (Windows x64, NSIS installer): [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
-- **EntropIA Lite** (Microsoft Store): <https://apps.microsoft.com/detail/9N328K9L95JD>.
+- **EntropIA Pro** (Windows x64) — `.exe` (NSIS) + `.msi`: [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
+- **EntropIA Lite** (Windows x64) — Microsoft Store: <https://apps.microsoft.com/detail/9N328K9L95JD>, or `.exe`/`.msi` from [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
 
 ## Capabilities
 
@@ -71,13 +71,13 @@ pnpm exec tauri build    # NSIS installer
 ```powershell
 $env:VITE_LOCAL_ML='0'
 pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json -- --no-default-features
-pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles msi -- --no-default-features
+pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
 ```
 
 > - Use **`pnpm exec tauri`** (not `pnpm tauri … -- …`): pnpm eats the first `--` and breaks arg passing to Cargo.
 > - In PowerShell `$env:VITE_LOCAL_ML` **persists for the session** → set it on every variant switch (or open a new terminal). In bash it goes inline: `VITE_LOCAL_ML=0 pnpm exec tauri …`.
 > - Lite uses `identifier com.entropia.lite` → **separate app data** from Pro (you can run both without clobbering each other).
-> - Lite's `tauri build` produces the **MSI**; the final Store **MSIX** comes from the repack (see _Release &amp; installers_).
+> - Lite's `tauri build` produces the **`.exe` (NSIS) + `.msi`**; the final Store **MSIX** comes from the repack (see _Release &amp; installers_).
 
 ### Validate
 
@@ -108,9 +108,9 @@ Pro release flow:
 
 1. **Build Runtime Pack** → builds a fresh runtime-pack (`runtime-archive` artifact).
 2. **Publish Runtime Bootstrap** with that `runtime_pack_run_id` → splits the archive under GitHub's 2 GiB per-asset limit, uploads the parts to the `runtime-bootstrap` tag, and publishes a signed `manifest.json`.
-3. Push a `v*` tag → the **Release** workflow builds the NSIS installer with the manifest URL + public key **baked** into the binary.
+3. Push a `v*` tag → the **Release** workflow builds the NSIS + MSI installers with the manifest URL + public key **baked** into the binary.
 
-**Lite — MSIX for Microsoft Store.** The `build-lite` job in the **Release** workflow builds the lean variant and **repacks** a captured base MSIX (`apps/desktop/src-tauri/msix/`), rewriting the identity to `CONICET.EntropIALite` + the version, and uploads the `.msix` (unsigned — the Store signs it) as an artifact for Partner Center.
+**Lite — GitHub installers + MSIX for the Store.** The `build-lite` job in the **Release** workflow builds the lean variant with `--bundles nsis,msi`; the `attach-lite-installers` job attaches the `.exe` (NSIS) + `.msi` to the GitHub release (downloadable like Pro's). In parallel, the `.msi` feeds the **repack** of a captured base MSIX (`apps/desktop/src-tauri/msix/`), rewriting the identity to `CONICET.EntropIALite` + the version; the `.msix` (unsigned — the Store signs it) is uploaded as an artifact for Partner Center.
 
 - To test **only** the Lite MSIX without the Pro build: manually dispatch the **Release** workflow with `lite_only=true` (or `gh workflow run release.yml -f lite_only=true`).
 - The base MSIX is re-captured (Hyper-V VM, manual) **only** if the package shape changes (assets/capabilities); routine releases just swap the exe + bump the version.
