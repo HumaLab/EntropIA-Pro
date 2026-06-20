@@ -3,7 +3,7 @@
   "identifier": "com.entropia.lite",
   "version": "1.0.5",
   "bundle": {
-    "targets": ["msi"],
+    "targets": ["nsis", "msi"],
     "resources": [
       "resources/*",
       "target/release/vc-runtime/*"

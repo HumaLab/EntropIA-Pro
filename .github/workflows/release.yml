@@ -146,7 +146,7 @@ jobs:
       # bootstrap env vars are KEPT: build.rs guard_lean_bootstrap_source() is gated on
       # PROFILE=release + target_os, NOT on the cargo feature, so it still requires a
       # baked download source for the fixture runtime-pack present in the source tree.
-      - name: Build lean Tauri MSI
+      - name: Build lean Tauri installers (NSIS + MSI)
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -156,29 +156,59 @@ jobs:
           ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64 }}
         with:
           # No release params: tauri-action only builds (does not create/touch a release).
+          # The NSIS .exe + WiX .msi are the distributable Lite installers (attached to the
+          # GitHub release by attach-lite-installers); the .msi also feeds the MSIX repack.
           # tauri-action runs from the repo root, so --config is root-relative
           # (unlike the local `apps/desktop`-relative `src-tauri/...`).
-          args: --config apps/desktop/src-tauri/tauri.lite.conf.json --bundles msi -- --no-default-features
+          args: --config apps/desktop/src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
 
-      # Locate the freshly built lean exe. The Pro crate name is entropia-pro-desktop,
-      # so the release binary is entropia-pro-desktop.exe; the repack renames it to
-      # entropia-lite-desktop.exe inside the MSIX payload (matches the AppxManifest).
-      - name: Locate lean exe and MSI
+      # Locate the built lean app exe (input to the MSIX repack) and the distributable
+      # installers (NSIS .exe + WiX .msi) for the GitHub release. The Pro crate name is
+      # entropia-pro-desktop, so the raw binary is entropia-pro-desktop.exe; the repack
+      # renames it to entropia-lite-desktop.exe inside the MSIX payload.
+      - name: Locate lean app exe + installers
         id: artifacts
         shell: pwsh
         run: |
           $releaseDir = "apps/desktop/src-tauri/target/release"
+          # Raw app exe (direct child of target/release) — input to the MSIX repack.
           $exe = Get-ChildItem -Path $releaseDir -Filter "*.exe" -File |
             Where-Object { $_.Name -notmatch 'build-script|deps' } |
             Sort-Object Length -Descending |
             Select-Object -First 1
-          if (-not $exe) { throw "No release exe found under $releaseDir" }
+          if (-not $exe) { throw "No release app exe found under $releaseDir" }
+          # Distributable installers (under bundle/) — uploaded to the GitHub release.
+          $setup = Get-ChildItem -Path "$releaseDir/bundle/nsis" -Filter "*-setup.exe" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
           $msi = Get-ChildItem -Path "$releaseDir/bundle/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue |
             Select-Object -First 1
-          "exe_path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          if ($msi) { "msi_path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append }
-          Write-Host "Lean exe: $($exe.FullName) ($($exe.Length) bytes)"
-          if ($msi) { Write-Host "MSI: $($msi.FullName)" }
+          if (-not $setup) { throw "No NSIS installer found under $releaseDir/bundle/nsis" }
+          if (-not $msi)   { throw "No MSI installer found under $releaseDir/bundle/msi" }
+          "exe_path=$($exe.FullName)"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "setup_path=$($setup.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "msi_path=$($msi.FullName)"     | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          Write-Host "App exe (repack): $($exe.FullName) ($($exe.Length) bytes)"
+          Write-Host "NSIS installer:   $($setup.FullName) ($($setup.Length) bytes)"
+          Write-Host "MSI installer:    $($msi.FullName) ($($msi.Length) bytes)"
+
+      # Stage the Lite installers and publish them as a build artifact. attach-lite-installers
+      # uploads these to the GitHub release on tag pushes; the artifact also lets a `lite_only`
+      # dispatch produce downloadable installers without touching a release.
+      - name: Stage Lite installers
+        shell: pwsh
+        run: |
+          $dst = "${{ runner.temp }}/lite-installers"
+          New-Item -ItemType Directory -Path $dst -Force | Out-Null
+          Copy-Item "${{ steps.artifacts.outputs.setup_path }}" $dst
+          Copy-Item "${{ steps.artifacts.outputs.msi_path }}" $dst
+          Get-ChildItem $dst | ForEach-Object { Write-Host "staged: $($_.Name) ($($_.Length) bytes)" }
+
+      - name: Upload Lite installers artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: EntropIALite-installers
+          path: ${{ runner.temp }}/lite-installers/*
+          if-no-files-found: error
 
       - name: Repack Store MSIX
         shell: pwsh
@@ -196,3 +226,30 @@ jobs:
           name: EntropIALite-msix
           path: ${{ runner.temp }}/msix-out/EntropIALite-Store-HLab-1.0.5.0.msix
           if-no-files-found: error
+
+  # Attaches the EntropIA Lite installers (NSIS .exe + WiX .msi, built by build-lite) to
+  # the GitHub release for the pushed tag, so Lite is downloadable from GitHub alongside
+  # Pro (the MSIX remains the Microsoft Store channel). Runs ONLY on tag pushes — never on
+  # the `lite_only` dispatch (that path just produces the EntropIALite-installers artifact).
+  # Needs `build` (creates the draft release + owns Pro assets) and `build-lite` (produces
+  # the installers artifact). To backfill an already-published release, download the same
+  # EntropIALite-installers artifact and `gh release upload <tag> ...` manually.
+  attach-lite-installers:
+    name: Attach Lite installers to release
+    needs: [build, build-lite]
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Download Lite installers
+        uses: actions/download-artifact@v4
+        with:
+          name: EntropIALite-installers
+          path: lite-installers
+
+      - name: Upload installers to the release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload "${{ github.ref_name }}" lite-installers/* --clobber --repo "${{ github.repository }}"
