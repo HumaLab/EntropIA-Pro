@@ -732,7 +732,11 @@ fn save_transcription(
     let segments_json = serde_json::to_string(&result.segments)
         .map_err(|e| format!("Failed to serialize segments: {e}"))?;
 
-    let id = uuid::Uuid::new_v4().to_string();
+    // Deterministic id: one transcription per asset (UNIQUE index on
+    // transcriptions.asset_id), so derive the id from asset_id to converge
+    // duplicates across devices. The UPSERT re-asserts `id = excluded.id` and
+    // fires only an UPDATE (no DELETE+INSERT tombstone in sync_oplog).
+    let id = format!("trx-{asset_id}");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -742,6 +746,7 @@ fn save_transcription(
         "INSERT INTO transcriptions(id, asset_id, text_content, language, duration_ms, model, segments, confidence, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
          ON CONFLICT(asset_id) DO UPDATE SET
+           id = excluded.id,
            text_content = excluded.text_content,
            language = excluded.language,
            duration_ms = excluded.duration_ms,

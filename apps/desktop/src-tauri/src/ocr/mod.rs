@@ -1177,9 +1177,12 @@ fn save_extraction(
     text_content: &str,
     method: &str,
 ) -> Result<(), String> {
-    // True UPSERT keyed by `asset_id` (requires UNIQUE index on extractions.asset_id).
-    // This avoids DELETE+INSERT churn and keeps writes atomic.
-    let id = uuid::Uuid::new_v4().to_string();
+    // Deterministic id: one extraction per asset (UNIQUE index on
+    // extractions.asset_id), so derive the id from asset_id to converge
+    // duplicates across devices. The UPSERT keyed by `asset_id` re-asserts
+    // `id = excluded.id` so the row stays on the deterministic id, and it
+    // fires only an UPDATE (no DELETE+INSERT tombstone in sync_oplog).
+    let id = format!("ext-{asset_id}");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -1189,6 +1192,7 @@ fn save_extraction(
         "INSERT INTO extractions(id, asset_id, text_content, method, confidence, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6)
          ON CONFLICT(asset_id) DO UPDATE SET
+           id = excluded.id,
            text_content = excluded.text_content,
            method = excluded.method,
            confidence = excluded.confidence,
@@ -1205,7 +1209,10 @@ fn save_layout(
     asset_id: &str,
     layout: &LayoutPersistencePayload,
 ) -> Result<(), String> {
-    let id = uuid::Uuid::new_v4().to_string();
+    // Deterministic id: one layout per asset (UNIQUE index on layouts.asset_id),
+    // so derive the id from asset_id to converge duplicates across devices. The
+    // UPSERT re-asserts `id = excluded.id` and fires only an UPDATE.
+    let id = format!("lay-{asset_id}");
     let now = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|d| d.as_millis() as i64)
@@ -1220,6 +1227,7 @@ fn save_layout(
         "INSERT INTO layouts(id, asset_id, regions, blocks, model, image_width, image_height, created_at)
          VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
          ON CONFLICT(asset_id) DO UPDATE SET
+           id = excluded.id,
            regions = excluded.regions,
            blocks = excluded.blocks,
            model = excluded.model,
@@ -2442,6 +2450,90 @@ mod tests {
             )
             .expect("remaining row count");
         assert_eq!(remaining, 0);
+    }
+
+    /// P5b forward-only deterministic sync ids: re-saving an extraction for the
+    /// same asset must converge to ONE row keyed by the deterministic id
+    /// `ext-{asset_id}` (UPDATE), and the sync_oplog must record an UPDATE
+    /// (`op='U'`) with NO DELETE tombstone — the #21 regression guard that an
+    /// `INSERT OR REPLACE` (DELETE+INSERT) would have tripped.
+    #[test]
+    fn save_extraction_uses_deterministic_id_and_updates_without_tombstone() {
+        use crate::sync::capture::ensure_capture;
+        use crate::sync::test_support::{new_synced_test_db, set_session_with_capture};
+
+        let conn = new_synced_test_db();
+        ensure_capture(&conn).expect("ensure capture");
+        set_session_with_capture(&conn);
+
+        // Seed the asset the extraction references (FK target).
+        conn.execute(
+            "INSERT INTO collections(id,name,created_at,updated_at) VALUES('c1','C',1,1)",
+            [],
+        )
+        .expect("seed collection");
+        conn.execute(
+            "INSERT INTO items(id,title,collection_id,created_at,updated_at) VALUES('i1','A','c1',1,1)",
+            [],
+        )
+        .expect("seed item");
+        conn.execute(
+            "INSERT INTO assets(id,item_id,path,type,created_at) VALUES('a1','i1','/p','image',1)",
+            [],
+        )
+        .expect("seed asset");
+        // Start from a clean oplog so we only observe the save_extraction ops.
+        conn.execute_batch("DELETE FROM sync_oplog;")
+            .expect("clear oplog");
+
+        // First save — INSERT.
+        save_extraction(&conn, "a1", "first text", "ocr").expect("first save");
+        // Second save for the SAME asset — must UPDATE the single row, not append.
+        save_extraction(&conn, "a1", "second text", "ocr").expect("second save");
+
+        // Exactly one row, carrying the deterministic id.
+        let (id, text): (String, String) = conn
+            .query_row(
+                "SELECT id, text_content FROM extractions WHERE asset_id = 'a1'",
+                [],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .expect("extraction row");
+        assert_eq!(id, "ext-a1", "id must be deterministic ext-{{asset_id}}");
+        assert_eq!(text, "second text", "second save must UPDATE the row");
+        let row_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM extractions WHERE asset_id = 'a1'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count");
+        assert_eq!(row_count, 1, "deterministic id must converge to one row");
+
+        // sync_oplog must show an UPDATE for ext-a1 and NO DELETE tombstone:
+        // ON CONFLICT(asset_id) DO UPDATE fires the AFTER UPDATE trigger ('U'),
+        // never the AFTER DELETE trigger ('D') that INSERT OR REPLACE would.
+        let deletes: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_oplog
+                 WHERE table_name='extractions' AND row_id='ext-a1' AND op='D'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count deletes");
+        assert_eq!(deletes, 0, "upsert must NOT emit a DELETE tombstone (#21 guard)");
+        let updates: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sync_oplog
+                 WHERE table_name='extractions' AND row_id='ext-a1' AND op='U'",
+                [],
+                |r| r.get(0),
+            )
+            .expect("count updates");
+        assert!(
+            updates >= 1,
+            "the second save must emit an UPDATE op for ext-a1"
+        );
     }
 
     #[test]

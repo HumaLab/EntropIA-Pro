@@ -558,6 +558,7 @@ mod tests {
         }
     }
 
+    #[cfg(feature = "local-ml")]
     fn source(index: u32, title: &str, collection: &str, snippet: &str) -> RagSource {
         RagSource {
             index,
@@ -741,6 +742,7 @@ mod tests {
         assert_eq!(last.chars().count(), "Usuario: ".chars().count() + 100);
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn build_local_rag_prompt_contains_numbered_fragments_history_and_question() {
         let sources = vec![
@@ -768,6 +770,7 @@ mod tests {
         assert!(prompt.contains("<start_of_turn>model"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn build_local_rag_prompt_without_history_omits_history_block() {
         let sources = vec![source(1, "Acta", "Archivo", "fragmento")];
@@ -777,6 +780,7 @@ mod tests {
         assert!(prompt.contains("Pregunta: pregunta"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn budget_context_for_local_passthrough_for_short_context() {
         let context = "[1] «Acta» (Archivo):\nun fragmento corto";

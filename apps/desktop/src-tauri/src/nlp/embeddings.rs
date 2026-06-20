@@ -1731,6 +1731,7 @@ mod tests {
         assert!(error.contains("configured BGE-M3 provider"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn compute_and_store_for_asset_reports_last_local_init_error_when_engine_missing() {
         let conn = Connection::open_in_memory().expect("in-memory sqlite should open");

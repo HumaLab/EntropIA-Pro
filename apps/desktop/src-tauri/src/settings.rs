@@ -398,8 +398,10 @@ fn get_runtime_bootstrap_public_key_with_builtin(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "local-ml")]
     use rusqlite::Connection;
 
+    #[cfg(feature = "local-ml")]
     fn in_memory_settings_db() -> Connection {
         let conn = Connection::open_in_memory().expect("in-memory db");
         conn.execute_batch(
@@ -441,6 +443,7 @@ mod tests {
         assert_eq!(entry.value, "google/gemma-3-4b-it");
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn returns_none_when_runtime_bootstrap_source_is_not_configured() {
         let conn = in_memory_settings_db();
@@ -451,6 +454,7 @@ mod tests {
         assert_eq!(source, None);
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn loads_runtime_bootstrap_source_from_builtin_defaults_when_settings_are_empty() {
         let conn = in_memory_settings_db();
@@ -472,6 +476,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn rejects_partially_configured_builtin_runtime_bootstrap_source() {
         let conn = in_memory_settings_db();
@@ -487,6 +492,7 @@ mod tests {
         assert!(error.contains("ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn rejects_stray_builtin_runtime_bootstrap_public_key_without_source() {
         let conn = in_memory_settings_db();
@@ -503,6 +509,7 @@ mod tests {
         assert!(error.contains("ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn loads_runtime_bootstrap_source_from_settings_when_complete_and_https() {
         let conn = in_memory_settings_db();
@@ -526,6 +533,7 @@ mod tests {
         );
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn rejects_partially_configured_runtime_bootstrap_source() {
         let conn = in_memory_settings_db();
@@ -542,6 +550,7 @@ mod tests {
         assert!(error.contains("missing public key id"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn rejects_non_https_runtime_bootstrap_source() {
         let conn = in_memory_settings_db();
@@ -560,6 +569,7 @@ mod tests {
         assert!(error.contains("HTTPS"));
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn loads_runtime_bootstrap_public_key_by_key_id() {
         let conn = in_memory_settings_db();
@@ -577,6 +587,7 @@ mod tests {
         assert_eq!(public_key, "base64-public-key");
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn loads_runtime_bootstrap_public_key_from_builtin_defaults() {
         let conn = in_memory_settings_db();
@@ -592,6 +603,7 @@ mod tests {
         assert_eq!(public_key, "base64-public-key");
     }
 
+    #[cfg(feature = "local-ml")]
     #[test]
     fn rejects_missing_runtime_bootstrap_public_key() {
         let conn = in_memory_settings_db();
