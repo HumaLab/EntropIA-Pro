@@ -72,13 +72,11 @@ function Invoke-Contract {
 # - default-features contract: PASS (must build/link clean; no MSVC LNK2001/LNK2019 or
 #   MNN __std_min_4i/__std_max_4i unresolved-symbol regressions). BLOCKING gate — this
 #   is the Pro (local-ml) build and must always compile.
-# - no-default baseline (lean variant): NON-BLOCKING DIAGNOSTIC during the local-ml
-#   strangler migration. Local ML (ort/onnxruntime, llama.cpp, MNN/PaddleOCR, the signed
-#   managed-runtime download) is now opt-in behind the `local-ml` feature (default-on),
-#   and the source that references it is being gated subsystem-by-subsystem (P1-P5). Until
-#   that gating completes, a `--no-default-features` build cannot link, so this lane runs
-#   as a [DIAG] that surfaces the shrinking compile punch-list without failing CI.
-#   Flip it back to a BLOCKING contract (drop -DiagnosticsOnly) once the lean variant
-#   links — strangler P5 — after which it becomes the permanent lean-build regression gate.
+# - no-default baseline (lean / EntropIA-Lite variant): BLOCKING gate. The local-ml
+#   strangler migration is COMPLETE — the lean (--no-default-features) build compiles
+#   AND links (API-only: OpenRouter / AssemblyAI / GLM remote, no native ML). This lane
+#   is now the permanent lean-build regression gate: any change that breaks the lean
+#   build fails CI here. (Local ML — ort/onnxruntime, llama.cpp, MNN/PaddleOCR, the
+#   signed managed-runtime download — is opt-in behind `local-ml`, default-on for Pro.)
 Invoke-Contract -Name "default-features contract" -CargoArgs @("build", "--manifest-path", $ManifestPath)
-Invoke-Contract -Name "no-default baseline (lean variant, WIP under local-ml strangler)" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--no-default-features") -DiagnosticsOnly $true
+Invoke-Contract -Name "no-default baseline (lean / EntropIA-Lite variant)" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--no-default-features")
