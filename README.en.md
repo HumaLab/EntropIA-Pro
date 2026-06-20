@@ -23,8 +23,8 @@ EntropIA organizes collections, processes images/PDFs/audio, and enriches result
 
 ## Download
 
-- **EntropIA Pro** (Windows x64) — `.exe` (NSIS) + `.msi`: [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
-- **EntropIA Lite** (Windows x64) — Microsoft Store: <https://apps.microsoft.com/detail/9N328K9L95JD>, or `.exe`/`.msi` from [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
+- **EntropIA Pro** (Windows x64) — `.exe` (NSIS) + `.msi`: [repo Releases](https://github.com/HumaLab/EntropIA-Pro-Lite/releases).
+- **EntropIA Lite** (Windows x64) — Microsoft Store: <https://apps.microsoft.com/detail/9N328K9L95JD>, or `.exe`/`.msi` from [repo Releases](https://github.com/HumaLab/EntropIA-Pro-Lite/releases).
 
 ## Capabilities
 
@@ -49,8 +49,8 @@ Same feature set in both variants — only the engine changes (local vs remote, 
 ### Install
 
 ```bash
-git clone git@github.com:HumaLab/EntropIA-Pro.git
-cd EntropIA-Pro
+git clone git@github.com:HumaLab/EntropIA-Pro-Lite.git
+cd EntropIA-Pro-Lite
 pnpm install --frozen-lockfile
 ```
 
