@@ -1,58 +1,49 @@
-# EntropIA Pro
+# EntropIA — Pro &amp; Lite (unified monorepo)
 
 **Español:** [README.md](./README.md)
 
-**Current release:** [v0.1.0](https://github.com/HumaLab/EntropIA-Pro/releases/tag/v0.1.0)
+A single source tree that produces **two variants** of the desktop app for research with document corpora: **EntropIA Pro** (local + remote AI) and **EntropIA Lite** (100% remote, via APIs). Both are built from the same tree; the variant is chosen at compile time.
 
-EntropIA Pro is a desktop application for research with document corpora. It lets you organize collections, process images/PDFs/audio, and enrich results with OCR, transcription, search, embeddings, entities, and semantic triples.
+EntropIA organizes collections, processes images/PDFs/audio, and enriches results with OCR, transcription, search, embeddings, entities, and semantic triples.
 
-The focus of `v0.1.0` is to provide a first functional Pro release for **Windows x64**, with its own application identity and a packaged runtime through the Pro repository release flow.
+## The two variants
+
+| | **EntropIA Pro** | **EntropIA Lite** |
+| --- | --- | --- |
+| OCR | local PaddleOCR-VL + remote GLM | remote GLM-OCR |
+| Transcription | local faster-whisper + AssemblyAI | AssemblyAI |
+| LLM / NER / RAG | local Gemma + OpenRouter | OpenRouter |
+| Embeddings | local BGE-M3 (ONNX) + OpenRouter | OpenRouter |
+| Native ML runtime | yes (downloaded on first use) | no |
+| Installer | lean NSIS | MSIX (Microsoft Store) |
+| Identity | `com.entropia.pro.desktop` | `CONICET.EntropIALite` |
+| Built with | default features (`local-ml`) + `VITE_LOCAL_ML=1` | `--no-default-features` + `VITE_LOCAL_ML=0` |
+
+**Pro** runs AI on the machine (offline-first) and falls back to remote providers when the runtime is missing or by configuration. **Lite** is 100% remote (OpenRouter / AssemblyAI / GLM): no native models or runtime, small installer, Microsoft Store distribution.
 
 ## Download
 
-Published installers are available at:
+- **EntropIA Pro** (Windows x64, NSIS installer): [repo Releases](https://github.com/HumaLab/EntropIA-Pro/releases).
+- **EntropIA Lite** (Microsoft Store): <https://apps.microsoft.com/detail/9N328K9L95JD>.
 
-<https://github.com/HumaLab/EntropIA-Pro/releases/tag/v0.1.0>
+## Capabilities
 
-| Operating system | Assets |
-| --- | --- |
-| Windows 10/11 x64 | `EntropIA.Pro_0.1.0_x64-setup.exe`, `EntropIA.Pro_0.1.0_x64_en-US.msi` |
+Same feature set in both variants — only the engine changes (local vs remote, see the table above):
 
-> macOS and Linux are not part of the published `v0.1.0` release.
-
-## Included capabilities
-
-- Corpus organization into collections, items, and local assets.
+- Corpus organization into collections, items, and local assets (SQLite).
 - Image, PDF, and audio ingestion.
-- Local SQLite persistence.
-- OCR Light for text extraction.
-- OCR High with PaddleOCR-VL for layout-aware results.
-- OCRH layout persistence: blocks, regions, pages, and bounding boxes.
-- Audio transcription with `faster-whisper` through a Python subprocess.
+- OCR Light + OCR High with layout persistence (blocks, regions, pages, bounding boxes).
+- Audio transcription.
 - LLM-assisted correction, summary, and semantic extraction.
-- Entities, triples, FTS, and asset-level embeddings.
+- Entities, triples, NER, FTS, and asset-level embeddings (RAG).
 - Notes, annotations, and manual result editing.
+- Cross-device sync (deterministic ids for duplicate-free convergence).
 
-## Real scope of `v0.1.0`
-
-`v0.1.0` is an initial Pro release. It is intended to validate the full Windows desktop app, installer, runtime-pack, and base functionality flow.
-
-The app prioritizes local/offline-first execution, but some advanced capabilities still depend on configuration or external runtimes.
-
-| Capability | Requires |
-| --- | --- |
-| Basic OCR | Native OCR models included with the app |
-| OCR High | Python runtime + `paddleocr[doc-parser]` |
-| Transcription | Python runtime + `faster-whisper` |
-| Embeddings | OpenRouter API key for `baai/bge-m3` |
-| Lightweight NER | OpenRouter API key + Gemma model through OpenRouter |
-
-## Development from source
+## Development
 
 ### Requirements
 
-- Node.js 22+
-- pnpm 9
+- Node.js 22+, pnpm 9
 - Stable Rust / MSVC toolchain on Windows
 
 ### Install
@@ -63,36 +54,66 @@ cd EntropIA-Pro
 pnpm install --frozen-lockfile
 ```
 
-### Run in development
+### Run &amp; build each variant
 
-```bash
-pnpm --filter @entropia-pro/desktop tauri dev
+Everything runs from **`apps/desktop/`**. The variant is selected by three things: the Cargo feature (`--no-default-features` for Lite), the `VITE_LOCAL_ML` frontend flag, and (for Lite) the `tauri.lite.conf.json` Tauri config.
+
+**EntropIA Pro** (compiles MNN from source the first time → ~30 min):
+
+```powershell
+$env:VITE_LOCAL_ML='1'
+pnpm exec tauri dev      # dev with hot-reload
+pnpm exec tauri build    # NSIS installer
 ```
+
+**EntropIA Lite** (lean, no MNN → starts fast):
+
+```powershell
+$env:VITE_LOCAL_ML='0'
+pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json -- --no-default-features
+pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles msi -- --no-default-features
+```
+
+> - Use **`pnpm exec tauri`** (not `pnpm tauri … -- …`): pnpm eats the first `--` and breaks arg passing to Cargo.
+> - In PowerShell `$env:VITE_LOCAL_ML` **persists for the session** → set it on every variant switch (or open a new terminal). In bash it goes inline: `VITE_LOCAL_ML=0 pnpm exec tauri …`.
+> - Lite uses `identifier com.entropia.lite` → **separate app data** from Pro (you can run both without clobbering each other).
+> - Lite's `tauri build` produces the **MSI**; the final Store **MSIX** comes from the repack (see _Release &amp; installers_).
 
 ### Validate
 
 ```bash
-pnpm typecheck
-pnpm test
-pnpm lint
-cargo check --manifest-path apps/desktop/src-tauri/Cargo.toml
+pnpm typecheck                                                  # Pro (frontend)
+VITE_LOCAL_ML=0 pnpm --filter @entropia-pro/desktop typecheck   # Lite (frontend)
+pnpm test                                                       # frontend tests (Pro)
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml                        # Pro (Rust)
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features  # Lite (Rust)
 ```
 
-### Frontend build
+## How the variant flag works
 
-```bash
-pnpm build
-```
+The unification is a **strangler** over the Pro code: all local inference lives behind the `local-ml` Cargo feature (with a `paddle-ocr` sub-feature for MNN/PaddleOCR), mirrored by the `VITE_LOCAL_ML` frontend flag.
 
-## Runtime-pack and release
+- **`cargo build` (default)** = `local-ml` ON → **Pro** (local + remote engines).
+- **`cargo build --no-default-features`** = lean → **Lite** (remote only). Drops `ort`/onnxruntime, `llama-cpp-2`, MNN/`ocr-rs`, `tokenizers`, and the signed runtime download.
+- The **frontend** reads `VITE_LOCAL_ML`: in Lite it hides DependenciasTab, the deps banners, and the local-model UI, and the brand becomes "EntropIA Lite".
+- The **Tauri command list is identical** in both variants; only the bodies branch (the Lite arm returns healthy/no-op, like EntropIA Lite did).
 
-The repository includes `runtime-pack` fixtures so the layout can be verified in CI without committing heavy payloads. Real releases use **release-time artifact injection**:
+CI requires **both** variants to compile — the lean build is a **blocking** gate — and verifies the lean-frontend typecheck on every push.
 
-1. Run the **Runtime Payload** workflow to produce `runtime-payloads`.
-2. Run the **Release** workflow manually with `runtime_payload_artifact=runtime-payloads` and `runtime_payload_run_id=<run id>`.
-3. The workflow assembles the final runtime-pack, runs smoke checks, and only then builds the installers.
+## Release &amp; installers
 
-Direct pushes of `v*` tags fail closed if no real runtime payload exists. This prevents publishing installers with fixtures.
+**Pro — lean installer + download-on-first-use.** The AI runtime (~2.2GB) does not fit inside a Windows installer (NSIS and WiX fail above ~2GB). The installer ships the small `runtime-pack` fixture and the app downloads the real runtime on first use from a signed remote source (ed25519), verifying signature + sha256 before trusting it. `build.rs` fails closed if a release build embeds the fixture without a baked bootstrap source.
+
+Pro release flow:
+
+1. **Build Runtime Pack** → builds a fresh runtime-pack (`runtime-archive` artifact).
+2. **Publish Runtime Bootstrap** with that `runtime_pack_run_id` → splits the archive under GitHub's 2 GiB per-asset limit, uploads the parts to the `runtime-bootstrap` tag, and publishes a signed `manifest.json`.
+3. Push a `v*` tag → the **Release** workflow builds the NSIS installer with the manifest URL + public key **baked** into the binary.
+
+**Lite — MSIX for Microsoft Store.** The `build-lite` job in the **Release** workflow builds the lean variant and **repacks** a captured base MSIX (`apps/desktop/src-tauri/msix/`), rewriting the identity to `CONICET.EntropIALite` + the version, and uploads the `.msix` (unsigned — the Store signs it) as an artifact for Partner Center.
+
+- To test **only** the Lite MSIX without the Pro build: manually dispatch the **Release** workflow with `lite_only=true` (or `gh workflow run release.yml -f lite_only=true`).
+- The base MSIX is re-captured (Hyper-V VM, manual) **only** if the package shape changes (assets/capabilities); routine releases just swap the exe + bump the version.
 
 ## Useful documentation
 
