@@ -13,6 +13,11 @@ on:
         options:
           - windows
           - all
+      lite_only:
+        description: 'Test ONLY the EntropIA Lite MSIX (skip the Pro build + draft release).'
+        required: false
+        default: false
+        type: boolean
 
 env:
   PNPM_VERSION: 9.15.4
@@ -30,6 +35,8 @@ env:
 jobs:
   build:
     name: Build ${{ matrix.name }}
+    # Skipped when dispatched with lite_only=true (focused EntropIA Lite MSIX test).
+    if: ${{ inputs.lite_only != true }}
     permissions:
       contents: write
       actions: read
