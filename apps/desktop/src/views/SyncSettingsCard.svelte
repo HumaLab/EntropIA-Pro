@@ -164,10 +164,55 @@
 
   async function refreshDevices() {
     try {
-      devices = await syncListDevices()
+      devices = collapseDevices(await syncListDevices())
     } catch (error) {
       setError(error)
     }
+  }
+
+  /**
+   * Collapses historical duplicate device rows down to a single current state per
+   * physical device. Repeated logout/login cycles can produce different device ids
+   * with the same visible identity (name + platform); the UI should show the best
+   * representative instead of the whole session history.
+   */
+  function collapseDevices(rows: SyncDevice[]): SyncDevice[] {
+    const normalize = (value: string | null | undefined): string =>
+      (value ?? '').trim().toLowerCase()
+    const keyOf = (device: SyncDevice): string => {
+      const name = normalize(device.name)
+      const platform = normalize(device.platform)
+      return name || platform ? `${name}|${platform}` : `id:${device.id}`
+    }
+    const priority = (device: SyncDevice): number => {
+      if (device.current) return 2
+      if (!device.revoked) return 1
+      return 0
+    }
+    const newer = (a: SyncDevice, b: SyncDevice): SyncDevice => {
+      if (a.last_seen_at !== b.last_seen_at) return a.last_seen_at > b.last_seen_at ? a : b
+      return a.created_at >= b.created_at ? a : b
+    }
+
+    const groups = new Map<string, SyncDevice>()
+    for (const row of rows) {
+      const key = keyOf(row)
+      const existing = groups.get(key)
+      if (!existing) {
+        groups.set(key, row)
+        continue
+      }
+
+      const incomingPriority = priority(row)
+      const existingPriority = priority(existing)
+      if (incomingPriority > existingPriority) {
+        groups.set(key, row)
+      } else if (incomingPriority === existingPriority) {
+        groups.set(key, newer(row, existing))
+      }
+    }
+
+    return Array.from(groups.values())
   }
 
   async function refreshUsage() {

@@ -1,9 +1,9 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/svelte'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/svelte'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import SyncSettingsCard from './SyncSettingsCard.svelte'
 import { locale } from '$lib/i18n'
-import type { SyncStatus, SyncUsage, PlanCatalogItem } from '$lib/sync'
+import type { SyncDevice, SyncStatus, SyncUsage, PlanCatalogItem } from '$lib/sync'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -177,5 +177,82 @@ describe('SyncSettingsCard — plan change request', () => {
     await waitFor(() =>
       expect(screen.getByText(/Solicitud en revisión: 5 GB/)).toBeInTheDocument()
     )
+  })
+})
+
+function device(overrides: Partial<SyncDevice> = {}): SyncDevice {
+  return {
+    id: 'd-1',
+    name: 'DESKTOP-BJV5O0U',
+    platform: 'windows',
+    created_at: 1_700_000_000_000,
+    last_seen_at: 1_700_000_000_000,
+    revoked: false,
+    current: false,
+    ...overrides,
+  }
+}
+
+describe('SyncSettingsCard — device list deduping', () => {
+  beforeEach(() => {
+    locale.set('es')
+    mockInvoke.mockReset()
+    routeInvoke()
+  })
+
+  afterEach(() => {
+    mockInvoke.mockReset()
+  })
+
+  it('collapses repeated sessions for the same physical device to the current row', async () => {
+    routeInvoke({
+      sync_list_devices: () => [
+        device({ id: 'old-1', last_seen_at: 1, revoked: false }),
+        device({ id: 'old-2', last_seen_at: 2, revoked: true }),
+        device({ id: 'old-3', last_seen_at: 3, revoked: true }),
+        device({ id: 'old-4', last_seen_at: 4, revoked: true }),
+        device({ id: 'current', last_seen_at: 5, current: true }),
+      ],
+    })
+
+    render(SyncSettingsCard)
+
+    await waitFor(() => expect(screen.getAllByText('DESKTOP-BJV5O0U')).toHaveLength(1))
+    expect(screen.getByText('Este dispositivo')).toBeInTheDocument()
+    expect(screen.queryByText('Desconectado')).not.toBeInTheDocument()
+    expect(screen.queryByText('Revocado')).not.toBeInTheDocument()
+  })
+
+  it('shows disconnected copy for a revoked device that is not duplicated', async () => {
+    routeInvoke({
+      sync_list_devices: () => [
+        device({ id: 'current', current: true }),
+        device({ id: 'phone', name: 'Teléfono', platform: 'android', revoked: true }),
+      ],
+    })
+
+    render(SyncSettingsCard)
+
+    await waitFor(() => expect(screen.getByText('Desconectado')).toBeInTheDocument())
+    expect(screen.queryByText('Revocado')).not.toBeInTheDocument()
+  })
+
+  it('preserves the active chosen row id for revoke actions', async () => {
+    const revokeSpy = vi.fn().mockResolvedValue(undefined)
+    routeInvoke({
+      sync_list_devices: () => [
+        device({ id: 'old', revoked: true }),
+        device({ id: 'active', revoked: false }),
+      ],
+      sync_revoke_device: (args) => revokeSpy(args),
+    })
+
+    render(SyncSettingsCard)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Revocar' }))
+    const dialog = await screen.findByRole('dialog')
+    await fireEvent.click(within(dialog).getByRole('button', { name: 'Revocar' }))
+
+    await waitFor(() => expect(revokeSpy).toHaveBeenCalledWith({ deviceId: 'active' }))
   })
 })
