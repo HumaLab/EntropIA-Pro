@@ -87,6 +87,9 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          # Pin the Pro frontend to local-ml=on (today this is unset and defaults to '1'
+          # via the vite define; made explicit so the Pro behavior is locked).
+          VITE_LOCAL_ML: '1'
           ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL }}
           ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID }}
           ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64 }}
@@ -97,3 +100,90 @@ jobs:
           releaseDraft: true
           prerelease: false
           args: ${{ matrix.build_args }}
+
+  # EntropIA-Lite MS-Store MSIX leg. Builds the LEAN app (no local-ml) into an MSI,
+  # then repacks the vendored base MSIX (apps/desktop/src-tauri/msix/EntropIALite-base.msix)
+  # with the freshly built exe + exact Store identity. Output is an UNSIGNED, Store-ready
+  # MSIX uploaded as a build artifact (NOT to the GitHub release — Pro owns the release).
+  # This job is independent from `build`; the Pro NSIS -> release flow above is unchanged.
+  build-lite:
+    name: Build EntropIA Lite MSIX
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v6
+        with:
+          version: ${{ env.PNPM_VERSION }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.88.0
+
+      - name: Restore canonical lockfile
+        run: git checkout -- pnpm-lock.yaml
+
+      - name: Install frontend dependencies
+        shell: pwsh
+        run: npm exec --package=pnpm@${{ env.PNPM_VERSION }} -- pnpm install --frozen-lockfile
+
+      # Build the lean MSI (local-ml compiled out via --no-default-features). The
+      # bootstrap env vars are KEPT: build.rs guard_lean_bootstrap_source() is gated on
+      # PROFILE=release + target_os, NOT on the cargo feature, so it still requires a
+      # baked download source for the fixture runtime-pack present in the source tree.
+      - name: Build lean Tauri MSI
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VITE_LOCAL_ML: '0'
+          ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_MANIFEST_URL }}
+          ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_ID }}
+          ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64: ${{ env.ENTROPIA_RUNTIME_BOOTSTRAP_PUBLIC_KEY_BASE64 }}
+        with:
+          # No release params: tauri-action only builds (does not create/touch a release).
+          args: --config src-tauri/tauri.lite.conf.json --bundles msi -- --no-default-features
+
+      # Locate the freshly built lean exe. The Pro crate name is entropia-pro-desktop,
+      # so the release binary is entropia-pro-desktop.exe; the repack renames it to
+      # entropia-lite-desktop.exe inside the MSIX payload (matches the AppxManifest).
+      - name: Locate lean exe and MSI
+        id: artifacts
+        shell: pwsh
+        run: |
+          $releaseDir = "apps/desktop/src-tauri/target/release"
+          $exe = Get-ChildItem -Path $releaseDir -Filter "*.exe" -File |
+            Where-Object { $_.Name -notmatch 'build-script|deps' } |
+            Sort-Object Length -Descending |
+            Select-Object -First 1
+          if (-not $exe) { throw "No release exe found under $releaseDir" }
+          $msi = Get-ChildItem -Path "$releaseDir/bundle/msi" -Filter "*.msi" -File -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          "exe_path=$($exe.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          if ($msi) { "msi_path=$($msi.FullName)" | Out-File -FilePath $env:GITHUB_OUTPUT -Append }
+          Write-Host "Lean exe: $($exe.FullName) ($($exe.Length) bytes)"
+          if ($msi) { Write-Host "MSI: $($msi.FullName)" }
+
+      - name: Repack Store MSIX
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Path "${{ runner.temp }}/msix-out" -Force | Out-Null
+          ./apps/desktop/src-tauri/scripts/repack-store-msix.ps1 `
+            -BaseMsix "apps/desktop/src-tauri/msix/EntropIALite-base.msix" `
+            -ExePath "${{ steps.artifacts.outputs.exe_path }}" `
+            -OutDir "${{ runner.temp }}/msix-out" `
+            -StoreVersion "1.0.5.0"
+
+      - name: Upload EntropIA Lite MSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: EntropIALite-msix
+          path: ${{ runner.temp }}/msix-out/EntropIALite-Store-HLab-1.0.5.0.msix
+          if-no-files-found: error
