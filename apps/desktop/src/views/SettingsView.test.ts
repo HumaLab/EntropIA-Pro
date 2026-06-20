@@ -289,6 +289,8 @@ describe('SettingsView', () => {
     expect(screen.getByLabelText('historyTurnMaxChars (100-4000)')).toHaveValue('500')
     expect(screen.getByLabelText('temperature (0-2)')).toHaveValue('0.2')
     expect(screen.getByLabelText('maxTokens (64-32000)')).toHaveValue('1500')
+    expect(screen.getByText('Temperatura: gradúa la creatividad del modelo (0-2)')).toBeInTheDocument()
+    expect(screen.getByText('Respuesta: limita tokens generados por el modelo (64-32000)')).toBeInTheDocument()
   })
 
   it('shows stored RAG params overrides instead of defaults', async () => {

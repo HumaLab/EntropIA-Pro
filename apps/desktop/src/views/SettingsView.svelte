@@ -1784,16 +1784,16 @@
           <div class="settings__params-grid">
             <div class="settings__field settings__field--stacked settings__param-card">
               <div class="settings__param-card-grid">
-                <Input label="topK (1-20)" type="text" bind:value={ragParams.topK} />
-                <Input label="minSimilarity (0-1, 0 = off)" type="text" bind:value={ragParams.minSimilarity} />
-                <Input label="candidatesPerLeg (4-200)" type="text" bind:value={ragParams.candidatesPerLeg} />
-                <Input label="rrfK (1-500)" type="text" bind:value={ragParams.rrfK} />
-                <Input label="snippetMaxChars (200-8000)" type="text" bind:value={ragParams.snippetMaxChars} />
-                <Input label="contextMaxChars (1000-60000)" type="text" bind:value={ragParams.contextMaxChars} />
-                <Input label="historyTurns (0-20)" type="text" bind:value={ragParams.historyTurns} />
-                <Input label="historyTurnMaxChars (100-4000)" type="text" bind:value={ragParams.historyTurnMaxChars} />
-                <Input label="temperature (0-2)" type="text" bind:value={ragParams.temperature} />
-                <Input label="maxTokens (64-32000)" type="text" bind:value={ragParams.maxTokens} />
+                <Input label="topK (1-20)" hint={t('settings.ragParams.hint.topK')} type="text" bind:value={ragParams.topK} />
+                <Input label="minSimilarity (0-1, 0 = off)" hint={t('settings.ragParams.hint.minSimilarity')} type="text" bind:value={ragParams.minSimilarity} />
+                <Input label="candidatesPerLeg (4-200)" hint={t('settings.ragParams.hint.candidatesPerLeg')} type="text" bind:value={ragParams.candidatesPerLeg} />
+                <Input label="rrfK (1-500)" hint={t('settings.ragParams.hint.rrfK')} type="text" bind:value={ragParams.rrfK} />
+                <Input label="snippetMaxChars (200-8000)" hint={t('settings.ragParams.hint.snippetMaxChars')} type="text" bind:value={ragParams.snippetMaxChars} />
+                <Input label="contextMaxChars (1000-60000)" hint={t('settings.ragParams.hint.contextMaxChars')} type="text" bind:value={ragParams.contextMaxChars} />
+                <Input label="historyTurns (0-20)" hint={t('settings.ragParams.hint.historyTurns')} type="text" bind:value={ragParams.historyTurns} />
+                <Input label="historyTurnMaxChars (100-4000)" hint={t('settings.ragParams.hint.historyTurnMaxChars')} type="text" bind:value={ragParams.historyTurnMaxChars} />
+                <Input label="temperature (0-2)" hint={t('settings.ragParams.hint.temperature')} type="text" bind:value={ragParams.temperature} />
+                <Input label="maxTokens (64-32000)" hint={t('settings.ragParams.hint.maxTokens')} type="text" bind:value={ragParams.maxTokens} />
               </div>
               <Button variant="secondary" size="sm" onclick={resetRagParams}>{t('settings.ragParams.restoreDefaults')}</Button>
             </div>
