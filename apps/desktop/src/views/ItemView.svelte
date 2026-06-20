@@ -115,6 +115,7 @@
   import { invoke } from '@tauri-apps/api/core'
   import { navigation } from '$lib/navigation'
   import { registerEscapeInterceptor } from '$lib/keyboard'
+  import { LOCAL_ML } from '$lib/capabilities'
   import {
     DOCUMENT_EXPLORER_ASSET_SELECTED_EVENT,
     type DocumentExplorerAssetDetail,
@@ -2400,6 +2401,7 @@
             transcriptionEditedText={textPanelTranscriptionEditedText}
             llmState={textPanelLlmState}
             {llmAvailable}
+            localOcrAvailable={LOCAL_ML}
             isOcrCorrected={selectedAsset ? ocrCorrectedAssets.has(selectedAsset.id) : false}
             currentSummary={textPanelCurrentSummary}
             isSummarizing={textPanelIsSummarizing}

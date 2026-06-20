@@ -56,11 +56,12 @@ pnpm install --frozen-lockfile
 
 ### Correr y buildear cada variante
 
-Todo se corre desde **`apps/desktop/`**. La variante se elige con tres cosas: el feature de Cargo (`--no-default-features` para Lite), el flag de frontend `VITE_LOCAL_ML`, y (en Lite) el config de Tauri `tauri.lite.conf.json`.
+Todo se corre desde **`apps/desktop/`**. Si estás en la raíz del repo, primero hacé `cd apps/desktop`; si no, `pnpm exec tauri` no encuentra el CLI de Tauri porque está instalado en el workspace desktop. La variante se elige con tres cosas: el feature de Cargo (`--no-default-features` para Lite), el flag de frontend `VITE_LOCAL_ML`, y (en Lite) el config de Tauri `tauri.lite.conf.json`.
 
 **EntropIA Pro** (compila MNN desde fuente la 1ra vez → ~30 min):
 
 ```powershell
+cd apps/desktop
 $env:VITE_LOCAL_ML='1'
 pnpm exec tauri dev      # dev con hot-reload
 pnpm exec tauri build    # instalador NSIS
@@ -69,12 +70,16 @@ pnpm exec tauri build    # instalador NSIS
 **EntropIA Lite** (lean, sin MNN → arranca rápido):
 
 ```powershell
+cd apps/desktop
 $env:VITE_LOCAL_ML='0'
-pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json -- --no-default-features
+$env:CARGO_DEFAULT_FEATURES='0'
+pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json
 pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
 ```
 
 > - Usá **`pnpm exec tauri`** (no `pnpm tauri … -- …`): pnpm se come el primer `--` y rompe el pasaje de args a Cargo.
+> - Si querés correrlo desde la **raíz** sin hacer `cd`, usá `pnpm --filter @entropia-pro/desktop exec tauri ...`.
+> - Para **`tauri dev` de Lite**, no uses `-- --no-default-features`: esta versión del Tauri CLI lo parsea como argumento propio y falla. Usá `$env:CARGO_DEFAULT_FEATURES='0'`.
 > - En PowerShell `$env:VITE_LOCAL_ML` **persiste en la sesión** → seteálo en cada cambio de variante (o abrí terminal nueva). En bash va adelante: `VITE_LOCAL_ML=0 pnpm exec tauri …`.
 > - Lite usa `identifier com.entropia.lite` → **datos de app separados** de Pro (podés correr ambas sin pisarte).
 > - `tauri build` de Lite genera el **`.exe` (NSIS) + `.msi`**; el **MSIX** final de Store sale del repack (ver _Release e instaladores_).

@@ -17,6 +17,7 @@
     transcriptionEditedText,
     llmState,
     llmAvailable,
+    localOcrAvailable,
     isOcrCorrected,
     currentSummary,
     isSummarizing,
@@ -38,6 +39,7 @@
     transcriptionEditedText: string
     llmState: ItemLlmState
     llmAvailable: boolean
+    localOcrAvailable: boolean
     isOcrCorrected: boolean
     currentSummary: string | null
     isSummarizing: boolean
@@ -152,20 +154,22 @@
           {ocrState.status}
         </StatusBadge>
         <div class="ocr-btn-group">
-          <button
-            class="ocr-btn ocr-btn--light"
-            disabled={busy}
-            onclick={() => onExtractText(selectedAsset, 'light')}
-            title={busy
-              ? isPdfAsset
-                ? translate('item.pdfTextBusyTitle')
-                : translate('item.ocrFastBusyTitle')
-              : isPdfAsset
-                ? translate('item.pdfTextTitle')
-                : translate('item.ocrFastTitle')}
-          >
-            {getExtractionPrimaryActionLabel(selectedAsset.type)}
-          </button>
+          {#if isPdfAsset || localOcrAvailable}
+            <button
+              class="ocr-btn ocr-btn--light"
+              disabled={busy}
+              onclick={() => onExtractText(selectedAsset, 'light')}
+              title={busy
+                ? isPdfAsset
+                  ? translate('item.pdfTextBusyTitle')
+                  : translate('item.ocrFastBusyTitle')
+                : isPdfAsset
+                  ? translate('item.pdfTextTitle')
+                  : translate('item.ocrFastTitle')}
+            >
+              {getExtractionPrimaryActionLabel(selectedAsset.type)}
+            </button>
+          {/if}
           {#if !isPdfAsset}
             <button
               class="ocr-btn ocr-btn--high"

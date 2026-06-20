@@ -472,6 +472,7 @@
         modelParamsByFlow[flow.id] = readModelParamsFromSettings(settingsMap, flow.id)
       }
       ragParams = readRagParamsFromSettings(settingsMap)
+      normalizeRemoteModesForCapabilities()
       savedSnapshot = currentSnapshot
     } catch (e) {
       loadSettingsError = e instanceof Error ? e.message : String(e)
@@ -533,6 +534,14 @@
     const normalized = value?.trim().toLowerCase()
     if (!normalized) return true
     return !['0', 'false', 'no', 'off'].includes(normalized)
+  }
+
+  function normalizeRemoteModesForCapabilities() {
+    if (LOCAL_ML) return
+    llmMode = DEFAULT_LLM_MODE
+    embeddingProvider = DEFAULT_EMBEDDING_PROVIDER
+    sttMode = DEFAULT_STT_MODE
+    ocrhMode = DEFAULT_OCRH_MODE
   }
 
   // Los params numéricos viajan como TEXTO a Rust (str::parse): solo se acepta
@@ -811,6 +820,7 @@
       return
     }
     try {
+      normalizeRemoteModesForCapabilities()
       const writes: Promise<void>[] = [
         settingsSet(SETTINGS_KEYS.OPENROUTER_MODEL, model),
         // Pro is local-first: persist the user-selected modes, not hardcoded
@@ -1073,15 +1083,15 @@
       </section>
     </Card>
 
-    <Card>
-      <section class="settings-card-section">
-        <div class="settings-card-section__copy">
-          <h2>{t('settings.llmModeTitle')}</h2>
-          <p>{currentModeDescription}</p>
-        </div>
+    {#if LOCAL_ML}
+      <Card>
+        <section class="settings-card-section">
+          <div class="settings-card-section__copy">
+            <h2>{t('settings.llmModeTitle')}</h2>
+            <p>{currentModeDescription}</p>
+          </div>
 
-        <div class="settings__mode-options">
-          {#if LOCAL_ML}
+          <div class="settings__mode-options">
             <label class="settings__radio" class:active={llmMode === 'local'}>
               <input type="radio" name="llm_mode" value="local" bind:group={llmMode} />
               <div class="settings__radio-content">
@@ -1098,26 +1108,26 @@
                 </span>
               </div>
             </label>
-          {/if}
 
-          <label class="settings__radio" class:active={llmMode === 'openrouter'}>
-            <input type="radio" name="llm_mode" value="openrouter" bind:group={llmMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.llmMode.openrouter.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.llmMode.openrouter.description')}</span>
-            </div>
-          </label>
+            <label class="settings__radio" class:active={llmMode === 'openrouter'}>
+              <input type="radio" name="llm_mode" value="openrouter" bind:group={llmMode} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.llmMode.openrouter.label')}</strong>
+                <span class="settings__radio-desc">{t('settings.llmMode.openrouter.description')}</span>
+              </div>
+            </label>
 
-          <label class="settings__radio" class:active={llmMode === 'auto'}>
-            <input type="radio" name="llm_mode" value="auto" bind:group={llmMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.llmMode.auto.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.llmMode.auto.description')}</span>
-            </div>
-          </label>
-        </div>
-      </section>
-    </Card>
+            <label class="settings__radio" class:active={llmMode === 'auto'}>
+              <input type="radio" name="llm_mode" value="auto" bind:group={llmMode} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.llmMode.auto.label')}</strong>
+                <span class="settings__radio-desc">{t('settings.llmMode.auto.description')}</span>
+              </div>
+            </label>
+          </div>
+        </section>
+      </Card>
+    {/if}
 
     {#if LOCAL_ML}
     <Card>
@@ -1206,6 +1216,7 @@
     </Card>
     {/if}
 
+    {#if LOCAL_ML}
     <Card>
       <section class="settings-card-section">
         <div class="settings-card-section__copy">
@@ -1222,18 +1233,16 @@
             </div>
           </label>
 
-          {#if LOCAL_ML}
-            <label class="settings__radio" class:active={embeddingProvider === 'local'}>
-              <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
-              <div class="settings__radio-content">
-                <strong>{t('settings.embeddingProvider.local.label')}</strong>
-                <span class="settings__radio-desc">{t('settings.embeddingProvider.local.description')}</span>
-              </div>
-            </label>
-          {/if}
+          <label class="settings__radio" class:active={embeddingProvider === 'local'}>
+            <input type="radio" name="embedding_provider" value="local" bind:group={embeddingProvider} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.embeddingProvider.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.embeddingProvider.local.description')}</span>
+            </div>
+          </label>
         </div>
 
-        {#if LOCAL_ML && embeddingProvider === 'local'}
+        {#if embeddingProvider === 'local'}
           <div class="settings__field settings__field--stacked">
             <label class="settings__label" for="local-embedding-model-dir">
               {t('settings.embeddingProvider.localPath')}
@@ -1308,6 +1317,7 @@
         {/if}
       </section>
     </Card>
+    {/if}
 
     <Card>
       <section class="settings-card-section">
@@ -1418,6 +1428,7 @@
       </section>
     </Card>
 
+    {#if LOCAL_ML}
     <Card>
       <section class="settings-card-section">
         <div class="settings-card-section__copy">
@@ -1426,15 +1437,13 @@
         </div>
 
         <div class="settings__mode-options">
-          {#if LOCAL_ML}
-            <label class="settings__radio" class:active={sttMode === 'local'}>
-              <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
-              <div class="settings__radio-content">
-                <strong>{t('settings.sttMode.local.label')}</strong>
-                <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
-              </div>
-            </label>
-          {/if}
+          <label class="settings__radio" class:active={sttMode === 'local'}>
+            <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.sttMode.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
+            </div>
+          </label>
 
           <label class="settings__radio" class:active={sttMode === 'assemblyai'}>
             <input type="radio" name="stt_mode" value="assemblyai" bind:group={sttMode} />
@@ -1458,6 +1467,7 @@
         {/if}
       </section>
     </Card>
+    {/if}
 
     <Card>
       <section class="settings-card-section">
@@ -1535,6 +1545,7 @@
       </section>
     </Card>
 
+    {#if LOCAL_ML}
     <Card>
       <section class="settings-card-section">
         <div class="settings-card-section__copy">
@@ -1543,15 +1554,13 @@
         </div>
 
         <div class="settings__mode-options">
-          {#if LOCAL_ML}
-            <label class="settings__radio" class:active={ocrhMode === 'local'}>
-              <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
-              <div class="settings__radio-content">
-                <strong>{t('settings.ocrhMode.local.label')}</strong>
-                <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
-              </div>
-            </label>
-          {/if}
+          <label class="settings__radio" class:active={ocrhMode === 'local'}>
+            <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
+            <div class="settings__radio-content">
+              <strong>{t('settings.ocrhMode.local.label')}</strong>
+              <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
+            </div>
+          </label>
 
           <label class="settings__radio" class:active={ocrhMode === 'glm_ocr'}>
             <input type="radio" name="ocrh_mode" value="glm_ocr" bind:group={ocrhMode} />
@@ -1575,6 +1584,7 @@
         {/if}
       </section>
     </Card>
+    {/if}
 
     <Card>
       <section class="settings-card-section">
