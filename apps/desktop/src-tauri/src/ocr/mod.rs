@@ -2088,7 +2088,12 @@ fn emit_progress(app_handle: &AppHandle, asset_id: &str, pct: u8, stage: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::ocr::paddle_vl_types::{PaddleVlBbox, PaddleVlBlock, PaddleVlOutput, PaddleVlRegion};
+    use crate::ocr::paddle_vl_types::PaddleVlBbox;
+    // PaddleVlBlock/PaddleVlOutput/PaddleVlRegion are consumed only by the
+    // paddle-ocr-gated tests below; gate the import so the lean (--no-default-features)
+    // test build stays warning-clean.
+    #[cfg(feature = "paddle-ocr")]
+    use crate::ocr::paddle_vl_types::{PaddleVlBlock, PaddleVlOutput, PaddleVlRegion};
     use crate::ocr::provider::{BoundingBox, LayoutCategory};
     use crate::runtime::status::{RuntimeCapability, RuntimeState, RuntimeStatus};
     use std::cell::RefCell;

@@ -4,6 +4,7 @@
   import { navigation } from '$lib/navigation'
   import { setupKeyboardShortcuts } from '$lib/keyboard'
   import { initLocale, t } from '$lib/i18n'
+  import { PRODUCT_NAME } from '$lib/product'
   import type { View } from '$lib/navigation'
   import AppShell from './layout/AppShell.svelte'
   import CollectionsView from './views/CollectionsView.svelte'
@@ -45,7 +46,7 @@
     <section class="startup-card" role="status" aria-live="polite">
       <div class="startup-mark" aria-hidden="true">E</div>
       <div class="startup-copy">
-        <p class="startup-eyebrow">EntropIA Pro</p>
+        <p class="startup-eyebrow">{PRODUCT_NAME}</p>
         <h1 id="startup-title">{t('app.startupTitle')}</h1>
         <p>{t('app.initializing')}</p>
       </div>
@@ -56,7 +57,7 @@
     <section class="startup-card startup-card--error" role="alert" aria-live="assertive">
       <div class="startup-mark startup-mark--error" aria-hidden="true">!</div>
       <div class="startup-copy">
-        <p class="startup-eyebrow">EntropIA Pro</p>
+        <p class="startup-eyebrow">{PRODUCT_NAME}</p>
         <h1 id="startup-error-title">{t('app.initError')}</h1>
         <p>{error}</p>
       </div>

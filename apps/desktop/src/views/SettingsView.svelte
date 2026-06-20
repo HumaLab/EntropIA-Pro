@@ -90,6 +90,7 @@
   } from '$lib/embeddings'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
   import { LOCAL_ML } from '$lib/capabilities'
+  import { PRODUCT_NAME } from '$lib/product'
   import { listen, type UnlistenFn } from '@tauri-apps/api/event'
   import { ActionIcon, Button, Card, ConfirmDialog, Input, TabButton, TabList } from '@entropia/ui'
   import LogsTab from './LogsTab.svelte'
@@ -993,7 +994,7 @@
       <div class="page-header__content">
         <span class="page-header__eyebrow">{t('settings.preferences')}</span>
         <h1>{t('settings.title')}</h1>
-        <p>{t('settings.subtitle')}</p>
+        <p>{t('settings.subtitle', { product: PRODUCT_NAME })}</p>
         <span class="page-header__meta">{t('settings.currentMode', { mode: currentModeLabel })}</span>
       </div>
 
@@ -1209,7 +1210,7 @@
       <section class="settings-card-section">
         <div class="settings-card-section__copy">
           <h2>{t('settings.embeddingProvider.title')}</h2>
-          <p>{t('settings.embeddingProvider.description')}</p>
+          <p>{t('settings.embeddingProvider.description', { product: PRODUCT_NAME })}</p>
         </div>
 
         <div class="settings__mode-options">
@@ -1244,7 +1245,7 @@
               bind:value={localEmbeddingModelDir}
               placeholder={t('settings.embeddingProvider.localPathPlaceholder')}
             />
-            <p class="settings__hint">{t('settings.embeddingProvider.localPathHint')}</p>
+            <p class="settings__hint">{t('settings.embeddingProvider.localPathHint', { product: PRODUCT_NAME })}</p>
           </div>
 
           {#if localEmbeddingModel}
@@ -1264,7 +1265,10 @@
               </div>
 
               <p class="settings__hint">
-                {t('settings.embeddingProvider.localInstallHint', { repo: localEmbeddingModel.source_repo })}
+                {t('settings.embeddingProvider.localInstallHint', {
+                  product: PRODUCT_NAME,
+                  repo: localEmbeddingModel.source_repo,
+                })}
               </p>
 
               {#if localEmbeddingModel.missing_files.length > 0}
@@ -1422,13 +1426,15 @@
         </div>
 
         <div class="settings__mode-options">
-          <label class="settings__radio" class:active={sttMode === 'local'}>
-            <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.sttMode.local.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
-            </div>
-          </label>
+          {#if LOCAL_ML}
+            <label class="settings__radio" class:active={sttMode === 'local'}>
+              <input type="radio" name="stt_mode" value="local" bind:group={sttMode} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.sttMode.local.label')}</strong>
+                <span class="settings__radio-desc">{t('settings.sttMode.local.description')}</span>
+              </div>
+            </label>
+          {/if}
 
           <label class="settings__radio" class:active={sttMode === 'assemblyai'}>
             <input type="radio" name="stt_mode" value="assemblyai" bind:group={sttMode} />
@@ -1537,13 +1543,15 @@
         </div>
 
         <div class="settings__mode-options">
-          <label class="settings__radio" class:active={ocrhMode === 'local'}>
-            <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
-            <div class="settings__radio-content">
-              <strong>{t('settings.ocrhMode.local.label')}</strong>
-              <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
-            </div>
-          </label>
+          {#if LOCAL_ML}
+            <label class="settings__radio" class:active={ocrhMode === 'local'}>
+              <input type="radio" name="ocrh_mode" value="local" bind:group={ocrhMode} />
+              <div class="settings__radio-content">
+                <strong>{t('settings.ocrhMode.local.label')}</strong>
+                <span class="settings__radio-desc">{t('settings.ocrhMode.local.description')}</span>
+              </div>
+            </label>
+          {/if}
 
           <label class="settings__radio" class:active={ocrhMode === 'glm_ocr'}>
             <input type="radio" name="ocrh_mode" value="glm_ocr" bind:group={ocrhMode} />

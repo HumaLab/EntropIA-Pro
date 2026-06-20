@@ -62,7 +62,7 @@ const es = {
   'settings.preferences': 'Preferencias',
   'settings.title': 'Configuración',
   'settings.subtitle':
-    'Ajustá cómo EntropIA Pro resuelve tareas locales y remotas de inteligencia artificial.',
+    'Ajustá cómo {product} resuelve tareas locales y remotas de inteligencia artificial.',
   'settings.currentMode': 'Modo actual: {mode}',
   'settings.tabsAria': 'Secciones de configuración',
   'settings.remoteApisTab': 'APIs remotas',
@@ -97,7 +97,7 @@ const es = {
     'Prioriza el motor local y usa OpenRouter sólo como respaldo.',
   'settings.embeddingProvider.title': 'Embeddings BGE-M3',
   'settings.embeddingProvider.description':
-    'EntropIA Pro vectoriza por API usando OpenRouter con el contrato BGE-M3 de 1024 dimensiones.',
+    '{product} vectoriza por API usando OpenRouter con el contrato BGE-M3 de 1024 dimensiones.',
   'settings.embeddingProvider.api.label': 'API OpenRouter',
   'settings.embeddingProvider.api.description':
     'Usa OpenRouter con baai/bge-m3. Requiere API key y conexión.',
@@ -110,12 +110,12 @@ const es = {
   'settings.embeddingProvider.localPath': 'Carpeta del modelo local BGE-M3',
   'settings.embeddingProvider.localPathPlaceholder': 'Vacío = carpeta predeterminada en AppData',
   'settings.embeddingProvider.localPathHint':
-    'Debe contener model.onnx, model.onnx_data y tokenizer.json. Si queda vacío, EntropIA Pro usa la carpeta de datos de la app.',
+    'Debe contener model.onnx, model.onnx_data y tokenizer.json. Si queda vacío, {product} usa la carpeta de datos de la app.',
   'settings.embeddingProvider.localStatus': 'Estado BGE-M3 local',
   'settings.embeddingProvider.localComplete': 'Modelo BGE-M3 local completo',
   'settings.embeddingProvider.localIncomplete': 'Modelo BGE-M3 local incompleto',
   'settings.embeddingProvider.localInstallHint':
-    'EntropIA Pro instala los assets ONNX desde {repo} y conserva los nombres esperados por el proveedor local.',
+    '{product} instala los assets ONNX desde {repo} y conserva los nombres esperados por el proveedor local.',
   'settings.embeddingProvider.installLocal': 'Instalar BGE-M3 local',
   'settings.embeddingProvider.openLocalFolder': 'Abrir carpeta BGE-M3',
   'settings.embeddingProvider.downloading': 'Instalando BGE-M3…',
@@ -1006,7 +1006,7 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.preferences': 'Preferences',
   'settings.title': 'Settings',
   'settings.subtitle':
-    'Adjust how EntropIA Pro resolves local and remote artificial intelligence tasks.',
+    'Adjust how {product} resolves local and remote artificial intelligence tasks.',
   'settings.currentMode': 'Current mode: {mode}',
   'settings.tabsAria': 'Settings sections',
   'settings.remoteApisTab': 'Remote APIs',
@@ -1041,7 +1041,7 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
     'Prioritize the local engine and use OpenRouter only as fallback.',
   'settings.embeddingProvider.title': 'BGE-M3 embeddings',
   'settings.embeddingProvider.description':
-    'EntropIA Pro generates semantic vectors through the OpenRouter API using the 1024-dimensional BGE-M3 contract.',
+    '{product} generates semantic vectors through the OpenRouter API using the 1024-dimensional BGE-M3 contract.',
   'settings.embeddingProvider.api.label': 'OpenRouter API',
   'settings.embeddingProvider.api.description':
     'Use OpenRouter with baai/bge-m3. Requires an API key and connection.',
@@ -1054,12 +1054,12 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.embeddingProvider.localPath': 'Local BGE-M3 model folder',
   'settings.embeddingProvider.localPathPlaceholder': 'Empty = default AppData folder',
   'settings.embeddingProvider.localPathHint':
-    'Must contain model.onnx, model.onnx_data, and tokenizer.json. If empty, EntropIA Pro uses the app data folder.',
+    'Must contain model.onnx, model.onnx_data, and tokenizer.json. If empty, {product} uses the app data folder.',
   'settings.embeddingProvider.localStatus': 'Local BGE-M3 status',
   'settings.embeddingProvider.localComplete': 'Local BGE-M3 model complete',
   'settings.embeddingProvider.localIncomplete': 'Local BGE-M3 model incomplete',
   'settings.embeddingProvider.localInstallHint':
-    'EntropIA Pro installs the ONNX assets from {repo} and keeps the filenames expected by the local provider.',
+    '{product} installs the ONNX assets from {repo} and keeps the filenames expected by the local provider.',
   'settings.embeddingProvider.installLocal': 'Install local BGE-M3',
   'settings.embeddingProvider.openLocalFolder': 'Open BGE-M3 folder',
   'settings.embeddingProvider.downloading': 'Installing BGE-M3…',

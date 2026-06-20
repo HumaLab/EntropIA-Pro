@@ -396,6 +396,13 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Typecheck lean (API-only) desktop frontend
+        # The default typecheck above exercises the full (Pro) variant. Run the
+        # lean (VITE_LOCAL_ML=0) desktop frontend too so a static-import-trap
+        # regression in the API-only bundle is caught on push, not just at release.
+        # Reuses the already-installed deps; no extra install.
+        run: VITE_LOCAL_ML=0 pnpm --filter @entropia-pro/desktop typecheck
+
   test:
     name: Test
     runs-on: ubuntu-latest
