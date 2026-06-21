@@ -12,5 +12,5 @@ const isPro = import.meta.env.VITE_LOCAL_ML === '1'
 export const PRODUCT_NAME = isPro ? 'EntropIA Pro' : 'EntropIA Lite'
 export const PRODUCT_NAME_BADGE = isPro ? 'EntropIA Pro β' : 'EntropIA Lite β'
 export const GITHUB_REPO_URL = isPro
-  ? 'https://github.com/HumaLab/EntropIA-Pro'
+  ? 'https://github.com/HumaLab/EntropIA-Pro-Lite'
   : 'https://github.com/HumaLab/EntropIA-Lite'
