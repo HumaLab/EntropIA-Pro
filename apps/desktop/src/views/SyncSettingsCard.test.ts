@@ -22,9 +22,12 @@ function usage(overrides: Partial<SyncUsage> = {}): SyncUsage {
 }
 
 const PLANS: PlanCatalogItem[] = [
-  { id: 'free', name: 'Free', quota_bytes: 0, price_cents: 0, currency: 'ARS', period: 'month', description: null, is_current: true },
-  { id: 'gb5', name: '5 GB', quota_bytes: 5_000_000_000, price_cents: 1000, currency: 'ARS', period: 'month', description: null, is_current: false },
-  { id: 'gb10', name: '10 GB', quota_bytes: 10_000_000_000, price_cents: 1800, currency: 'ARS', period: 'month', description: null, is_current: false },
+  { id: 'free', name: 'Free', quota_bytes: 100 * 1024 ** 2, price_cents: 0, currency: 'ARS', period: 'month', description: null, is_current: true },
+  { id: 'gb5', name: '5 GB', quota_bytes: 5 * 1024 ** 3, price_cents: 1000, currency: 'ARS', period: 'month', description: null, is_current: false },
+  { id: 'gb10', name: '10 GB', quota_bytes: 10 * 1024 ** 3, price_cents: 1800, currency: 'ARS', period: 'month', description: null, is_current: false },
+  { id: 'gb20', name: '20 GB', quota_bytes: 20 * 1024 ** 3, price_cents: 2600, currency: 'ARS', period: 'month', description: null, is_current: false },
+  { id: 'gb50', name: '50 GB', quota_bytes: 50 * 1024 ** 3, price_cents: 4000, currency: 'ARS', period: 'month', description: null, is_current: false },
+  { id: 'gb100', name: '100 GB', quota_bytes: 100 * 1024 ** 3, price_cents: 7000, currency: 'ARS', period: 'month', description: null, is_current: false },
 ]
 
 // ── sync-store mock: report an active (idle) session so the logged-in surface renders.
@@ -123,12 +126,15 @@ describe('SyncSettingsCard — plan change request', () => {
     expect(screen.getByText(/Plan actual/)).toBeInTheDocument()
     expect(screen.getByText(/Esto es una SOLICITUD/)).toBeInTheDocument()
 
-    // The select offers the two non-current plans, not Free (is_current).
+    // The select offers the non-current plans using the commercial names, not Free (is_current).
     await waitFor(() => {
       const options = Array.from(document.querySelectorAll('#sync-plan-target option'))
       const labels = options.map((o) => o.textContent?.trim())
-      expect(labels.some((l) => l?.startsWith('5 GB'))).toBe(true)
-      expect(labels.some((l) => l?.startsWith('10 GB'))).toBe(true)
+      expect(labels).toContain('Go · 5 GB')
+      expect(labels).toContain('Pro 1 · 10 GB')
+      expect(labels).toContain('Pro 2 · 20 GB')
+      expect(labels).toContain('Max 1 · 50 GB')
+      expect(labels).toContain('Max 2 · 100 GB')
       expect(labels.some((l) => l === 'Free' || l?.startsWith('Free ·'))).toBe(false)
     })
   })

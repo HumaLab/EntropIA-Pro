@@ -386,11 +386,28 @@
 
   // ── Plan change request ──
 
-  /** Builds the human label for a target plan option: "5 GB · 5 GB" / "Free · sin límite". */
+  const PLAN_LABELS: Array<{ name: string; quota: string; bytes: number }> = [
+    { name: 'Free', quota: '100 MB', bytes: 100 * 1024 ** 2 },
+    { name: 'Go', quota: '5 GB', bytes: 5 * 1024 ** 3 },
+    { name: 'Pro 1', quota: '10 GB', bytes: 10 * 1024 ** 3 },
+    { name: 'Pro 2', quota: '20 GB', bytes: 20 * 1024 ** 3 },
+    { name: 'Max 1', quota: '50 GB', bytes: 50 * 1024 ** 3 },
+    { name: 'Max 2', quota: '100 GB', bytes: 100 * 1024 ** 3 },
+  ]
+
+  function canonicalPlanLabel(plan: Pick<PlanCatalogItem, 'name' | 'quota_bytes' | 'price_cents'>) {
+    if (plan.price_cents === 0 || plan.name.toLowerCase() === 'free') return PLAN_LABELS[0]
+    const match = PLAN_LABELS.find((label) => {
+      const delta = Math.abs(plan.quota_bytes - label.bytes)
+      return delta / label.bytes < 0.05
+    })
+    return match ?? { name: plan.name, quota: formatBytes(plan.quota_bytes), bytes: plan.quota_bytes }
+  }
+
+  /** Builds the human label for a target plan option: "Go · 5 GB" / "Pro 1 · 10 GB". */
   function planOptionLabel(plan: PlanCatalogItem): string {
-    const quota =
-      plan.quota_bytes > 0 ? formatBytes(plan.quota_bytes) : t('sync.upgrade.unlimitedQuota')
-    return t('sync.upgrade.planOption', { name: plan.name, quota })
+    const label = canonicalPlanLabel(plan)
+    return t('sync.upgrade.planOption', { name: label.name, quota: label.quota })
   }
 
   async function openPlanModal() {
