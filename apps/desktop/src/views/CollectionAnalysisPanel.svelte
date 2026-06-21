@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte'
+  import { save } from '@tauri-apps/plugin-dialog'
+  import { writeFile } from '@tauri-apps/plugin-fs'
   import { getStore } from '$lib/db'
   import { locale, t, type I18nKey, type I18nParams } from '$lib/i18n'
   import { LatestRequestGuard } from '$lib/item-view-load-guards'
@@ -27,7 +29,7 @@
     MIN_CLOUD_TERMS,
     type CollectionAnalysisSettings,
   } from '$lib/analysis-settings'
-  import { Panel, Button, TabList, TabButton } from '@entropia/ui'
+  import { Panel, Button, TabList, TabButton, IconButton, ActionIcon } from '@entropia/ui'
 
   let { collectionId, refreshToken }: { collectionId: string; refreshToken: number } = $props()
 
@@ -48,6 +50,8 @@
   const computeGuard = new LatestRequestGuard()
   let activeSettingsId: string | null = null
   let stopwordsTimer: ReturnType<typeof setTimeout> | undefined
+  let wordCloudSvgEl: SVGSVGElement | undefined = $state()
+  let barChartSvgEl: SVGSVGElement | undefined = $state()
 
   let cloudWords = $derived(topN(frequencies, settings.cloudTermCount))
   let top20 = $derived(topN(frequencies, 20))
@@ -56,6 +60,7 @@
   // Word cloud geometry (SVG viewBox units)
   const CLOUD_W = 480
   const CLOUD_H = 320
+  const PNG_EXPORT_SCALE = 3
 
   let placedWords = $derived(layoutWordCloud(cloudWords, { width: CLOUD_W, height: CLOUD_H }))
 
@@ -180,6 +185,85 @@
     stopwordsTimer = setTimeout(() => applyStopwords(value), 300)
   }
 
+  function inlineSvgStyles(sourceSvg: SVGSVGElement, clonedSvg: SVGSVGElement) {
+    const sourceElements = [sourceSvg, ...sourceSvg.querySelectorAll('*')]
+    const clonedElements = [clonedSvg, ...clonedSvg.querySelectorAll('*')]
+    const styleProperties = [
+      'fill',
+      'stroke',
+      'stroke-width',
+      'font-family',
+      'font-size',
+      'font-weight',
+      'text-anchor',
+      'dominant-baseline',
+    ]
+
+    sourceElements.forEach((sourceElement, index) => {
+      const clonedElement = clonedElements[index]
+      if (!(clonedElement instanceof SVGElement)) return
+      const computed = getComputedStyle(sourceElement)
+      for (const property of styleProperties) {
+        const value = computed.getPropertyValue(property)
+        if (value) clonedElement.style.setProperty(property, value)
+      }
+    })
+  }
+
+  async function svgToPngBytes(sourceSvg: SVGSVGElement): Promise<Uint8Array> {
+    const clonedSvg = sourceSvg.cloneNode(true) as SVGSVGElement
+    clonedSvg.setAttribute('xmlns', 'http://www.w3.org/2000/svg')
+    clonedSvg.setAttribute('width', sourceSvg.viewBox.baseVal.width.toString())
+    clonedSvg.setAttribute('height', sourceSvg.viewBox.baseVal.height.toString())
+    inlineSvgStyles(sourceSvg, clonedSvg)
+
+    const svgText = new XMLSerializer().serializeToString(clonedSvg)
+    const svgBlob = new Blob([svgText], { type: 'image/svg+xml;charset=utf-8' })
+    const url = URL.createObjectURL(svgBlob)
+
+    try {
+      const image = new Image()
+      const imageLoaded = new Promise<void>((resolve, reject) => {
+        image.onload = () => resolve()
+        image.onerror = () => reject(new Error('Could not render analysis chart'))
+      })
+      image.src = url
+      await imageLoaded
+
+      const canvas = document.createElement('canvas')
+      const outputWidth = sourceSvg.viewBox.baseVal.width * PNG_EXPORT_SCALE
+      const outputHeight = sourceSvg.viewBox.baseVal.height * PNG_EXPORT_SCALE
+      canvas.width = outputWidth
+      canvas.height = outputHeight
+      const context = canvas.getContext('2d')
+      if (!context) throw new Error('Canvas is not available')
+      context.imageSmoothingEnabled = true
+      context.imageSmoothingQuality = 'high'
+      context.drawImage(image, 0, 0, outputWidth, outputHeight)
+
+      const pngBlob = await new Promise<Blob>((resolve, reject) => {
+        canvas.toBlob((blob) => {
+          if (blob) resolve(blob)
+          else reject(new Error('Could not encode analysis chart'))
+        }, 'image/png')
+      })
+
+      return new Uint8Array(await pngBlob.arrayBuffer())
+    } finally {
+      URL.revokeObjectURL(url)
+    }
+  }
+
+  async function downloadChartPng(sourceSvg: SVGSVGElement | undefined, filename: string) {
+    if (!sourceSvg) return
+    const filePath = await save({
+      defaultPath: filename,
+      filters: [{ name: 'PNG', extensions: ['png'] }],
+    })
+    if (!filePath) return
+    await writeFile(filePath, await svgToPngBytes(sourceSvg))
+  }
+
   onDestroy(() => {
     clearTimeout(stopwordsTimer)
   })
@@ -245,10 +329,23 @@
         </div>
       {:else}
         <section class="analysis-section">
-          <h3 class="analysis-section__title">
-            {translate('collectionAnalysis.cloudTitle', { count: settings.cloudTermCount })}
-          </h3>
+          <div class="analysis-section__header">
+            <h3 class="analysis-section__title">
+              {translate('collectionAnalysis.cloudTitle', { count: settings.cloudTermCount })}
+            </h3>
+            <IconButton
+              class="analysis-section__download"
+              size="sm"
+              variant="secondary"
+              label={translate('collectionAnalysis.downloadCloud')}
+              title={translate('collectionAnalysis.downloadCloud')}
+              onclick={() => void downloadChartPng(wordCloudSvgEl, `entropia-word-cloud-${collectionId}.png`)}
+            >
+              <ActionIcon name="download" size={14} />
+            </IconButton>
+          </div>
           <svg
+            bind:this={wordCloudSvgEl}
             viewBox="0 0 {CLOUD_W} {CLOUD_H}"
             preserveAspectRatio="xMidYMid meet"
             class="word-cloud"
@@ -280,8 +377,21 @@
         </section>
 
         <section class="analysis-section">
-          <h3 class="analysis-section__title">{translate('collectionAnalysis.barsTitle')}</h3>
+          <div class="analysis-section__header">
+            <h3 class="analysis-section__title">{translate('collectionAnalysis.barsTitle')}</h3>
+            <IconButton
+              class="analysis-section__download"
+              size="sm"
+              variant="secondary"
+              label={translate('collectionAnalysis.downloadBars')}
+              title={translate('collectionAnalysis.downloadBars')}
+              onclick={() => void downloadChartPng(barChartSvgEl, `entropia-word-bars-${collectionId}.png`)}
+            >
+              <ActionIcon name="download" size={14} />
+            </IconButton>
+          </div>
           <svg
+            bind:this={barChartSvgEl}
             viewBox="0 0 {CHART_W} {CHART_H}"
             preserveAspectRatio="xMidYMid meet"
             class="bar-chart"
@@ -447,11 +557,24 @@
   }
 
   .analysis-section__title {
+    margin: 0;
     font-size: var(--font-size-xs);
     font-weight: var(--font-weight-medium);
     letter-spacing: 0.075em;
     text-transform: uppercase;
     color: var(--color-text-secondary);
+  }
+
+  .analysis-section__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-2);
+  }
+
+  :global(.analysis-section__download) {
+    width: 28px;
+    height: 28px;
   }
 
   .analysis-error {
