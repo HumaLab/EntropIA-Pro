@@ -17,7 +17,6 @@
     assemblyAiApiKey: string
     assemblyAiCollectionSpeakerLabels: boolean
     glmOcrApiKey: string
-    selectedLocale: string
     ocrCorrectionPrompt: string
     summaryPrompt: string
     nerPrompt: string
@@ -41,8 +40,7 @@
 
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte'
-  import { get } from 'svelte/store'
-  import { locale, isLocale, t, type Locale } from '$lib/i18n'
+  import { locale, t } from '$lib/i18n'
   import { navigation } from '$lib/navigation'
   import { registerEscapeInterceptor } from '$lib/keyboard'
   import { openExternalUrlFromClick } from '$lib/external-links'
@@ -131,8 +129,6 @@
   let ocrhMode = $state<OcrhMode>(DEFAULT_OCRH_MODE)
   let localAvailable = $state(false)
   let localModel = $state<LocalModelInfo | null>(null)
-  let selectedLocale = $state<Locale>('es')
-  let languageTouched = $state(false)
   let assemblyAiApiKey = $state('')
   let maskedAssemblyAiApiKey = $state('')
   let showAssemblyAiApiKey = $state(false)
@@ -256,7 +252,6 @@
   const hasGlmOcrCredential = $derived(Boolean(glmOcrApiKey.trim() || maskedGlmOcrApiKey))
 
   const SECRET_REF_PREFIX = 'secret_ref:'
-  const LANGUAGE_KEY = SETTINGS_KEYS.LANGUAGE
   const LEGACY_LOCAL_EMBEDDING_MODEL_DIR = 'resources/models/embeddings/bge-m3'
   const PROVIDER_LINKS = {
     openrouter: 'https://openrouter.ai/settings/keys',
@@ -331,7 +326,6 @@
       assemblyAiApiKey,
       assemblyAiCollectionSpeakerLabels,
       glmOcrApiKey,
-      selectedLocale,
       ocrCorrectionPrompt,
       summaryPrompt,
       nerPrompt,
@@ -391,7 +385,6 @@
         storedAssemblyAiKey,
         storedAssemblyAiSpeakerLabels,
         storedGlmOcrKey,
-        storedLanguage,
         storedOcrCorrectionPrompt,
         storedSummaryPrompt,
         storedNerPrompt,
@@ -410,7 +403,6 @@
         settingsGet(SETTINGS_KEYS.ASSEMBLYAI_API_KEY),
         settingsGet(SETTINGS_KEYS.ASSEMBLYAI_SPEAKER_LABELS),
         settingsGet(SETTINGS_KEYS.GLM_OCR_API_KEY),
-        settingsGet(LANGUAGE_KEY),
         settingsGet(SETTINGS_KEYS.OCR_CORRECTION_PROMPT),
         settingsGet(SETTINGS_KEYS.SUMMARY_PROMPT),
         settingsGet(SETTINGS_KEYS.NER_PROMPT),
@@ -455,9 +447,6 @@
       } else if (storedGlmOcrKey) {
         glmOcrApiKey = storedGlmOcrKey
         maskedGlmOcrApiKey = maskKey(storedGlmOcrKey, 0)
-      }
-      if (!languageTouched) {
-        selectedLocale = isLocale(storedLanguage) ? storedLanguage : get(locale)
       }
       localModel = modelInfo
       localAvailable = modelInfo?.available ?? false
@@ -838,7 +827,6 @@
           assemblyAiCollectionSpeakerLabels ? 'true' : 'false'
         ),
         settingsSet(SETTINGS_KEYS.OCRH_MODE, ocrhMode),
-        settingsSet(LANGUAGE_KEY, selectedLocale),
         settingsSet(SETTINGS_KEYS.LOCAL_MODEL_SOURCE_URL, localModelSourceUrl.trim()),
         settingsSet(
           SETTINGS_KEYS.LOCAL_MODEL_FILENAME,
@@ -908,13 +896,6 @@
     const sizes = ['B', 'KB', 'MB', 'GB', 'TB']
     const i = Math.floor(Math.log(bytes) / Math.log(k))
     return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`
-  }
-
-  function handleLanguageChange(event: Event) {
-    const nextLocale = (event.target as HTMLSelectElement).value as Locale
-    languageTouched = true
-    selectedLocale = nextLocale
-    locale.set(nextLocale)
   }
 
   async function handleDownloadModel() {
@@ -1060,28 +1041,6 @@
         </Button>
       </div>
     {/if}
-
-    <Card>
-      <section class="settings-card-section">
-        <div class="settings-card-section__copy">
-          <h2>{t('settings.languageTitle')}</h2>
-          <p>{t('settings.languageDescription')}</p>
-        </div>
-
-        <div class="settings__field settings__field--stacked">
-          <label class="settings__label" for="language-select">{t('settings.languageLabel')}</label>
-          <select
-            id="language-select"
-            class="settings__input settings__input--select"
-            bind:value={selectedLocale}
-            onchange={handleLanguageChange}
-          >
-            <option value="es">{t('settings.languageOptionEs')}</option>
-            <option value="en">{t('settings.languageOptionEn')}</option>
-          </select>
-        </div>
-      </section>
-    </Card>
 
     {#if LOCAL_ML}
       <Card>

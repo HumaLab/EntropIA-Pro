@@ -23,6 +23,7 @@ export type ActionIconName =
   | 'folder'
   | 'folder-plus'
   | 'hand'
+  | 'languages'
   | 'message-circle'
   | 'moon'
   | 'panel-left'

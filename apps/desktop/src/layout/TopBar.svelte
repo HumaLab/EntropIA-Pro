@@ -3,7 +3,7 @@
   import { getCurrentWindow } from '@tauri-apps/api/window'
   import { navigation } from '$lib/navigation'
   import { getStore } from '$lib/db'
-  import { locale, t } from '$lib/i18n'
+  import { locale, setLocale, t, type Locale } from '$lib/i18n'
   import { isCriticalMissing, onCriticalMissingChange } from '$lib/deps'
   import { LOCAL_ML } from '$lib/capabilities'
   import { PRODUCT_NAME } from '$lib/product'
@@ -35,7 +35,9 @@
   let debounceTimer: ReturnType<typeof setTimeout> | null = null
   let searchInputEl: HTMLInputElement | undefined = $state()
   let searchContainerEl: HTMLDivElement | undefined = $state()
+  let languageContainerEl: HTMLDivElement | undefined = $state()
   let activeResultIndex = $state(-1)
+  let languageMenuOpen = $state(false)
   const searchListboxId = 'topbar-global-search-listbox'
   const currentLocale = locale
   const translate = (key: string, params?: Record<string, string | number>) =>
@@ -69,6 +71,7 @@
       ? ($currentLocale ? t('topbar.depsWarningAria') : 'Dependencias de IA pendientes')
       : ($currentLocale ? t('topbar.settingsAria') : 'Abrir configuración'),
   )
+  const languageTitle = $derived($currentLocale ? t('topbar.languageTitle') : 'Idioma')
   function minimizeWindow() {
     void getCurrentWindow().minimize()
   }
@@ -79,6 +82,21 @@
 
   function closeWindow() {
     void getCurrentWindow().close()
+  }
+
+  function toggleLanguageMenu() {
+    languageMenuOpen = !languageMenuOpen
+  }
+
+  async function chooseLanguage(nextLocale: Locale) {
+    languageMenuOpen = false
+    await setLocale(nextLocale)
+  }
+
+  function handleLanguageFocusOut(event: FocusEvent) {
+    const nextFocused = event.relatedTarget
+    if (nextFocused instanceof Node && languageContainerEl?.contains(nextFocused)) return
+    languageMenuOpen = false
   }
 
   function readPersistedTheme(): AppTheme {
@@ -497,6 +515,41 @@
       {/if}
     </IconButton>
 
+    <div class="topbar__language" bind:this={languageContainerEl} onfocusout={handleLanguageFocusOut}>
+      <IconButton
+        class="topbar__icon-btn"
+        size="md"
+        variant="secondary"
+        label={languageTitle}
+        title={languageTitle}
+        active={languageMenuOpen}
+        onclick={toggleLanguageMenu}
+      >
+        <ActionIcon name="languages" size={16} />
+      </IconButton>
+
+      {#if languageMenuOpen}
+        <div class="topbar__language-menu" role="menu" aria-label={languageTitle}>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={$currentLocale === 'es'}
+            class="topbar__language-option"
+            class:active={$currentLocale === 'es'}
+            onclick={() => chooseLanguage('es')}
+          >ES</button>
+          <button
+            type="button"
+            role="menuitemradio"
+            aria-checked={$currentLocale === 'en'}
+            class="topbar__language-option"
+            class:active={$currentLocale === 'en'}
+            onclick={() => chooseLanguage('en')}
+          >EN</button>
+        </div>
+      {/if}
+    </div>
+
     <span class="topbar__window-controls" aria-label="Controles de ventana">
       <IconButton
         class="topbar__window-btn"
@@ -705,6 +758,44 @@
 
   :global(.topbar__icon-btn--settings) {
     position: relative;
+  }
+
+  .topbar__language {
+    position: relative;
+    display: inline-flex;
+  }
+
+  .topbar__language-menu {
+    position: absolute;
+    top: calc(100% + var(--space-1));
+    right: 0;
+    z-index: 210;
+    display: flex;
+    min-width: 84px;
+    padding: var(--space-1);
+    border: 1px solid var(--border-panel);
+    border-radius: var(--radius-dialog);
+    background: color-mix(in srgb, var(--color-surface-elevated) 96%, var(--color-bg));
+    box-shadow: var(--shadow-lg);
+  }
+
+  .topbar__language-option {
+    flex: 1;
+    padding: var(--space-1) var(--space-2);
+    border: none;
+    border-radius: var(--radius-sm);
+    background: transparent;
+    color: var(--color-text-secondary);
+    font-family: var(--font-sans);
+    font-size: var(--font-size-xs);
+    font-weight: var(--font-weight-semibold);
+    cursor: pointer;
+  }
+
+  .topbar__language-option:hover,
+  .topbar__language-option.active {
+    background: var(--surface-toolbar);
+    color: var(--color-text-primary);
   }
 
   :global(.topbar__deps-badge) {

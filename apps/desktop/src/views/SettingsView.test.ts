@@ -727,26 +727,6 @@ describe('SettingsView', () => {
     })
   })
 
-  it('saves language preference and updates the interface reactively', async () => {
-    render(SettingsView)
-
-    const languageSelect = await screen.findByLabelText('Idioma')
-    await fireEvent.change(languageSelect, { target: { value: 'en' } })
-    expect((languageSelect as HTMLSelectElement).value).toBe('en')
-
-    await waitFor(() => {
-      expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
-    })
-
-    await fireEvent.click(screen.getByRole('button', { name: 'Save changes' }))
-
-    await waitFor(() => {
-      expect(settingsSetMock).toHaveBeenCalledWith('language', 'en')
-      expect(settingsSetMock).toHaveBeenCalledWith('stt_mode', 'assemblyai')
-      expect(screen.getByRole('heading', { name: 'Settings' })).toBeInTheDocument()
-    })
-  })
-
   it('prefills the local Gemma download source from backend defaults', async () => {
     llmIsAvailableMock.mockResolvedValue(false)
     llmLocalModelInfoMock.mockResolvedValue({
@@ -803,7 +783,6 @@ describe('settings dirty detection helpers', () => {
     assemblyAiApiKey: '',
     assemblyAiCollectionSpeakerLabels: true,
     glmOcrApiKey: '',
-    selectedLocale: 'es',
     ocrCorrectionPrompt: 'Correct {text}',
     summaryPrompt: 'Summarize {text}',
     nerPrompt: 'NER {text}',

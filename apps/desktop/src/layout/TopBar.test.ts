@@ -207,6 +207,20 @@ describe('TopBar', () => {
     })
   })
 
+  it('changes the interface language from the topbar selector', async () => {
+    render(TopBar)
+
+    await fireEvent.click(screen.getByRole('button', { name: 'Idioma' }))
+    expect(screen.getByRole('menu', { name: 'Idioma' })).toBeInTheDocument()
+
+    await fireEvent.click(screen.getByRole('menuitemradio', { name: 'EN' }))
+
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: 'Language' })).toBeInTheDocument()
+      expect(screen.getByRole('button', { name: 'Open settings' })).toBeInTheDocument()
+    })
+  })
+
   it('uses an icon-only clear button for global search', async () => {
     render(TopBar)
 
