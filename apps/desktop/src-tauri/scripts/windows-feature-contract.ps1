@@ -79,3 +79,4 @@ function Invoke-Contract {
 #   managed-runtime download — is opt-in behind `local-ml` for Pro.
 Invoke-Contract -Name "Pro local-ml contract" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--features", "local-ml")
 Invoke-Contract -Name "default baseline (lean / EntropIA-Lite variant)" -CargoArgs @("build", "--manifest-path", $ManifestPath)
+
