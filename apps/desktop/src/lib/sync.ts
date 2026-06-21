@@ -151,6 +151,8 @@ export async function ensureSyncCapture(): Promise<void> {
 // Session — register / login / logout (DESIGN §8, §6.3)
 // ─────────────────────────────────────────────────────────────────────────────
 
+export const DEFAULT_SYNC_SERVER_URL = 'https://entropia-cloud.app.hlab.com.ar/'
+
 /**
  * Registers a new account on the server (PROTOCOL `POST /v1/auth/register`).
  * Returns the new `account_id`. Gated server-side by `SYNC_REGISTRATION_OPEN`;

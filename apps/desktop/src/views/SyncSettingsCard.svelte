@@ -5,8 +5,8 @@
    * `settingsGet`/`settingsSet` — sync config lives only in `sync_meta` + the
    * keyring. The device token never crosses this boundary (DESIGN §8).
    *
-   * Surface: server URL (https validation feedback), email/password with
-   * Registrar/Iniciar sesión/Cerrar sesión, device list with revoke (ConfirmDialog),
+   * Surface: fixed EntropIA Cloud endpoint, email/password with Registrar/Iniciar
+   * sesión/Cerrar sesión, device list with revoke (ConfirmDialog),
    * auto-sync toggle + interval, "Sincronizar ahora", storage usage, conflicts
    * list with detail + ack, "Borrar mis datos del servidor" (password ConfirmDialog),
    * "Re-verificar archivos", and a first-sync preflight confirm when pending blob
@@ -15,6 +15,7 @@
   import { onMount, onDestroy } from 'svelte'
   import { locale, t } from '$lib/i18n'
   import {
+    DEFAULT_SYNC_SERVER_URL,
     describeSyncError,
     syncAckConflict,
     syncDeleteAccount,
@@ -52,8 +53,17 @@
 
   const loggedIn = $derived(status.state !== 'disabled')
 
+  const disabledStatus: SyncStatus = {
+    state: 'disabled',
+    last_sync_at: null,
+    pending: 0,
+    blobs_pending: 0,
+    pending_blob_bytes: 0,
+    conflicts: 0,
+    clock_warning: false,
+  }
+
   // ── Session form ──
-  let serverUrl = $state('')
   let email = $state('')
   let password = $state('')
   let showPassword = $state(false)
@@ -99,15 +109,9 @@
   )
 
   // ── Validation ──
-  const serverUrlTrimmed = $derived(serverUrl.trim())
-  const serverUrlValid = $derived(isValidServerUrl(serverUrlTrimmed))
   const passwordValid = $derived(password.length >= 10)
-  const canRegister = $derived(
-    Boolean(serverUrlValid && email.trim() && passwordValid) && busy === null
-  )
-  const canLogin = $derived(
-    Boolean(serverUrlValid && email.trim() && password) && busy === null
-  )
+  const canRegister = $derived(Boolean(email.trim() && passwordValid) && busy === null)
+  const canLogin = $derived(Boolean(email.trim() && password) && busy === null)
 
   onMount(() => {
     void syncStore.initialize()
@@ -119,23 +123,6 @@
   onDestroy(() => {
     unsubscribe()
   })
-
-  /** Client-side TLS rule mirror (PROTOCOL "Transporte"): https, or http only for loopback. */
-  function isValidServerUrl(url: string): boolean {
-    if (!url) return false
-    let parsed: URL
-    try {
-      parsed = new URL(url)
-    } catch {
-      return false
-    }
-    if (parsed.protocol === 'https:') return true
-    if (parsed.protocol === 'http:') {
-      const host = parsed.hostname
-      return host === '127.0.0.1' || host === '::1' || host === '[::1]' || host === 'localhost'
-    }
-    return false
-  }
 
   function setError(error: unknown) {
     feedback = { tone: 'error', text: describeSyncError(error) }
@@ -238,7 +225,7 @@
     busy = 'register'
     feedback = null
     try {
-      await syncRegisterAccount(serverUrlTrimmed, email.trim(), password)
+      await syncRegisterAccount(DEFAULT_SYNC_SERVER_URL, email.trim(), password)
       setSuccess(t('sync.card.registered'))
     } catch (error) {
       setError(error)
@@ -252,9 +239,9 @@
     busy = 'login'
     feedback = null
     try {
-      await syncLogin(serverUrlTrimmed, email.trim(), password)
+      await syncLogin(DEFAULT_SYNC_SERVER_URL, email.trim(), password)
       password = ''
-      await syncStore.refresh()
+      syncStore.setStatus({ ...status, state: 'idle' })
       await refreshAll()
       setSuccess(t('sync.card.loggedInAs', { email: email.trim() }))
     } catch (error) {
@@ -272,7 +259,7 @@
       devices = []
       usage = null
       conflicts = []
-      await syncStore.refresh()
+      syncStore.setStatus(disabledStatus)
     } catch (error) {
       setError(error)
     } finally {
@@ -474,16 +461,6 @@
     {#if !loggedIn}
       <!-- ── Session form (logged out) ── -->
       <div class="sync-card__form">
-        <Input
-          label={t('sync.card.serverUrlLabel')}
-          type="text"
-          bind:value={serverUrl}
-          placeholder={t('sync.card.serverUrlPlaceholder')}
-          error={serverUrlTrimmed && !serverUrlValid
-            ? t('sync.card.serverUrlInvalid')
-            : undefined}
-        />
-
         <Input
           label={t('sync.card.emailLabel')}
           type="email"

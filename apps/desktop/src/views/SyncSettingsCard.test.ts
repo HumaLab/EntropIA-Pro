@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import SyncSettingsCard from './SyncSettingsCard.svelte'
 import { locale } from '$lib/i18n'
-import type { SyncDevice, SyncStatus, SyncUsage, PlanCatalogItem } from '$lib/sync'
+import { DEFAULT_SYNC_SERVER_URL, type SyncDevice, type SyncStatus, type SyncUsage, type PlanCatalogItem } from '$lib/sync'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -28,8 +28,8 @@ const PLANS: PlanCatalogItem[] = [
 ]
 
 // ── sync-store mock: report an active (idle) session so the logged-in surface renders.
-const { syncStoreMock } = vi.hoisted(() => {
-  const current: SyncStatus = {
+const { syncStoreMock, setSyncState } = vi.hoisted(() => {
+  let current: SyncStatus = {
     state: 'idle',
     last_sync_at: null,
     pending: 0,
@@ -38,21 +38,43 @@ const { syncStoreMock } = vi.hoisted(() => {
     conflicts: 0,
     clock_warning: false,
   }
+  const subs = new Set<(v: SyncStatus) => void>()
   return {
     syncStoreMock: {
       get status() {
         return current
       },
       subscribe(run: (v: SyncStatus) => void) {
+        subs.add(run)
         run(current)
-        return () => {}
+        return () => subs.delete(run)
       },
       initialize: vi.fn().mockResolvedValue(undefined),
       refresh: vi.fn().mockResolvedValue(undefined),
-      setStatus: vi.fn(),
+      setStatus: vi.fn((next: SyncStatus) => {
+        current = next
+        subs.forEach((run) => run(current))
+      }),
+    },
+    setSyncState(next: SyncStatus) {
+      current = next
+      subs.forEach((run) => run(current))
     },
   }
 })
+
+function status(overrides: Partial<SyncStatus> = {}): SyncStatus {
+  return {
+    state: 'idle',
+    last_sync_at: null,
+    pending: 0,
+    blobs_pending: 0,
+    pending_blob_bytes: 0,
+    conflicts: 0,
+    clock_warning: false,
+    ...overrides,
+  }
+}
 
 vi.mock('$lib/sync-store', () => ({
   syncStore: syncStoreMock,
@@ -82,6 +104,7 @@ describe('SyncSettingsCard — plan change request', () => {
   beforeEach(() => {
     locale.set('es')
     mockInvoke.mockReset()
+    setSyncState(status())
     routeInvoke()
   })
 
@@ -197,6 +220,7 @@ describe('SyncSettingsCard — device list deduping', () => {
   beforeEach(() => {
     locale.set('es')
     mockInvoke.mockReset()
+    setSyncState(status())
     routeInvoke()
   })
 
@@ -254,5 +278,77 @@ describe('SyncSettingsCard — device list deduping', () => {
     await fireEvent.click(within(dialog).getByRole('button', { name: 'Revocar' }))
 
     await waitFor(() => expect(revokeSpy).toHaveBeenCalledWith({ deviceId: 'active' }))
+  })
+})
+
+describe('SyncSettingsCard — fixed cloud endpoint', () => {
+  beforeEach(() => {
+    locale.set('es')
+    mockInvoke.mockReset()
+    setSyncState(status({ state: 'disabled' }))
+    routeInvoke()
+  })
+
+  afterEach(() => {
+    mockInvoke.mockReset()
+    setSyncState(status())
+  })
+
+  it('hides the server URL field and logs in against the default cloud endpoint', async () => {
+    const loginSpy = vi.fn().mockResolvedValue(undefined)
+    routeInvoke({ sync_login: (args) => loginSpy(args) })
+
+    render(SyncSettingsCard)
+
+    expect(screen.queryByLabelText('URL del servidor')).not.toBeInTheDocument()
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'ana@ejemplo.com' } })
+    await fireEvent.input(screen.getByLabelText('Contraseña'), {
+      target: { value: 'contraseña-larga' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Iniciar sesión' }))
+
+    await waitFor(() =>
+      expect(loginSpy).toHaveBeenCalledWith({
+        serverUrl: DEFAULT_SYNC_SERVER_URL,
+        email: 'ana@ejemplo.com',
+        password: 'contraseña-larga',
+      })
+    )
+    expect(await screen.findByText('Sincronizar ahora')).toBeInTheDocument()
+  })
+
+  it('returns to the login form after logout', async () => {
+    const logoutSpy = vi.fn().mockResolvedValue(undefined)
+    routeInvoke({ sync_logout: () => logoutSpy() })
+    setSyncState(status({ state: 'idle' }))
+
+    render(SyncSettingsCard)
+
+    await fireEvent.click(await screen.findByRole('button', { name: 'Cerrar sesión' }))
+
+    await waitFor(() => expect(logoutSpy).toHaveBeenCalledTimes(1))
+    expect(await screen.findByLabelText('Email')).toBeInTheDocument()
+    expect(screen.queryByText('Sincronizar ahora')).not.toBeInTheDocument()
+  })
+
+  it('registers accounts against the default cloud endpoint', async () => {
+    const registerSpy = vi.fn().mockResolvedValue('acc-1')
+    routeInvoke({ sync_register_account: (args) => registerSpy(args) })
+
+    render(SyncSettingsCard)
+
+    await fireEvent.input(screen.getByLabelText('Email'), { target: { value: 'ana@ejemplo.com' } })
+    await fireEvent.input(screen.getByLabelText('Contraseña'), {
+      target: { value: 'contraseña-larga' },
+    })
+    await fireEvent.click(screen.getByRole('button', { name: 'Registrar cuenta' }))
+
+    await waitFor(() =>
+      expect(registerSpy).toHaveBeenCalledWith({
+        serverUrl: DEFAULT_SYNC_SERVER_URL,
+        email: 'ana@ejemplo.com',
+        password: 'contraseña-larga',
+      })
+    )
   })
 })
