@@ -674,7 +674,12 @@
   }
 
   .db-browser-view__header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     align-items: flex-start;
+    background: color-mix(in srgb, var(--surface-app) 94%, transparent);
+    backdrop-filter: blur(16px);
   }
 
   .db-browser-toolbar {

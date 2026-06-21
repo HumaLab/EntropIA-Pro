@@ -990,7 +990,9 @@
     onpointerdown={onResizeHandlePointerDown}
   ></div>
 
-  <CollectionAnalysisPanel {collectionId} refreshToken={analysisRefreshToken} />
+  <div class="collection-analysis-panel-slot">
+    <CollectionAnalysisPanel {collectionId} refreshToken={analysisRefreshToken} />
+  </div>
 {/if}
 </div>
 
@@ -1032,6 +1034,8 @@
     position: relative;
     cursor: col-resize;
     z-index: 1;
+    margin-block-start: var(--space-4);
+    margin-block-end: var(--space-4);
   }
 
   .resize-handle::before {
@@ -1061,7 +1065,12 @@
   }
 
   .collection-view__header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
     align-items: flex-start;
+    background: color-mix(in srgb, var(--surface-app) 94%, transparent);
+    backdrop-filter: blur(16px);
   }
 
   .collection-toolbar {
@@ -1074,6 +1083,17 @@
   .collection-toolbar :global(.search-bar) {
     min-width: min(100%, 340px);
     flex: 1 1 280px;
+  }
+
+  .collection-analysis-panel-slot {
+    display: flex;
+    min-height: 0;
+    margin-block-start: var(--space-2);
+    margin-block-end: var(--space-4);
+  }
+
+  .collection-analysis-panel-slot :global(.panel.analysis-panel) {
+    flex: 1;
   }
 
   .grid {

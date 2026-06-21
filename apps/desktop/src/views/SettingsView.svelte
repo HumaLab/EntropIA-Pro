@@ -981,46 +981,48 @@
 
 {#key activeLocale}
   <div class="settings-view page-shell" data-locale={activeLocale}>
-    <section class="page-header settings-view__header">
-      <div class="page-header__content">
-        <span class="page-header__eyebrow">{t('settings.preferences')}</span>
-        <h1>{t('settings.title')}</h1>
-        <p>{t('settings.subtitle', { product: PRODUCT_NAME })}</p>
-        <span class="page-header__meta">{t('settings.currentMode', { mode: currentModeLabel })}</span>
-      </div>
+    <div class="settings-view__sticky-header">
+      <section class="page-header settings-view__header">
+        <div class="page-header__content">
+          <span class="page-header__eyebrow">{t('settings.preferences')}</span>
+          <h1>{t('settings.title')}</h1>
+          <p>{t('settings.subtitle', { product: PRODUCT_NAME })}</p>
+          <span class="page-header__meta">{t('settings.currentMode', { mode: currentModeLabel })}</span>
+        </div>
 
-      <div class="page-toolbar settings-view__toolbar">
-        <Button variant="primary" onclick={handleSave} disabled={saving}>
-          {saving ? t('settings.saving') : t('settings.save')}
-        </Button>
-      </div>
-    </section>
+        <div class="page-toolbar settings-view__toolbar">
+          <Button variant="primary" onclick={handleSave} disabled={saving}>
+            {saving ? t('settings.saving') : t('settings.save')}
+          </Button>
+        </div>
+      </section>
 
-    <TabList aria-label={t('settings.tabsAria')}>
-      <TabButton active={activeTab === 'api'} onclick={() => (activeTab = 'api')}>
-        {t('settings.remoteApisTab')}
-      </TabButton>
-      <TabButton active={activeTab === 'prompts'} onclick={() => (activeTab = 'prompts')}>
-        {t('settings.promptsTab')}
-      </TabButton>
-      <TabButton active={activeTab === 'modelParams'} onclick={() => (activeTab = 'modelParams')}>
-        {t('settings.modelParamsTab')}
-      </TabButton>
-      <TabButton active={activeTab === 'ragParams'} onclick={() => (activeTab = 'ragParams')}>
-        {t('settings.ragParamsTab')}
-      </TabButton>
-      <TabButton active={activeTab === 'sync'} onclick={() => (activeTab = 'sync')}>
-        {t('settings.syncTab')}
-      </TabButton>
-      {#if LOCAL_ML}
-        <TabButton active={activeTab === 'dependencias'} onclick={() => (activeTab = 'dependencias')}>
-          {t('settings.dependenciesTab')}{#if hasDepsWarning}<span class="settings-tab__badge"></span>{/if}
+      <TabList aria-label={t('settings.tabsAria')}>
+        <TabButton active={activeTab === 'api'} onclick={() => (activeTab = 'api')}>
+          {t('settings.remoteApisTab')}
         </TabButton>
-      {/if}
-      <TabButton active={activeTab === 'logs'} onclick={() => (activeTab = 'logs')}>
-        {t('settings.logsTab')}
-      </TabButton>
-    </TabList>
+        <TabButton active={activeTab === 'prompts'} onclick={() => (activeTab = 'prompts')}>
+          {t('settings.promptsTab')}
+        </TabButton>
+        <TabButton active={activeTab === 'modelParams'} onclick={() => (activeTab = 'modelParams')}>
+          {t('settings.modelParamsTab')}
+        </TabButton>
+        <TabButton active={activeTab === 'ragParams'} onclick={() => (activeTab = 'ragParams')}>
+          {t('settings.ragParamsTab')}
+        </TabButton>
+        <TabButton active={activeTab === 'sync'} onclick={() => (activeTab = 'sync')}>
+          {t('settings.syncTab')}
+        </TabButton>
+        {#if LOCAL_ML}
+          <TabButton active={activeTab === 'dependencias'} onclick={() => (activeTab = 'dependencias')}>
+            {t('settings.dependenciesTab')}{#if hasDepsWarning}<span class="settings-tab__badge"></span>{/if}
+          </TabButton>
+        {/if}
+        <TabButton active={activeTab === 'logs'} onclick={() => (activeTab = 'logs')}>
+          {t('settings.logsTab')}
+        </TabButton>
+      </TabList>
+    </div>
 
     {#if activeTab === 'api'}
     {#if saveFeedback}
@@ -1790,6 +1792,18 @@
 <style>
   .settings-view {
     min-height: 100%;
+  }
+
+  .settings-view__sticky-header {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-4);
+    padding-bottom: var(--space-4);
+    background: color-mix(in srgb, var(--surface-app) 94%, transparent);
+    backdrop-filter: blur(16px);
   }
 
   .settings-view__toolbar {
