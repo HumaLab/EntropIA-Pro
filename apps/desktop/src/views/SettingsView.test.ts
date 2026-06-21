@@ -133,19 +133,19 @@ describe('SettingsView', () => {
     applyDefaultSettingsBackend()
   })
 
-  it('renders the local-first header hierarchy with the active mode summary', async () => {
+  it('renders the provider-focused header hierarchy with the active LLM provider summary', async () => {
     render(SettingsView)
 
     expect(await screen.findByText('Preferencias')).toBeInTheDocument()
     expect(screen.getByRole('heading', { name: 'Configuración' })).toBeInTheDocument()
     expect(
       screen.getByText(
-        'Ajustá cómo EntropIA Pro resuelve tareas locales y remotas de inteligencia artificial.'
+        'Ajustá proveedores, credenciales y parámetros de inteligencia artificial para EntropIA Pro.'
       )
     ).toBeInTheDocument()
 
     await waitFor(() => {
-      expect(screen.getByText('Modo actual: OpenRouter')).toBeInTheDocument()
+      expect(screen.getByText('Proveedor LLM: OpenRouter')).toBeInTheDocument()
     })
   })
 

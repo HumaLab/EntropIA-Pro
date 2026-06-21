@@ -23,6 +23,10 @@ export function openLogsDir(): Promise<void> {
   return invoke<void>('logs_open_dir')
 }
 
+export function appendLog(level: AppLogLevel, source: string, message: string): Promise<void> {
+  return invoke<void>('logs_append', { level, source, message })
+}
+
 export function onLogEntry(callback: (entry: AppLogEntry) => void): Promise<UnlistenFn> {
   return listen<AppLogEntry>('logs://entry', (event) => callback(event.payload))
 }

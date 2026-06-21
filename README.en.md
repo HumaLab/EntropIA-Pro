@@ -17,7 +17,7 @@ EntropIA organizes collections, processes images/PDFs/audio, and enriches result
 | Native ML runtime | yes (downloaded on first use) | no |
 | Installer | NSIS + MSI (GitHub) | NSIS + MSI (GitHub) · MSIX (Store) |
 | Identity | `com.entropia.pro.desktop` | `CONICET.EntropIALite` |
-| Built with | default features (`local-ml`) + `VITE_LOCAL_ML=1` | `--no-default-features` + `VITE_LOCAL_ML=0` |
+| Built with | `--features local-ml` + `VITE_LOCAL_ML=1` | lean default features + `VITE_LOCAL_ML=0` |
 
 **Pro** runs AI on the machine (offline-first) and falls back to remote providers when the runtime is missing or by configuration. **Lite** is 100% remote (OpenRouter / AssemblyAI / GLM): no native models or runtime, small installer, Microsoft Store distribution.
 
@@ -56,15 +56,15 @@ pnpm install --frozen-lockfile
 
 ### Run &amp; build each variant
 
-Everything runs from **`apps/desktop/`**. If you are at the repo root, run `cd apps/desktop` first; otherwise `pnpm exec tauri` cannot find the Tauri CLI because it is installed in the desktop workspace. The variant is selected by three things: the Cargo feature (`--no-default-features` for Lite), the `VITE_LOCAL_ML` frontend flag, and (for Lite) the `tauri.lite.conf.json` Tauri config.
+Everything runs from **`apps/desktop/`**. If you are at the repo root, run `cd apps/desktop` first; otherwise `pnpm exec tauri` cannot find the Tauri CLI because it is installed in the desktop workspace. The variant is selected by three things: the Cargo feature (`local-ml` explicit for Pro; lean default for Lite), the `VITE_LOCAL_ML` frontend flag, and (for Lite) the `tauri.lite.conf.json` Tauri config.
 
 **EntropIA Pro** (compiles MNN from source the first time → ~30 min):
 
 ```powershell
 cd apps/desktop
 $env:VITE_LOCAL_ML='1'
-pnpm exec tauri dev      # dev with hot-reload
-pnpm exec tauri build    # NSIS installer
+pnpm exec tauri dev   --features local-ml      # dev with hot-reload
+pnpm exec tauri build --features local-ml      # NSIS installer
 ```
 
 **EntropIA Lite** (lean, no MNN → starts fast):
@@ -72,14 +72,13 @@ pnpm exec tauri build    # NSIS installer
 ```powershell
 cd apps/desktop
 $env:VITE_LOCAL_ML='0'
-$env:CARGO_DEFAULT_FEATURES='0'
 pnpm exec tauri dev   --config src-tauri/tauri.lite.conf.json
-pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
+pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi
 ```
 
 > - Use **`pnpm exec tauri`** (not `pnpm tauri … -- …`): pnpm eats the first `--` and breaks arg passing to Cargo.
 > - To run it from the **repo root** without `cd`, use `pnpm --filter @entropia-pro/desktop exec tauri ...`.
-> - For **Lite `tauri dev`**, do not use `-- --no-default-features`: this Tauri CLI version parses it as its own argument and fails. Use `$env:CARGO_DEFAULT_FEATURES='0'`.
+> - Lite is Cargo's lean default. Do not pass `--features local-ml` when using `tauri.lite.conf.json`.
 > - In PowerShell `$env:VITE_LOCAL_ML` **persists for the session** → set it on every variant switch (or open a new terminal). In bash it goes inline: `VITE_LOCAL_ML=0 pnpm exec tauri …`.
 > - Lite uses `identifier com.entropia.lite` → **separate app data** from Pro (you can run both without clobbering each other).
 > - Lite's `tauri build` produces the **`.exe` (NSIS) + `.msi`**; the final Store **MSIX** comes from the repack (see _Release &amp; installers_).
@@ -90,16 +89,16 @@ pnpm exec tauri build --config src-tauri/tauri.lite.conf.json --bundles nsis,msi
 pnpm typecheck                                                  # Pro (frontend)
 VITE_LOCAL_ML=0 pnpm --filter @entropia-pro/desktop typecheck   # Lite (frontend)
 pnpm test                                                       # frontend tests (Pro)
-cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml                        # Pro (Rust)
-cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --no-default-features  # Lite (Rust)
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml --features local-ml  # Pro (Rust)
+cargo build --manifest-path apps/desktop/src-tauri/Cargo.toml                      # Lite (Rust)
 ```
 
 ## How the variant flag works
 
 The unification is a **strangler** over the Pro code: all local inference lives behind the `local-ml` Cargo feature (with a `paddle-ocr` sub-feature for MNN/PaddleOCR), mirrored by the `VITE_LOCAL_ML` frontend flag.
 
-- **`cargo build` (default)** = `local-ml` ON → **Pro** (local + remote engines).
-- **`cargo build --no-default-features`** = lean → **Lite** (remote only). Drops `ort`/onnxruntime, `llama-cpp-2`, MNN/`ocr-rs`, `tokenizers`, and the signed runtime download.
+- **`cargo build --features local-ml`** = **Pro** (local + remote engines).
+- **`cargo build` (default)** = lean → **Lite** (remote only). Drops `ort`/onnxruntime, `llama-cpp-2`, MNN/`ocr-rs`, `tokenizers`, and the signed runtime download.
 - The **frontend** reads `VITE_LOCAL_ML`: in Lite it hides DependenciasTab, the deps banners, and the local-model UI, and the brand becomes "EntropIA Lite".
 - The **Tauri command list is identical** in both variants; only the bodies branch (the Lite arm returns healthy/no-op, like EntropIA Lite did).
 

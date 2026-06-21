@@ -92,7 +92,7 @@ function Write-RustQualitySummary {
   }
 
   $lines = @(
-    "## Rust Coverage Baseline (--no-default-features)",
+    "## Rust Coverage Baseline (default lean features)",
     "- Status: $($Results.coverage.status)",
     "- Note: $($Results.coverage.note)",
     "",
@@ -135,7 +135,7 @@ function Invoke-RustQualityReport {
 
   $coverage = Invoke-RustCoverage -ManifestPath $ManifestPath -OutputDir $OutputDir
   $fmt = Invoke-RustCommand -Args @("fmt", "--manifest-path", $ManifestPath, "--check")
-  $clippy = Invoke-RustCommand -Args @("clippy", "--manifest-path", $ManifestPath, "--no-default-features", "--all-targets", "--", "-D", "warnings")
+  $clippy = Invoke-RustCommand -Args @("clippy", "--manifest-path", $ManifestPath, "--all-targets", "--", "-D", "warnings")
 
   $coverageStatus = Classify-RustSignal -Tool "coverage" -ExitCode $coverage.ExitCode -Output $coverage.Output
   $fmtStatus = Classify-RustSignal -Tool "fmt" -ExitCode $fmt.ExitCode -Output $fmt.Output

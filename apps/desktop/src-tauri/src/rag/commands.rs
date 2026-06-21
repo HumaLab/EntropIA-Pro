@@ -206,7 +206,7 @@ async fn generate_answer(
         }
         #[cfg(feature = "local-ml")]
         RagAnswerMode::Local => {
-            // Camino por defecto: motor Gemma local. Mismo patrón que
+            // Camino local de Pro: motor LLM en el equipo. Mismo patrón que
             // `run_local_gemma_ner`.
             let app_handle = app_handle.clone();
             let db_path = db_path.to_path_buf();
@@ -223,11 +223,11 @@ async fn generate_answer(
                 let max_tokens = params.max_tokens;
                 let engine = engine
                     .lock()
-                    .map_err(|error| format!("Local Gemma engine lock poisoned: {error}"))?;
+                    .map_err(|error| format!("Local LLM engine lock poisoned: {error}"))?;
 
                 // Presupuesto de contexto contra el `n_ctx` del modelo local:
                 // los fragmentos recuperados pueden ser grandes y desbordar a
-                // Gemma. Primero acotamos el bloque de fragmentos con chunking
+                // el modelo local. Primero acotamos el bloque de fragmentos con chunking
                 // (los más relevantes van primero), luego construimos el prompt
                 // completo y, como red de seguridad final, lo truncamos al
                 // presupuesto real del modelo.

@@ -7,8 +7,8 @@
    *
    * Surface: fixed EntropIA Cloud endpoint, email/password with Registrar/Iniciar
    * sesión/Cerrar sesión, device list with revoke (ConfirmDialog),
-   * auto-sync toggle + interval, "Sincronizar ahora", storage usage, conflicts
-   * list with detail + ack, "Borrar mis datos del servidor" (password ConfirmDialog),
+   * auto-sync toggle + interval, "Sincronizar ahora", storage usage, compact conflicts
+   * summary + logs notification, "Borrar mis datos del servidor" (password ConfirmDialog),
    * "Re-verificar archivos", and a first-sync preflight confirm when pending blob
    * bytes exceed 500 MB.
    */
@@ -38,6 +38,7 @@
     type SyncUsage,
   } from '$lib/sync'
   import { syncStore } from '$lib/sync-store'
+  import { appendLog } from '$lib/logs'
   import { ActionIcon, Button, Card, ConfirmDialog, Input } from '@entropia/ui'
 
   // First-sync preflight threshold (DESIGN §11): 500 MB of pending blob bytes.
@@ -76,7 +77,8 @@
   let devices = $state<SyncDevice[]>([])
   let usage = $state<SyncUsage | null>(null)
   let conflicts = $state<SyncConflict[]>([])
-  let expandedConflictId = $state<string | null>(null)
+  let pendingConflictCount = $derived(conflicts.filter((conflict) => !conflict.acknowledged).length)
+  const loggedConflictIds = new Set<string>()
 
   // ── Async / feedback flags ──
   let busy = $state<'register' | 'login' | 'logout' | 'sync' | 'reverify' | 'auto' | null>(null)
@@ -215,8 +217,32 @@
   async function refreshConflicts() {
     try {
       conflicts = await syncListConflicts(50, 0)
+      await notifyConflictsInLogs(conflicts)
     } catch (error) {
       setError(error)
+    }
+  }
+
+  function conflictLogMessage(conflict: SyncConflict): string {
+    const header = t('sync.card.conflictLogMessage', {
+      reason: conflict.reason,
+      table: conflict.table_name,
+      row: conflict.row_id,
+    })
+    const details = [conflict.winner_summary, conflict.loser_payload].filter(Boolean).join('\n\n')
+    return details ? `${header}\n${details}` : header
+  }
+
+  async function notifyConflictsInLogs(rows: SyncConflict[]) {
+    const pending = rows.filter((conflict) => !conflict.acknowledged)
+    for (const conflict of pending) {
+      if (loggedConflictIds.has(conflict.id)) continue
+      loggedConflictIds.add(conflict.id)
+      try {
+        await appendLog('warn', 'sync/conflicts', conflictLogMessage(conflict))
+      } catch {
+        // Logging is diagnostic only; conflict refresh must not fail because Logs are unavailable.
+      }
     }
   }
 
@@ -333,13 +359,13 @@
     }
   }
 
-  function toggleConflictDetail(id: string) {
-    expandedConflictId = expandedConflictId === id ? null : id
-  }
-
-  async function handleAckConflict(id: string) {
+  async function handleAckAllConflicts() {
     try {
-      await syncAckConflict(id)
+      await Promise.all(
+        conflicts
+          .filter((conflict) => !conflict.acknowledged)
+          .map((conflict) => syncAckConflict(conflict.id))
+      )
       await refreshConflicts()
       await syncStore.refresh()
     } catch (error) {
@@ -513,6 +539,7 @@
         </Button>
       </div>
     {:else}
+      <div class="sync-card__grid">
       <!-- ── Session block (logged in) ── -->
       <div class="sync-card__block">
         <h3>{t('sync.card.sessionTitle')}</h3>
@@ -639,62 +666,29 @@
         </div>
       </div>
 
-      <!-- ── Conflicts ── -->
-      <div class="sync-card__block">
-        <div class="sync-card__block-head">
-          <h3>{t('sync.card.conflictsTitle')}</h3>
+      <!-- ── Conflicts: compact summary, details are emitted to Logs ── -->
+      <div class="sync-card__conflict-summary" aria-live="polite">
+        <div>
+          <strong>{t('sync.card.conflictsTitle')}</strong>
+          <p class="settings__hint">
+            {pendingConflictCount === 0
+              ? t('sync.card.conflictsEmpty')
+              : t('sync.card.conflictsSummary', {
+                  count: pendingConflictCount,
+                })}
+          </p>
+        </div>
+        <div class="sync-card__conflict-actions">
           <Button variant="secondary" size="sm" onclick={refreshConflicts}>
             {t('sync.card.refreshConflicts')}
           </Button>
+          {#if pendingConflictCount > 0}
+            <Button variant="secondary" size="sm" onclick={handleAckAllConflicts}>
+              {t('sync.card.conflictAckAll')}
+            </Button>
+          {/if}
         </div>
-        {#if conflicts.length === 0}
-          <p class="settings__hint">{t('sync.card.conflictsEmpty')}</p>
-        {:else}
-          <ul class="sync-card__list">
-            {#each conflicts as conflict (conflict.id)}
-              <li class="sync-card__conflict" class:sync-card__conflict--acked={conflict.acknowledged}>
-                <div class="sync-card__conflict-head">
-                  <div class="sync-card__device-info">
-                    <span class="sync-card__device-name">
-                      {t('sync.card.conflictReason', { reason: conflict.reason })}
-                    </span>
-                    <span class="settings__hint">
-                      {t('sync.card.conflictRow', {
-                        table: conflict.table_name,
-                        row: conflict.row_id,
-                      })}
-                    </span>
-                  </div>
-                  <div class="sync-card__conflict-actions">
-                    <Button
-                      variant="secondary"
-                      size="sm"
-                      onclick={() => toggleConflictDetail(conflict.id)}
-                    >
-                      {expandedConflictId === conflict.id
-                        ? t('sync.card.conflictHideDetail')
-                        : t('sync.card.conflictShowDetail')}
-                    </Button>
-                    {#if !conflict.acknowledged}
-                      <Button
-                        variant="secondary"
-                        size="sm"
-                        onclick={() => handleAckConflict(conflict.id)}
-                      >
-                        {t('sync.card.conflictAck')}
-                      </Button>
-                    {/if}
-                  </div>
-                </div>
-                {#if expandedConflictId === conflict.id}
-                  <pre class="sync-card__detail">{conflict.winner_summary ??
-                      ''}{conflict.winner_summary && conflict.loser_payload ? '\n\n' : ''}{conflict.loser_payload ??
-                      ''}</pre>
-                {/if}
-              </li>
-            {/each}
-          </ul>
-        {/if}
+      </div>
       </div>
 
       <!-- ── Danger zone ── -->
@@ -956,6 +950,13 @@
     background-color: color-mix(in srgb, var(--color-surface-glass) 88%, transparent);
   }
 
+  .sync-card__grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: var(--space-4) var(--space-5);
+    align-items: start;
+  }
+
   .sync-card__block {
     display: flex;
     flex-direction: column;
@@ -1003,7 +1004,7 @@
   }
 
   .sync-card__device,
-  .sync-card__conflict-head {
+  .sync-card__conflict-summary {
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -1048,37 +1049,21 @@
     color: var(--color-text-secondary);
   }
 
-  .sync-card__conflict {
-    display: flex;
-    flex-direction: column;
-    gap: var(--space-2);
-    padding: var(--space-2);
-    border: 1px solid color-mix(in srgb, var(--color-hairline) 60%, transparent);
-    border-radius: var(--radius-input);
+  .sync-card__conflict-summary {
+    padding: var(--space-3) 0;
+    border-top: 1px solid color-mix(in srgb, var(--color-hairline) 58%, transparent);
+    border-bottom: 1px solid color-mix(in srgb, var(--color-hairline) 58%, transparent);
   }
 
-  .sync-card__conflict--acked {
-    opacity: 0.6;
+  .sync-card__conflict-summary strong,
+  .sync-card__conflict-summary p {
+    margin: 0;
   }
 
   .sync-card__conflict-actions {
     display: flex;
     gap: var(--space-2);
     flex-shrink: 0;
-  }
-
-  .sync-card__detail {
-    margin: 0;
-    padding: var(--space-2);
-    border-radius: var(--radius-sm);
-    background: color-mix(in srgb, var(--color-surface-glass) 70%, transparent);
-    color: var(--color-text-secondary);
-    font-family: var(--font-mono, monospace);
-    font-size: var(--font-size-xs);
-    white-space: pre-wrap;
-    word-break: break-word;
-    max-height: 220px;
-    overflow: auto;
   }
 
   .sync-card__plan-action {
@@ -1134,5 +1119,16 @@
     display: grid;
     grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
     gap: var(--space-4);
+  }
+
+  @media (max-width: 860px) {
+    .sync-card__grid {
+      grid-template-columns: 1fr;
+    }
+
+    .sync-card__conflict-summary {
+      align-items: flex-start;
+      flex-direction: column;
+    }
   }
 </style>

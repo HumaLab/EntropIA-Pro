@@ -28,8 +28,9 @@ use crate::settings;
 use self::engine::{LlmConfig, LlmEngine};
 use self::openrouter::OpenRouterClient;
 
+const LLM_PREFIX: &str = "[llm]";
 const LLM_LOCAL_PREFIX: &str = "[llm-local]";
-const LLM_CLOUD_PREFIX: &str = "[llm-cloud]";
+const LLM_CLOUD_PREFIX: &str = "[llm-remote]";
 const LLM_TARGET_ASSET: &str = "asset";
 const LLM_TARGET_ITEM: &str = "item";
 const LLM_TARGET_COLLECTION: &str = "collection";
@@ -1093,7 +1094,7 @@ impl LlmQueue {
                     c
                 }
                 Err(e) => {
-                    eprintln!("{LLM_LOCAL_PREFIX} Failed to open worker DB connection: {e}");
+                    eprintln!("{LLM_PREFIX} Failed to open worker DB connection: {e}");
                     return;
                 }
             };
@@ -1105,11 +1106,16 @@ impl LlmQueue {
                     value TEXT NOT NULL
                  );",
             ) {
-                eprintln!("{LLM_LOCAL_PREFIX} Warning: could not create app_settings table: {e}");
+                eprintln!("{LLM_PREFIX} Warning: could not create app_settings table: {e}");
             }
 
+            #[cfg(feature = "local-ml")]
             eprintln!(
-                "{LLM_LOCAL_PREFIX} Local Gemma engine will initialize lazily on first local job"
+                "{LLM_PREFIX} Worker ready; provider is selected from settings, and the local engine initializes only when selected"
+            );
+            #[cfg(not(feature = "local-ml"))]
+            eprintln!(
+                "{LLM_PREFIX} Worker ready; remote provider only in this build"
             );
             #[cfg(feature = "local-ml")]
             let mut engine: Option<SharedLocalLlmEngine> = None;
@@ -1118,7 +1124,7 @@ impl LlmQueue {
 
             // Ensure llm_results table exists and legacy rows are normalized.
             if let Err(e) = ensure_llm_results_schema(&conn) {
-                eprintln!("{LLM_LOCAL_PREFIX} Warning: could not create llm_results table: {e}");
+                eprintln!("{LLM_PREFIX} Warning: could not create llm_results table: {e}");
             }
 
             // Main worker loop
@@ -1195,7 +1201,7 @@ impl LlmQueue {
                     if engine.is_none() {
                         let init_db_path = db_path.clone();
                         let init_app_handle = app_handle.clone();
-                        eprintln!("{LLM_LOCAL_PREFIX} Initializing local Gemma engine on demand for job '{job_name}'");
+                        eprintln!("{LLM_LOCAL_PREFIX} Initializing local LLM engine on demand for job '{job_name}'");
                         match tokio::task::spawn_blocking(move || {
                             let init_conn =
                                 rusqlite::Connection::open(&init_db_path).map_err(|e| {
@@ -1238,7 +1244,7 @@ impl LlmQueue {
                             );
                             tokio::task::block_in_place(|| {
                                 let engine = e.lock().map_err(|error| {
-                                    format!("Local Gemma engine lock poisoned: {error}")
+                                    format!("Local LLM engine lock poisoned: {error}")
                                 })?;
                                 process_job(&engine, &conn, &job)
                             })
@@ -1247,7 +1253,7 @@ impl LlmQueue {
                             if llm_mode == "auto" && !api_key.is_empty() {
                                 let fallback_log_prefix = llm_job_prefix(true, &job);
                                 eprintln!(
-                                    "{fallback_log_prefix} Local Gemma unavailable; falling back to OpenRouter for job '{job_name}' on {id}"
+                                    "{fallback_log_prefix} Local LLM engine unavailable; falling back to remote provider for job '{job_name}' on {id}"
                                 );
                                 let client = OpenRouterClient::new(api_key, remote_model);
                                 match prepare_remote_job_request(&conn, &job, client.n_ctx()) {

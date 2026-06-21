@@ -50,7 +50,7 @@ fn enqueue(nlp_queue: &NlpQueue, job: NlpJob) -> Result<String, String> {
 
 fn triples_retired_error(target: &str) -> String {
     format!(
-        "NLP triples extraction was retired for {target}. Use the Gemma LLM triples commands instead."
+        "NLP triples extraction was retired for {target}. Use the LLM triples commands instead."
     )
 }
 
@@ -498,11 +498,11 @@ mod tests {
     }
 
     #[test]
-    fn triples_retired_error_points_callers_to_gemma() {
+    fn triples_retired_error_points_callers_to_llm() {
         let message = triples_retired_error("item 'item-7'");
 
         assert!(message.contains("retired"));
-        assert!(message.contains("Gemma LLM triples commands"));
+        assert!(message.contains("LLM triples commands"));
     }
 
     #[test]

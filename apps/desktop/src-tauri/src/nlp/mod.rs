@@ -935,7 +935,7 @@ fn ner_fallback_config(conn: &rusqlite::Connection) -> NerFallbackConfig {
         #[cfg(feature = "local-ml")]
         _ => NerLlmFallbackMode::Local,
         // Without the local engine the default must resolve to OpenRouter so NER
-        // never routes to a non-existent local Gemma engine.
+        // never routes to a non-existent local LLM engine.
         #[cfg(not(feature = "local-ml"))]
         _ => NerLlmFallbackMode::OpenRouter,
     };
@@ -983,7 +983,7 @@ async fn run_local_gemma_ner(
         let max_tokens = 1024;
         let engine = engine
             .lock()
-            .map_err(|error| format!("Local Gemma engine lock poisoned: {error}"))?;
+            .map_err(|error| format!("Local LLM engine lock poisoned: {error}"))?;
         let truncated = crate::llm::truncate_text_for_context(engine.n_ctx(), max_tokens, &text);
         let prompt = crate::llm::prompt::extract_entities(&truncated);
         let raw = engine.generate(&prompt, max_tokens, "[nlp/ner][local]")?;
@@ -995,7 +995,7 @@ async fn run_local_gemma_ner(
         )
     })
     .await
-    .map_err(|error| format!("Local Gemma NER task panicked: {error}"))?
+    .map_err(|error| format!("Local LLM NER task panicked: {error}"))?
 }
 
 fn asset_embedding_exists(conn: &rusqlite::Connection, asset_id: &str) -> Result<bool, String> {

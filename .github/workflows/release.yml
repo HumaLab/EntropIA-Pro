@@ -44,7 +44,7 @@ jobs:
       fail-fast: false
       matrix:
         # Default dispatch + tag pushes build Windows only. `all` adds macOS + Linux.
-        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis,msi","rust_target":""}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--bundles nsis,msi","rust_target":""},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"-- --no-default-features","rust_target":""}]') }}
+        include: ${{ fromJSON((github.event_name == 'push' || inputs.release_platform != 'all') && '[{"name":"windows-latest","platform":"windows-latest","build_args":"--features local-ml --bundles nsis,msi","rust_target":""}]' || '[{"name":"windows-latest","platform":"windows-latest","build_args":"--features local-ml --bundles nsis,msi","rust_target":""},{"name":"macos-14 (arm64)","platform":"macos-14","build_args":"--features local-ml --target aarch64-apple-darwin","rust_target":"aarch64-apple-darwin"},{"name":"ubuntu-22.04","platform":"ubuntu-22.04","build_args":"","rust_target":""}]') }}
     runs-on: ${{ matrix.platform }}
     steps:
       - name: Checkout repository
@@ -142,7 +142,7 @@ jobs:
         shell: pwsh
         run: npm exec --package=pnpm@${{ env.PNPM_VERSION }} -- pnpm install --frozen-lockfile
 
-      # Build the lean MSI (local-ml compiled out via --no-default-features). The
+      # Build the lean MSI (local-ml compiled out by the default lean feature set). The
       # bootstrap env vars are KEPT: build.rs guard_lean_bootstrap_source() is gated on
       # PROFILE=release + target_os, NOT on the cargo feature, so it still requires a
       # baked download source for the fixture runtime-pack present in the source tree.
@@ -160,7 +160,7 @@ jobs:
           # GitHub release by attach-lite-installers); the .msi also feeds the MSIX repack.
           # tauri-action runs from the repo root, so --config is root-relative
           # (unlike the local `apps/desktop`-relative `src-tauri/...`).
-          args: --config apps/desktop/src-tauri/tauri.lite.conf.json --bundles nsis,msi -- --no-default-features
+          args: --config apps/desktop/src-tauri/tauri.lite.conf.json --bundles nsis,msi
 
       # Locate the built lean app exe (input to the MSIX repack) and the distributable
       # installers (NSIS .exe + WiX .msi) for the GitHub release. The Pro crate name is

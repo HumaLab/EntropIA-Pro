@@ -63,8 +63,8 @@ const es = {
   'settings.preferences': 'Preferencias',
   'settings.title': 'Configuración',
   'settings.subtitle':
-    'Ajustá cómo {product} resuelve tareas locales y remotas de inteligencia artificial.',
-  'settings.currentMode': 'Modo actual: {mode}',
+    'Ajustá proveedores, credenciales y parámetros de inteligencia artificial para {product}.',
+  'settings.currentMode': 'Proveedor LLM: {mode}',
   'settings.tabsAria': 'Secciones de configuración',
   'settings.remoteApisTab': 'APIs remotas',
   'settings.logsTab': 'Logs',
@@ -87,12 +87,12 @@ const es = {
   'settings.languageOptionEn': 'English',
   'settings.llmModeTitle': 'Modo LLM',
   'settings.llmMode.local.label': 'Local',
-  'settings.llmMode.local.summary': 'Procesa con el modelo local disponible en este equipo.',
+  'settings.llmMode.local.summary': 'Procesa con el motor LLM local disponible en este equipo.',
   'settings.llmMode.openrouter.label': 'OpenRouter',
   'settings.llmMode.openrouter.summary': 'Usa exclusivamente tu cuenta remota de OpenRouter.',
   'settings.llmMode.auto.label': 'Automático',
-  'settings.llmMode.auto.summary': 'Prioriza el modelo local y cae a OpenRouter cuando haga falta.',
-  'settings.llmMode.local.description': 'Gemma local vía llama.cpp. Sin conexión a internet.',
+  'settings.llmMode.auto.summary': 'Prioriza el motor local y cae a OpenRouter cuando haga falta.',
+  'settings.llmMode.local.description': 'Motor LLM local vía llama.cpp. Sin conexión a internet.',
   'settings.llmMode.openrouter.description': 'API remota. Requiere API key y conexión a internet.',
   'settings.llmMode.auto.description':
     'Prioriza el motor local y usa OpenRouter sólo como respaldo.',
@@ -250,9 +250,13 @@ const es = {
   'sync.card.conflictReason': 'Motivo: {reason}',
   'sync.card.conflictRow': 'Tabla {table} · fila {row}',
   'sync.card.conflictAck': 'Marcar como visto',
+  'sync.card.conflictAckAll': 'Marcar vistos',
   'sync.card.conflictShowDetail': 'Ver detalle',
   'sync.card.conflictHideDetail': 'Ocultar detalle',
   'sync.card.refreshConflicts': 'Actualizar conflictos',
+  'sync.card.conflictsSummary':
+    '{count} conflictos pendientes. El detalle se registró como advertencia en Logs.',
+  'sync.card.conflictLogMessage': 'Conflicto de sincronización: {reason} en {table} · {row}',
   'sync.card.dangerTitle': 'Zona de riesgo',
   'sync.card.reverifyBlobs': 'Re-verificar archivos',
   'sync.card.reverifyBlobsHint':
@@ -1028,8 +1032,8 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.preferences': 'Preferences',
   'settings.title': 'Settings',
   'settings.subtitle':
-    'Adjust how {product} resolves local and remote artificial intelligence tasks.',
-  'settings.currentMode': 'Current mode: {mode}',
+    'Adjust AI providers, credentials, and parameters for {product}.',
+  'settings.currentMode': 'LLM provider: {mode}',
   'settings.tabsAria': 'Settings sections',
   'settings.remoteApisTab': 'Remote APIs',
   'settings.logsTab': 'Logs',
@@ -1050,13 +1054,13 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'settings.languageOptionEn': 'English',
   'settings.llmModeTitle': 'LLM mode',
   'settings.llmMode.local.label': 'Local',
-  'settings.llmMode.local.summary': 'Process with the local model available on this machine.',
+  'settings.llmMode.local.summary': 'Process with the local LLM engine available on this machine.',
   'settings.llmMode.openrouter.label': 'OpenRouter',
   'settings.llmMode.openrouter.summary': 'Use your remote OpenRouter account exclusively.',
   'settings.llmMode.auto.label': 'Automatic',
   'settings.llmMode.auto.summary':
-    'Prioritize the local model and fall back to OpenRouter when needed.',
-  'settings.llmMode.local.description': 'Local Gemma via llama.cpp. No internet required.',
+    'Prioritize the local engine and fall back to OpenRouter when needed.',
+  'settings.llmMode.local.description': 'Local LLM engine via llama.cpp. No internet required.',
   'settings.llmMode.openrouter.description':
     'Remote API. Requires an API key and internet connection.',
   'settings.llmMode.auto.description':
@@ -1215,9 +1219,13 @@ const en: Record<keyof typeof es | ExtraI18nKey, string> = {
   'sync.card.conflictReason': 'Reason: {reason}',
   'sync.card.conflictRow': 'Table {table} · row {row}',
   'sync.card.conflictAck': 'Mark as seen',
+  'sync.card.conflictAckAll': 'Mark seen',
   'sync.card.conflictShowDetail': 'Show detail',
   'sync.card.conflictHideDetail': 'Hide detail',
   'sync.card.refreshConflicts': 'Refresh conflicts',
+  'sync.card.conflictsSummary':
+    '{count} pending conflicts. Details were recorded as warnings in Logs.',
+  'sync.card.conflictLogMessage': 'Sync conflict: {reason} in {table} · {row}',
   'sync.card.dangerTitle': 'Danger zone',
   'sync.card.reverifyBlobs': 'Re-verify files',
   'sync.card.reverifyBlobsHint':

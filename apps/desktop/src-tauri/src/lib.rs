@@ -388,8 +388,8 @@ pub fn run() {
             // startup path, which previously blocked app window display by 3-15s.
             OcrQueue::start_worker(db_path.clone(), ocr_receiver, app.handle().clone());
 
-            // LLM queue: local Gemma model via llama.cpp for NER, summarization,
-            // OCR correction, Q&A, etc. Degrades gracefully if model not present.
+            // LLM queue: shared correction/summarization/extraction pipeline. Pro can
+            // use the local engine; Lite routes through the configured remote provider.
             let (llm_queue, llm_receiver) = LlmQueue::new(db_path.clone());
             let llm_available = llm_queue.available_flag();
             let nlp_llm_queue = llm_queue.clone();
@@ -577,6 +577,7 @@ pub fn run() {
             app_logs::logs_get,
             app_logs::logs_clear,
             app_logs::logs_open_dir,
+            app_logs::logs_append,
             open_external_url,
             sync::sync_ensure_capture,
             sync::sync_reverify_blobs,

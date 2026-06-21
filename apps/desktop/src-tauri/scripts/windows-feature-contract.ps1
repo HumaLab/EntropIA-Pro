@@ -69,14 +69,13 @@ function Invoke-Contract {
 }
 
 # Expected outcomes:
-# - default-features contract: PASS (must build/link clean; no MSVC LNK2001/LNK2019 or
-#   MNN __std_min_4i/__std_max_4i unresolved-symbol regressions). BLOCKING gate — this
-#   is the Pro (local-ml) build and must always compile.
-# - no-default baseline (lean / EntropIA-Lite variant): BLOCKING gate. The local-ml
-#   strangler migration is COMPLETE — the lean (--no-default-features) build compiles
-#   AND links (API-only: OpenRouter / AssemblyAI / GLM remote, no native ML). This lane
-#   is now the permanent lean-build regression gate: any change that breaks the lean
-#   build fails CI here. (Local ML — ort/onnxruntime, llama.cpp, MNN/PaddleOCR, the
-#   signed managed-runtime download — is opt-in behind `local-ml`, default-on for Pro.)
-Invoke-Contract -Name "default-features contract" -CargoArgs @("build", "--manifest-path", $ManifestPath)
-Invoke-Contract -Name "no-default baseline (lean / EntropIA-Lite variant)" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--no-default-features")
+# - Pro local-ml contract: PASS (must build/link clean; no MSVC LNK2001/LNK2019 or
+#   MNN __std_min_4i/__std_max_4i unresolved-symbol regressions). BLOCKING gate.
+# - default baseline (lean / EntropIA-Lite variant): BLOCKING gate. The local-ml
+#   strangler migration is COMPLETE — the default lean build compiles AND links
+#   (API-only: OpenRouter / AssemblyAI / GLM remote, no native ML). This lane is now
+#   the permanent lean-build regression gate: any change that breaks the lean build
+#   fails CI here. Local ML — ort/onnxruntime, llama.cpp, MNN/PaddleOCR, the signed
+#   managed-runtime download — is opt-in behind `local-ml` for Pro.
+Invoke-Contract -Name "Pro local-ml contract" -CargoArgs @("build", "--manifest-path", $ManifestPath, "--features", "local-ml")
+Invoke-Contract -Name "default baseline (lean / EntropIA-Lite variant)" -CargoArgs @("build", "--manifest-path", $ManifestPath)

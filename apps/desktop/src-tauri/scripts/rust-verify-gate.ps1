@@ -36,7 +36,7 @@ function Write-RustVerifyEvidence {
   }
 
   @(
-    "## Rust Coverage Baseline (--no-default-features)",
+    "## Rust Coverage Baseline (default lean features)",
     "- Status: $($Classification.coverage)",
     "",
     "## Rust Quality Report (fmt/clippy)",

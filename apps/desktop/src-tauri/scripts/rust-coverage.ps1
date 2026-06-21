@@ -9,7 +9,6 @@ function Get-RustCoverageArgs {
   return @(
     "llvm-cov",
     "--manifest-path", $ManifestPath,
-    "--no-default-features",
     "--lcov",
     "--output-path", (Join-Path $OutputDir "lcov.info")
   )
@@ -34,7 +33,7 @@ function Invoke-RustCoverage {
     if (-not (Test-Path -Path $lcovPath)) {
       "TN:" | Set-Content -Path $lcovPath -Encoding UTF8
     }
-    "Coverage baseline generated with --no-default-features." | Set-Content -Path $summaryPath -Encoding UTF8
+    "Coverage baseline generated with default lean features." | Set-Content -Path $summaryPath -Encoding UTF8
   }
   else {
     $text | Set-Content -Path $summaryPath -Encoding UTF8

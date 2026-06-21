@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { invoke } from '@tauri-apps/api/core'
 import SyncSettingsCard from './SyncSettingsCard.svelte'
 import { locale } from '$lib/i18n'
-import { DEFAULT_SYNC_SERVER_URL, type SyncDevice, type SyncStatus, type SyncUsage, type PlanCatalogItem } from '$lib/sync'
+import { DEFAULT_SYNC_SERVER_URL, type SyncConflict, type SyncDevice, type SyncStatus, type SyncUsage, type PlanCatalogItem } from '$lib/sync'
 
 const mockInvoke = vi.mocked(invoke)
 
@@ -75,6 +75,20 @@ function status(overrides: Partial<SyncStatus> = {}): SyncStatus {
     pending_blob_bytes: 0,
     conflicts: 0,
     clock_warning: false,
+    ...overrides,
+  }
+}
+
+function conflict(overrides: Partial<SyncConflict> = {}): SyncConflict {
+  return {
+    id: 'cf-1',
+    table_name: 'items',
+    row_id: 'item-1',
+    reason: 'lww_lost',
+    loser_payload: 'server_seq=42',
+    winner_summary: 'local wins',
+    created_at: 1_700_000_000_000,
+    acknowledged: false,
     ...overrides,
   }
 }
@@ -221,6 +235,39 @@ function device(overrides: Partial<SyncDevice> = {}): SyncDevice {
     ...overrides,
   }
 }
+
+describe('SyncSettingsCard — conflicts summary', () => {
+  beforeEach(() => {
+    locale.set('es')
+    mockInvoke.mockReset()
+    setSyncState(status({ conflicts: 1 }))
+    routeInvoke({ sync_list_conflicts: () => [conflict()] })
+  })
+
+  afterEach(() => {
+    mockInvoke.mockReset()
+    setSyncState(status())
+  })
+
+  it('renders a compact conflict summary and emits details to Logs', async () => {
+    render(SyncSettingsCard)
+
+    expect(await screen.findByText('Conflictos')).toBeInTheDocument()
+    expect(screen.getByText(/1 conflictos pendientes/)).toBeInTheDocument()
+    expect(screen.queryByText('Ver detalle')).not.toBeInTheDocument()
+    expect(screen.queryByText('Motivo: lww_lost')).not.toBeInTheDocument()
+
+    await waitFor(() =>
+      expect(mockInvoke).toHaveBeenCalledWith('logs_append', {
+        level: 'warn',
+        source: 'sync/conflicts',
+        message: expect.stringContaining(
+          'Conflicto de sincronización: lww_lost en items · item-1'
+        ),
+      })
+    )
+  })
+})
 
 describe('SyncSettingsCard — device list deduping', () => {
   beforeEach(() => {

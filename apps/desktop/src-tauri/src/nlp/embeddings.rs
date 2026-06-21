@@ -81,10 +81,10 @@ impl EmbeddingProvider {
             #[cfg(not(feature = "local-ml"))]
             None => Ok(Self::Api),
             #[cfg(not(feature = "local-ml"))]
-            Some("local") | Some("offline") | Some("onnx") => Err(
-                "Proveedor de embeddings no disponible en este build. Configurá OpenRouter ('api') en Configuración."
-                    .to_string(),
-            ),
+            // Lite/lean builds do not compile the local ONNX engine. Existing Pro/dev
+            // databases may still carry `embedding_provider=local`; normalize those
+            // legacy values to API instead of blocking the embedding worker forever.
+            Some("local") | Some("offline") | Some("onnx") => Ok(Self::Api),
             Some("api") | Some("openrouter") => Ok(Self::Api),
             Some(other) => Err(format!(
                 "Proveedor de embeddings no soportado: {other}. Usá 'api' o 'local'."
@@ -648,8 +648,14 @@ pub fn config_from_settings(conn: &Connection) -> Result<EmbeddingConfig, String
             .clamp(8, DEFAULT_LOCAL_EMBEDDING_MAX_LENGTH);
 
     if provider == EmbeddingProvider::Api && api_key.is_empty() {
+        #[cfg(feature = "local-ml")]
         return Err(
             "OpenRouter API key no configurada. Configurá OpenRouter para generar embeddings BGE-M3 o cambiá el proveedor a Local ONNX con el modelo BGE-M3 instalado."
+                .to_string(),
+        );
+        #[cfg(not(feature = "local-ml"))]
+        return Err(
+            "OpenRouter API key no configurada. Configurá OpenRouter para generar embeddings."
                 .to_string(),
         );
     }
@@ -1693,7 +1699,46 @@ mod tests {
         };
 
         assert!(error.contains("OpenRouter API key"));
+        #[cfg(feature = "local-ml")]
         assert!(error.contains("Local ONNX"));
+        #[cfg(not(feature = "local-ml"))]
+        assert!(!error.contains("Local ONNX"));
+    }
+
+    #[cfg(not(feature = "local-ml"))]
+    #[test]
+    fn config_from_settings_normalizes_legacy_local_provider_to_api_in_lean_build() {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'local');\
+             INSERT INTO app_settings(key, value) VALUES ('openrouter_api_key', 'sk-test');",
+        )
+        .expect("settings table should be created");
+
+        let config = config_from_settings(&conn).expect("legacy local provider should normalize");
+
+        assert_eq!(config.provider, EmbeddingProvider::Api);
+        assert_eq!(config.model_name, DEFAULT_OPENROUTER_EMBEDDING_MODEL);
+    }
+
+    #[cfg(not(feature = "local-ml"))]
+    #[test]
+    fn config_from_settings_lean_missing_api_key_does_not_suggest_local_provider() {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite should open");
+        conn.execute_batch(
+            "CREATE TABLE app_settings(key TEXT PRIMARY KEY, value TEXT NOT NULL);\
+             INSERT INTO app_settings(key, value) VALUES ('embedding_provider', 'local');",
+        )
+        .expect("settings table should be created");
+
+        let error = match config_from_settings(&conn) {
+            Ok(_) => panic!("missing API key should fail"),
+            Err(error) => error,
+        };
+
+        assert!(error.contains("OpenRouter API key"));
+        assert!(!error.contains("Local ONNX"));
     }
 
     #[tokio::test]

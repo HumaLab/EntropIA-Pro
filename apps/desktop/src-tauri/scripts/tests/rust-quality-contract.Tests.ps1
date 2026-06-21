@@ -95,13 +95,13 @@ Describe "Classify-RustSignal" {
 }
 
 Describe "Get-RustCoverageArgs" {
-  It "builds contractual coverage command with no-default-features" {
+  It "builds contractual coverage command with default lean features" {
     $args = Get-RustCoverageArgs -ManifestPath "apps/desktop/src-tauri/Cargo.toml" -OutputDir "target/coverage-rust"
     $joined = $args -join " "
 
     Assert-Match -Value $joined -Pattern "llvm-cov" -Message "coverage command must include llvm-cov"
     Assert-Match -Value $joined -Pattern "--manifest-path apps/desktop/src-tauri/Cargo.toml" -Message "coverage command must include manifest path"
-    Assert-Match -Value $joined -Pattern "--no-default-features" -Message "coverage command must include no-default-features baseline"
+    Assert-True -Condition ($joined -notmatch "--no-default-features") -Message "coverage command must use the default lean baseline"
     Assert-Match -Value $joined -Pattern "--lcov" -Message "coverage command must request lcov output"
   }
 }

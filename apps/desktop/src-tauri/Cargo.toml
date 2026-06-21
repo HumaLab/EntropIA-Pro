@@ -69,13 +69,13 @@ opt-level = "s"
 strip = true
 
 [features]
+# The default build is the lean/API-only baseline used by EntropIA Lite. Local
+# inference is opt-in: Pro builds must explicitly enable `local-ml`.
+#
 # local-ml bundles every local-inference capability: local OCR (MNN/PaddleOCR via
 # the paddle-ocr sub-feature), local embeddings + LLM (ort / llama.cpp), and the
-# signed managed-runtime download (ed25519 / zip). Building with
-# `--no-default-features` drops all of it and yields the API-only "lite" variant.
-# It stays the DEFAULT until the strangler migration is complete, so the Pro build
-# remains the green target throughout (the default flips to [] only at the end).
-default = ["local-ml"]
+# signed managed-runtime download (ed25519 / zip).
+default = []
 local-ml = [
     "paddle-ocr",
     "dep:ort",

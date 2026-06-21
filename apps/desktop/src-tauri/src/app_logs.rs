@@ -168,6 +168,17 @@ pub fn logs_open_dir(state: State<'_, AppLogsState>) -> Result<(), String> {
     open_path(state.log_dir())
 }
 
+#[tauri::command]
+pub fn logs_append(
+    app_handle: AppHandle,
+    level: AppLogLevel,
+    source: String,
+    message: String,
+) -> Result<(), String> {
+    append(&app_handle, level, source, message);
+    Ok(())
+}
+
 pub fn info(app_handle: &AppHandle, source: impl Into<String>, message: impl Into<String>) {
     append(app_handle, AppLogLevel::Info, source, message);
 }

@@ -280,19 +280,23 @@
   let showDiscardConfirm = $state(false)
 
   let currentModeLabel = $derived(
-    llmMode === 'local'
-      ? t('settings.llmMode.local.label')
-      : llmMode === 'openrouter'
-        ? t('settings.llmMode.openrouter.label')
-        : t('settings.llmMode.auto.label')
+    !LOCAL_ML
+      ? t('settings.llmMode.openrouter.label')
+      : llmMode === 'local'
+        ? t('settings.llmMode.local.label')
+        : llmMode === 'openrouter'
+          ? t('settings.llmMode.openrouter.label')
+          : t('settings.llmMode.auto.label')
   )
 
   let currentModeDescription = $derived(
-    llmMode === 'local'
-      ? t('settings.llmMode.local.summary')
-      : llmMode === 'openrouter'
-        ? t('settings.llmMode.openrouter.summary')
-        : t('settings.llmMode.auto.summary')
+    !LOCAL_ML
+      ? t('settings.llmMode.openrouter.summary')
+      : llmMode === 'local'
+        ? t('settings.llmMode.local.summary')
+        : llmMode === 'openrouter'
+          ? t('settings.llmMode.openrouter.summary')
+          : t('settings.llmMode.auto.summary')
   )
 
   let currentSttModeDescription = $derived(
