@@ -1741,15 +1741,16 @@
               <div class="settings__field settings__field--stacked settings__param-card">
                 <h3>{flow.label}</h3>
                 <div class="settings__param-card-grid">
-                  <Input label="temperature (0-2)" type="text" bind:value={modelParamsByFlow[flow.id].temperature} />
-                  <Input label="maxTokens (1-32000, vacío = default)" type="text" bind:value={modelParamsByFlow[flow.id].maxTokens} />
-                  <Input label="topP (0-1, opcional)" type="text" bind:value={modelParamsByFlow[flow.id].topP} />
-                  <Input label="topK (1-1000, opcional)" type="text" bind:value={modelParamsByFlow[flow.id].topK} />
-                  <Input label="presencePenalty (-2 a 2)" type="text" bind:value={modelParamsByFlow[flow.id].presencePenalty} />
-                  <Input label="frequencyPenalty (-2 a 2)" type="text" bind:value={modelParamsByFlow[flow.id].frequencyPenalty} />
+                  <Input label="temperature (0-2)" hint={t('settings.modelParams.hint.temperature')} type="text" bind:value={modelParamsByFlow[flow.id].temperature} />
+                  <Input label="maxTokens (1-32000, vacío = default)" hint={t('settings.modelParams.hint.maxTokens')} type="text" bind:value={modelParamsByFlow[flow.id].maxTokens} />
+                  <Input label="topP (0-1, opcional)" hint={t('settings.modelParams.hint.topP')} type="text" bind:value={modelParamsByFlow[flow.id].topP} />
+                  <Input label="topK (1-1000, opcional)" hint={t('settings.modelParams.hint.topK')} type="text" bind:value={modelParamsByFlow[flow.id].topK} />
+                  <Input label="presencePenalty (-2 a 2)" hint={t('settings.modelParams.hint.presencePenalty')} type="text" bind:value={modelParamsByFlow[flow.id].presencePenalty} />
+                  <Input label="frequencyPenalty (-2 a 2)" hint={t('settings.modelParams.hint.frequencyPenalty')} type="text" bind:value={modelParamsByFlow[flow.id].frequencyPenalty} />
                   <div class="settings__field settings__field--stacked settings__field--wide">
                     <label class="settings__label" for={`${flow.id}-stop-sequences`}>stopSequences</label>
                     <textarea id={`${flow.id}-stop-sequences`} class="settings__textarea" rows="3" bind:value={modelParamsByFlow[flow.id].stopSequences} placeholder={t('settings.modelParams.stopSequencesPlaceholder')}></textarea>
+                    <p class="settings__hint">{t('settings.modelParams.hint.stopSequences')}</p>
                   </div>
                 </div>
                 <Button variant="secondary" size="sm" onclick={() => resetModelParams(flow.id)}>{t('settings.modelParams.restoreDefaults')}</Button>

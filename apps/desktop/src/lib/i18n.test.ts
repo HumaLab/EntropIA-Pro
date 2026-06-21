@@ -142,6 +142,12 @@ describe('i18n', () => {
     expect(t('settings.modelParams.invalidParam', { flow: 'Summary', param: 'topP' })).toBe(
       'Parámetro inválido en Summary: topP'
     )
+    expect(t('settings.modelParams.hint.temperature')).toBe(
+      'Temperatura: gradúa la creatividad de la respuesta generada (0-2)'
+    )
+    expect(t('settings.modelParams.hint.stopSequences')).toBe(
+      'Secuencias de parada: detienen la respuesta ante una coincidencia exacta'
+    )
     expect(t('settings.ragParamsTab')).toBe('RAG Params')
     expect(t('settings.ragParams.title')).toBe('RAG Params')
     expect(t('settings.ragParams.description')).toBe(
@@ -171,6 +177,12 @@ describe('i18n', () => {
     )
     expect(t('settings.modelParams.invalidParam', { flow: 'Summary', param: 'topP' })).toBe(
       'Invalid parameter in Summary: topP'
+    )
+    expect(t('settings.modelParams.hint.temperature')).toBe(
+      'Temperature: controls creativity in the generated response (0-2)'
+    )
+    expect(t('settings.modelParams.hint.stopSequences')).toBe(
+      'Stop sequences: stop the response on an exact match'
     )
     expect(t('settings.ragParamsTab')).toBe('RAG Params')
     expect(t('settings.ragParams.title')).toBe('RAG Params')

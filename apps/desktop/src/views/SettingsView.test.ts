@@ -185,6 +185,8 @@ describe('SettingsView', () => {
     const maxTokensInput = screen.getAllByLabelText('maxTokens (1-32000, vacío = default)')[0]
     expect(temperatureInput).toBeDefined()
     expect(maxTokensInput).toBeDefined()
+    expect(screen.getAllByText('Temperatura: gradúa la creatividad de la respuesta generada (0-2)')).not.toHaveLength(0)
+    expect(screen.getAllByText('Tokens máximos: limita la longitud de la respuesta generada (1-32000)')).not.toHaveLength(0)
     await fireEvent.input(temperatureInput!, { target: { value: '0.6' } })
     await fireEvent.input(maxTokensInput!, { target: { value: '1234' } })
 
